@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-02-PLAN.md (native seam + integrity layer)
-last_updated: "2026-05-30T16:45:00.000Z"
-last_activity: 2026-05-30 -- Completed 01-02 (INGEST-01, INGEST-02, INGEST-03)
+stopped_at: Completed 01-03-PLAN.md (safe_extract security gate)
+last_updated: "2026-05-30T16:48:23.000Z"
+last_activity: 2026-05-30 -- Completed 01-03 (INGEST-04 safe_extract jail)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 ## Current Position
 
 Phase: 1 (Forensic Foundation) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
-Last activity: 2026-05-30 -- Completed 01-02 (native seam + integrity layer)
+Last activity: 2026-05-30 -- Completed 01-03 (safe_extract security gate, INGEST-04)
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [██████░░░░] 60%
 | Phase 01 P00 | 5 | 3 tasks | 13 files |
 | Phase 01 P01 | 8 | 2 tasks | 8 files |
 | Phase 01 P02 | 9 | 2 tasks | 8 files |
+| Phase 01 P03 | 4 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-02: mounted-source guard refuses a source path that IS a mountpoint (portable on hosts with separate /tmp,/home), not any file merely residing under a mount (P1)
 - [Phase 1]: 01-02: acquisition algorithm selected by supplied hash hex length (32->md5, 64->sha256); unrecognised length raises IntegrityError so an uncomparable hash never silently passes
 - [Phase 1]: 01-02: mypy [[overrides]] ignore_missing_imports for stub-less native bindings pytsk3/pyewf, scoped to the seam; TSK_VERSION_STR (4.15.0) recorded for the COC record (A1)
+- [Phase 1]: 01-03: safe_extract confines on the ORIGINAL stored member name BEFORE the stdlib data filter — data_filter silently relativizes /etc/x to etc/x, masking an absolute-path tampering signal, so we REJECT instead
+- [Phase 1]: 01-03: filter='data' (public tarfile.data_filter) applied per tar member as defense-in-depth; realpath confinement + hand-written bomb caps are the primary controls (filter='data' does NOT stop bombs)
+- [Phase 1]: 01-03: bomb caps via a streamed running uncompressed-byte counter that aborts a total-size bomb mid-write; ExtractionLimits defaults 1GiB/256MiB/100x/10000/depth3, all overridable
 
 ### Pending Todos
 
@@ -102,6 +106,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-30T16:45:00.000Z
-Stopped at: Completed 01-02-PLAN.md (native seam + integrity layer)
-Resume file: .planning/phases/01-forensic-foundation/01-03-PLAN.md
+Last session: 2026-05-30T16:48:23.000Z
+Stopped at: Completed 01-03-PLAN.md (safe_extract security gate)
+Resume file: .planning/phases/01-forensic-foundation/01-04-PLAN.md
