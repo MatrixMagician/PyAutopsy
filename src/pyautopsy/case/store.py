@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import TracebackType
@@ -55,6 +57,9 @@ class CaseStore:
         """
         self.case_dir = case_dir
         self.connection = connection
+        # When inside a :meth:`transaction` block, the per-insert methods defer
+        # their own ``commit()`` so several writes land atomically (WR-01).
+        self._in_transaction = False
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -139,6 +144,43 @@ class CaseStore:
     ) -> None:
         self.close()
 
+    # -- transactions ------------------------------------------------------
+
+    @contextmanager
+    def transaction(self) -> Iterator[CaseStore]:
+        """Group several inserts into one atomic unit (WR-01).
+
+        Inside the block, the per-insert methods defer their own ``commit()``;
+        the single commit happens once on clean exit. Any exception rolls the
+        whole unit back so a partial chain-of-custody record (e.g. an orphaned
+        ``cases`` row with no ``evidence_sources`` row) can never be persisted.
+
+        Nesting is not supported and raises :class:`RuntimeError`.
+
+        Yields:
+            This :class:`CaseStore`, for convenient ``with store.transaction()``.
+
+        Raises:
+            RuntimeError: If a transaction is already active.
+        """
+        if self._in_transaction:
+            raise RuntimeError("CaseStore.transaction() does not support nesting")
+        self._in_transaction = True
+        try:
+            yield self
+        except BaseException:
+            self.connection.rollback()
+            raise
+        else:
+            self.connection.commit()
+        finally:
+            self._in_transaction = False
+
+    def _commit_unless_in_transaction(self) -> None:
+        """Commit immediately unless a :meth:`transaction` is deferring it."""
+        if not self._in_transaction:
+            self.connection.commit()
+
     # -- cases -------------------------------------------------------------
 
     def insert_case(self, case: Case) -> int:
@@ -158,24 +200,22 @@ class CaseStore:
         """
         created = case.created_utc or iso_utc()
         tool = case.pyautopsy_version or _tool_version()
-        try:
-            cur = self.connection.execute(
-                "INSERT INTO cases "
-                "(name, examiner, created_utc, pyautopsy_version, notes, "
-                "attributes) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    case.name,
-                    case.examiner,
-                    created,
-                    tool,
-                    case.notes,
-                    json.dumps(case.attributes, sort_keys=True),
-                ),
-            )
-            self.connection.commit()
-        except sqlite3.IntegrityError:
-            raise
-        assert cur.lastrowid is not None
+        cur = self.connection.execute(
+            "INSERT INTO cases "
+            "(name, examiner, created_utc, pyautopsy_version, notes, "
+            "attributes) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                case.name,
+                case.examiner,
+                created,
+                tool,
+                case.notes,
+                json.dumps(case.attributes, sort_keys=True),
+            ),
+        )
+        self._commit_unless_in_transaction()
+        if cur.lastrowid is None:
+            raise RuntimeError("INSERT INTO cases did not return a row id")
         return cur.lastrowid
 
     def get_case(self, case_id: int) -> Case:
@@ -219,29 +259,29 @@ class CaseStore:
         Raises:
             sqlite3.IntegrityError: On a foreign-key or constraint violation.
         """
-        try:
-            cur = self.connection.execute(
-                "INSERT INTO evidence_sources "
-                "(case_id, evidence_id, path, image_type, sha256, md5, "
-                "byte_size, acquired_utc, tsk_version, attributes) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    source.case_id,
-                    source.evidence_id,
-                    source.path,
-                    source.image_type,
-                    source.sha256,
-                    source.md5,
-                    source.byte_size,
-                    source.acquired_utc,
-                    source.tsk_version,
-                    json.dumps(source.attributes, sort_keys=True),
-                ),
+        cur = self.connection.execute(
+            "INSERT INTO evidence_sources "
+            "(case_id, evidence_id, path, image_type, sha256, md5, "
+            "byte_size, acquired_utc, tsk_version, attributes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                source.case_id,
+                source.evidence_id,
+                source.path,
+                source.image_type,
+                source.sha256,
+                source.md5,
+                source.byte_size,
+                source.acquired_utc,
+                source.tsk_version,
+                json.dumps(source.attributes, sort_keys=True),
+            ),
+        )
+        self._commit_unless_in_transaction()
+        if cur.lastrowid is None:
+            raise RuntimeError(
+                "INSERT INTO evidence_sources did not return a row id"
             )
-            self.connection.commit()
-        except sqlite3.IntegrityError:
-            raise
-        assert cur.lastrowid is not None
         return cur.lastrowid
 
     def get_evidence_source(self, source_id: int) -> EvidenceSource:

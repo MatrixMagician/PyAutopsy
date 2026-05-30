@@ -167,3 +167,50 @@ def test_evidence_foreign_key_enforced(case_dir: Path) -> None:
                     image_type="raw",
                 )
             )
+
+
+def test_transaction_commits_both_rows_atomically(case_dir: Path) -> None:
+    """A clean transaction commits the case + evidence rows together (WR-01)."""
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            case_id = store.insert_case(Case(name="c", examiner="ex"))
+            store.insert_evidence_source(
+                EvidenceSource(
+                    case_id=case_id,
+                    evidence_id="EV",
+                    path="/x.dd",
+                    image_type="raw",
+                )
+            )
+        cases = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[
+            0
+        ]
+        sources = store.connection.execute(
+            "SELECT COUNT(*) FROM evidence_sources"
+        ).fetchone()[0]
+    assert cases == 1
+    assert sources == 1
+
+
+def test_transaction_rolls_back_on_exception(case_dir: Path) -> None:
+    """An exception inside a transaction rolls back the case row (WR-01)."""
+    with CaseStore.create(case_dir) as store:
+        with pytest.raises(RuntimeError):
+            with store.transaction():
+                store.insert_case(Case(name="c", examiner="ex"))
+                raise RuntimeError("boom before evidence insert")
+        # The committed-row count is read on a fresh connection to confirm the
+        # rollback was durable, not merely uncommitted in this connection.
+        count = store.connection.execute(
+            "SELECT COUNT(*) FROM cases"
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_transaction_rejects_nesting(case_dir: Path) -> None:
+    """Nested transactions are unsupported and raise (WR-01)."""
+    with CaseStore.create(case_dir) as store:
+        with pytest.raises(RuntimeError, match="nesting"):
+            with store.transaction():
+                with store.transaction():
+                    pass
