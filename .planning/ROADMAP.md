@@ -23,7 +23,7 @@ slice that produces something demonstrable and defensible.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Forensic Foundation** - Read-only ingest (raw/dd + E01), source hash verify, case store, safe-extraction jail, COC + audit log
+- [x] **Phase 1: Forensic Foundation** - Read-only ingest (raw/dd + E01), source hash verify, case store, safe-extraction jail, COC + audit log (completed 2026-05-30)
 - [ ] **Phase 2: Filesystem Walk & Metadata** - Walk ext4/NTFS/FAT yielding per-file inventory, UTC MACB times, owner/perms, per-file hashes, type-by-signature
 - [ ] **Phase 3: Timeline & MVP Report** - Chronological timeline + deterministic HTML/JSON report from one command (closes image -> report MVP)
 - [ ] **Phase 4: Deleted Recovery & Known-File Filtering** - Recover deleted/orphan files with confidence tiers; filter against NSRL + custom hash sets
@@ -55,7 +55,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-04-PLAN.md — Ingest orchestrator + Typer `pyautopsy ingest` CLI; closes the Walking Skeleton + reproducibility seed
+- [x] 01-04-PLAN.md — Ingest orchestrator + Typer `pyautopsy ingest` CLI; closes the Walking Skeleton + reproducibility seed
 
 ### Phase 2: Filesystem Walk & Metadata
 
@@ -128,7 +128,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Forensic Foundation | 3/5 | In Progress|  |
+| 1. Forensic Foundation | 5/5 | Complete   | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 0/TBD | Not started | - |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
