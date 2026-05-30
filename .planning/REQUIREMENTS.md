@@ -1,0 +1,149 @@
+# Requirements: PyAutopsy
+
+**Defined:** 2026-05-30
+**Core Value:** Turn a raw disk image (and associated logs) into a defensible, presentation-ready forensic report — with deleted-file recovery and metadata analysis — through a single automated Python workflow.
+
+## v1 Requirements
+
+Requirements for initial release. Each maps to roadmap phases. Scope = the
+table-stakes "image → defensible report" pipeline from research/FEATURES.md MVP.
+
+### Ingestion & Integrity
+
+- [ ] **INGEST-01**: User can ingest a disk image (raw/dd and E01/EWF) for analysis
+- [ ] **INGEST-02**: Tool verifies source image integrity by computing MD5 + SHA-256 and comparing against a supplied acquisition hash when provided
+- [ ] **INGEST-03**: Tool guarantees evidence is never modified — source opened read-only, never mounted, all output written to a separate case directory, source hash re-verified at end of run
+- [ ] **INGEST-04**: Tool extracts/parses evidence and archives safely, rejecting path-traversal (Zip Slip) and decompression-bomb inputs
+
+### Metadata Analysis
+
+- [ ] **META-01**: Tool walks the filesystem and inventories every file with path, size, inode/MFT address, and allocated/unallocated status (ext4, NTFS, FAT)
+- [ ] **META-02**: Tool records MACB timestamps per file, normalized to UTC, with original timezone and timestamp source captured
+- [ ] **META-03**: Tool records ownership (UID/GID) and permission/mode bits per file
+- [ ] **META-04**: Tool computes per-file hashes (MD5, SHA-1, SHA-256) during the filesystem walk
+- [ ] **META-05**: Tool identifies file type by content signature (not extension)
+
+### Deleted File Recovery
+
+- [ ] **RECOV-01**: Tool enumerates and recovers deleted files where metadata/data remain intact
+- [ ] **RECOV-02**: Tool reports orphan files (deleted files whose parent directory is gone) separately
+- [ ] **RECOV-03**: Tool labels each recovered file with a confidence level (intact vs partial/overwritten)
+
+### Known-File Filtering
+
+- [ ] **FILTER-01**: Tool filters known files against NSRL RDS and user-supplied custom hash sets (allow/block lists), surfacing matches as "known" rather than a good/bad verdict
+
+### Log Analysis
+
+- [ ] **LOG-01**: Tool parses Linux authentication logs (`auth.log` / `secure`) from the evidence image, surfacing logins, SSH, sudo, and failed-auth events
+- [ ] **LOG-02**: Tool parses syslog/messages for service, kernel, cron, and error events
+- [ ] **LOG-03**: Tool parses shell history (`.bash_history` / `.zsh_history`) per user, noting tamperability
+- [ ] **LOG-04**: Tool normalizes all parsed log events into a shared forensic-event model (timestamp, source, type, actor, action, outcome, evidence-ref)
+
+### Timeline
+
+- [ ] **TIME-01**: Tool builds a chronological timeline from filesystem MACB metadata (bodyfile/mactime style)
+- [ ] **TIME-02**: Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
+
+### Search & Matching
+
+- [ ] **SEARCH-01**: User can run literal and regex keyword searches across allocated content, unallocated space, and file content
+- [ ] **SEARCH-02**: Tool matches files and content against supplied IOC lists and known-bad hash sets, reporting hits with file and offset
+
+### Reporting & Case Management
+
+- [ ] **REPORT-01**: Tool records case / chain-of-custody metadata (case ID, examiner, evidence ID, acquisition source, tool + versions, timestamps)
+- [ ] **REPORT-02**: Tool writes an append-only audit log of its actions (inputs, hashes, parameters, tool versions, start/end times, errors)
+- [ ] **REPORT-03**: Tool generates a human-readable report (HTML/Markdown) with case/COC, methodology + tool versions, findings, evidence hashes, timeline, and exhibits
+- [ ] **REPORT-04**: Tool emits a structured machine-readable JSON report alongside the human-readable report
+
+### CLI & Pipeline
+
+- [ ] **CLI-01**: User can run the full analysis as a single command (`pyautopsy analyze <image> --case ...`) producing the complete report
+- [ ] **CLI-02**: Tool produces deterministic, reproducible output (stable ordering, pinned tool versions recorded in the report)
+
+## v2 Requirements
+
+Deferred to future release. Tracked but not in current roadmap. (From FEATURES.md "Add After Validation / Future Consideration.")
+
+### Recovery & Carving
+
+- **CARVE-01**: File carving from unallocated space (wrap photorec/scalpel/foremost)
+- **RECOV-04**: exFAT / HFS+ / APFS deleted-file recovery (gated on linked TSK build)
+
+### Extended Log Coverage
+
+- **LOG-05**: Parse systemd journal (binary), auditd, and wtmp/btmp/lastlog
+- **LOG-06**: Parse web/server logs (apache/nginx) and package logs (dpkg/apt/dnf)
+
+### Analyst Aids
+
+- **ANOM-01**: Timeline anomaly / timestomp surfacing ($SI vs $FN mismatch, future/out-of-order timestamps)
+- **ANOM-02**: Extension-vs-content mismatch and suspicious-file flagging
+- **RULE-01**: YARA rule pack support
+- **SEARCH-03**: Full-text search indexing for fast keyword search on large images
+
+### Interoperability
+
+- **JSON-01**: CASE/UCO-conformant JSON export
+- **DIFF-01**: Report diffing across runs/images
+- **CONF-01**: Config-driven runs (YAML/TOML recipes: parsers, hash sets, keyword lists, carving toggles)
+- **TIME-03**: plaso integration as an alternative super-timeline backend
+
+## Out of Scope
+
+Explicitly excluded. Documented to prevent scope creep. (Anti-features from research/FEATURES.md.)
+
+| Feature | Reason |
+|---------|--------|
+| Live / memory forensics (RAM capture, running-process analysis) | Different acquisition model + tooling (Volatility, LiME); not disk/log; huge scope. Point users to Volatility. |
+| Malware sandboxing / dynamic analysis / reverse engineering | Requires isolated execution + behavioral instrumentation; verdicts aren't forensic facts. Static YARA/IOC indicators only. |
+| Network / packet forensics (PCAP) | Separate domain (Wireshark/Zeek/Suricata), different data model. Parse host logs only. |
+| GUI / web interface | Autopsy already provides a GUI; duplicating it abandons the CLI/automation differentiator. Build UIs on the JSON instead. |
+| Court-admissibility certification / legal verdicts | Legal determination is the investigator's & court's job; overreach undermines credibility. Produce factual findings + COC, disclaim conclusions. |
+| Windows/macOS host support (running the tool there) | v1 targets Linux host. (Analyzing Windows/macOS *images* on Linux remains valid and supported.) |
+| Auto "this user is guilty / smoking gun" conclusions | Forensic reports must be neutral and factual; interpretation invites bias challenges. Surface evidence + flags only. |
+| Reimplementing TSK carving/parsing primitives | TSK is the trusted, court-tested implementation; reimplementation forfeits credibility. Wrap pytsk3/photorec/plaso. |
+
+## Traceability
+
+Which phases cover which requirements. Updated during roadmap creation.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| INGEST-01 | TBD | Pending |
+| INGEST-02 | TBD | Pending |
+| INGEST-03 | TBD | Pending |
+| INGEST-04 | TBD | Pending |
+| META-01 | TBD | Pending |
+| META-02 | TBD | Pending |
+| META-03 | TBD | Pending |
+| META-04 | TBD | Pending |
+| META-05 | TBD | Pending |
+| RECOV-01 | TBD | Pending |
+| RECOV-02 | TBD | Pending |
+| RECOV-03 | TBD | Pending |
+| FILTER-01 | TBD | Pending |
+| LOG-01 | TBD | Pending |
+| LOG-02 | TBD | Pending |
+| LOG-03 | TBD | Pending |
+| LOG-04 | TBD | Pending |
+| TIME-01 | TBD | Pending |
+| TIME-02 | TBD | Pending |
+| SEARCH-01 | TBD | Pending |
+| SEARCH-02 | TBD | Pending |
+| REPORT-01 | TBD | Pending |
+| REPORT-02 | TBD | Pending |
+| REPORT-03 | TBD | Pending |
+| REPORT-04 | TBD | Pending |
+| CLI-01 | TBD | Pending |
+| CLI-02 | TBD | Pending |
+
+**Coverage:**
+- v1 requirements: 27 total
+- Mapped to phases: 0 (roadmap pending)
+- Unmapped: 27 ⚠️ (resolved by roadmapper)
+
+---
+*Requirements defined: 2026-05-30*
+*Last updated: 2026-05-30 after initial definition*
