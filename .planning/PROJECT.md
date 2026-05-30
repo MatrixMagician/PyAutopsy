@@ -20,20 +20,19 @@ single automated Python workflow.
 
 <!-- Shipped and confirmed valuable. -->
 
-(None yet — ship to validate)
+- ✓ Ingest a disk image (raw/dd + E01) read-only via The Sleuth Kit / pytsk3 — Validated in Phase 1 (E01-native path is manual-only, tracked in 01-HUMAN-UAT.md)
+- ✓ Preserve evidence integrity (single-pass MD5+SHA-256, acquisition compare, end-of-run re-verify, never-mounted guard, chain-of-custody in SQLite case store, append-only JSONL audit log) — Validated in Phase 1
+- ✓ Run on Linux as a command-line tool (`pyautopsy ingest`, Typer CLI) — Validated in Phase 1
 
 ### Active
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
 
-- [ ] Ingest a disk image / filesystem source using The Sleuth Kit (via pytsk3 or Autopsy)
-- [ ] Analyze file metadata (timestamps, ownership, permissions, sizes, MAC times)
-- [ ] Recover deleted files from supported filesystems
-- [ ] Parse and analyze log files for forensically relevant events
-- [ ] Build a timeline of file/system activity from metadata and logs
-- [ ] Generate a forensic report suitable for evidence presentation (human-readable + structured)
-- [ ] Preserve evidence integrity (hashing / chain-of-custody metadata for findings)
-- [ ] Run on Linux as a command-line tool
+- [ ] Analyze file metadata (timestamps, ownership, permissions, sizes, MAC times) — Phase 2
+- [ ] Recover deleted files from supported filesystems — Phase 4
+- [ ] Parse and analyze log files for forensically relevant events — Phase 5
+- [ ] Build a timeline of file/system activity from metadata and logs — Phases 3 & 5
+- [ ] Generate a forensic report suitable for evidence presentation (human-readable + structured) — Phase 3
 
 ### Out of Scope
 
@@ -98,4 +97,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-30 after initialization*
+*Last updated: 2026-05-30 after Phase 1 (Forensic Foundation) completion*
