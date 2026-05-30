@@ -1,0 +1,77 @@
+"""Shared pytest fixtures for the PyAutopsy suite.
+
+Provides:
+
+* ``case_dir`` — a fresh, empty case directory under ``tmp_path`` for each test.
+* ``tiny_raw_image`` — the path to the committed, deterministic tiny raw image.
+* per-archive fixtures (``zip_slip_tar``, ``symlink_escape_tar``,
+  ``device_file_tar``, ``ratio_bomb_zip``, ``count_bomb_tar``) that build each
+  malicious archive into ``tmp_path`` on demand for the safe-extract plan
+  (01-03) to consume. Building them lazily keeps live bombs off disk except for
+  the test that needs them.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from tests.fixtures import make_fixtures
+
+# Directory holding committed fixture assets (e.g. tiny_raw.dd).
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.fixture
+def case_dir(tmp_path: Path) -> Path:
+    """Return a fresh, empty case directory under the test's tmp_path.
+
+    The tool itself creates the ``logs/``/``exports/`` layout and ``case.db``;
+    this fixture only provides the (non-existent) target path so each test gets
+    an isolated case root.
+    """
+    return tmp_path / "case"
+
+
+@pytest.fixture
+def tiny_raw_image() -> Path:
+    """Return the path to the committed deterministic tiny raw image.
+
+    The image is a real >0-byte file under 1 MB that reads as raw bytes, used to
+    prove read-only open and streaming-hash behaviour without a CI ``mkfs``
+    dependency (01-RESEARCH.md A3).
+    """
+    image = FIXTURES_DIR / make_fixtures.TINY_RAW_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def zip_slip_tar(tmp_path: Path) -> Path:
+    """Build a Zip-Slip tar (``../../escape.txt``) into tmp_path."""
+    return make_fixtures.build_zip_slip_tar(tmp_path / "zip_slip.tar")
+
+
+@pytest.fixture
+def symlink_escape_tar(tmp_path: Path) -> Path:
+    """Build a symlink-escape tar (``link -> /etc/passwd``) into tmp_path."""
+    return make_fixtures.build_symlink_escape_tar(tmp_path / "symlink_escape.tar")
+
+
+@pytest.fixture
+def device_file_tar(tmp_path: Path) -> Path:
+    """Build a tar containing a character-device member into tmp_path."""
+    return make_fixtures.build_device_file_tar(tmp_path / "device_file.tar")
+
+
+@pytest.fixture
+def ratio_bomb_zip(tmp_path: Path) -> Path:
+    """Build a high-ratio/size-bomb zip into tmp_path."""
+    return make_fixtures.build_ratio_bomb_zip(tmp_path / "ratio_bomb.zip")
+
+
+@pytest.fixture
+def count_bomb_tar(tmp_path: Path) -> Path:
+    """Build a count-bomb tar (very many tiny members) into tmp_path."""
+    return make_fixtures.build_count_bomb_tar(tmp_path / "count_bomb.tar")
