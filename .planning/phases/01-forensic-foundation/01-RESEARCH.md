@@ -472,13 +472,13 @@ All fixtures generated with `tarfile`/`zipfile` in `tests/fixtures/`; the test a
 | A3 | Tiny synthetic raw image can be generated deterministically at test time (e.g. mkfs on a sparse file, or a pre-built tiny fixture) | Validation Architecture | MEDIUM — generating a FAT/ext image may need `mkfs`/`mtools` in CI; fallback is committing a small (<1 MB) pre-built fixture image to the repo. |
 | A4 | `pyewf.handle.read(size)` (vs `read_buffer(size)`) is the current method name | Code Examples (EWF) | LOW — both names appear in sources across libewf versions; the canonical recipe uses `read`. Verify against installed pyewf 20240506 at implementation; adapter is a 4-line change either way. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **libtsk version recording attribute (A1).**
+1. **libtsk version recording attribute (A1).** — **RESOLVED:** probe `dir(pytsk3)` for the VERSION attribute at runtime and record whatever is present; never assert a hard-coded attribute name. (Adopted by plan 01-02.)
    - What we know: pytsk3 exposes a TSK version; the audit/COC record must capture it (P8, REPORT-01).
    - What's unclear: exact attribute name on pytsk3 20260520.
    - Recommendation: at build/spike, `python -c "import pytsk3; print([a for a in dir(pytsk3) if 'VERSION' in a.upper()])"`; record whatever is present.
-2. **Test-fixture image generation (A3).**
+2. **Test-fixture image generation (A3).** — **RESOLVED:** commit a small (<1 MB) deterministic `tiny_raw.dd` fixture to `tests/fixtures/` (no CI `mkfs`/`mtools` dependency). (Adopted by plan 01-00.)
    - What we know: tests need a real tiny image to prove read-only open.
    - What's unclear: generate-at-test-time (needs `mkfs`/`mtools`) vs. commit a pre-built fixture.
    - Recommendation: commit a small (<1 MB) deterministic raw fixture to `tests/fixtures/` to avoid CI tool dependencies; document how it was built.

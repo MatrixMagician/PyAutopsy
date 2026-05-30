@@ -1,8 +1,8 @@
 ---
 phase: 1
 slug: forensic-foundation
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-05-30
 ---
@@ -41,20 +41,22 @@ against a mocked `pyewf.handle` (per RESEARCH.md A3 / environment caveat).
 
 ## Per-Task Verification Map
 
-| Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
-|---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 1-00-01 | 00 | 0 | scaffold | — | src layout + pyproject + pytest import OK | unit | `pytest -q` | ❌ W0 | ⬜ pending |
-| 1-01-01 | 01 | 1 | INGEST-01 | T-1-01 | raw/dd image opened read-only via pytsk3 (never mounted) | unit | `pytest -q tests/test_ingest.py` | ❌ W0 | ⬜ pending |
-| 1-01-02 | 01 | 1 | INGEST-01 | T-1-01 | E01 opened via EWFImgInfo adapter (mocked pyewf) | unit | `pytest -q tests/test_ewf_adapter.py` | ❌ W0 | ⬜ pending |
-| 1-02-01 | 02 | 1 | INGEST-02 | T-1-02 | MD5+SHA-256 single-pass; mismatch fails loudly (non-zero exit) | unit | `pytest -q tests/test_hashing.py` | ❌ W0 | ⬜ pending |
-| 1-02-02 | 02 | 1 | INGEST-03 | T-1-03 | source never written; re-verify hash at end; output only in case dir | unit | `pytest -q tests/test_readonly_guarantee.py` | ❌ W0 | ⬜ pending |
-| 1-03-01 | 03 | 1 | INGEST-04 | T-1-04 | safe_extract rejects Zip Slip / symlink escape / bomb on fixture | unit | `pytest -q tests/test_safe_extract.py` | ❌ W0 | ⬜ pending |
-| 1-04-01 | 04 | 2 | REPORT-01 | T-1-05 | case/COC metadata persisted in SQLite case store | unit | `pytest -q tests/test_case_store.py` | ❌ W0 | ⬜ pending |
-| 1-04-02 | 04 | 2 | REPORT-02 | T-1-06 | append-only JSONL audit log written only to case dir, UTC events | unit | `pytest -q tests/test_audit_log.py` | ❌ W0 | ⬜ pending |
-| 1-05-01 | 05 | 2 | INGEST-01..04 | — | reproducibility: two `ingest` runs → byte-identical analytical fields | integration | `pytest -q tests/test_reproducibility.py` | ❌ W0 | ⬜ pending |
+*Reconciled to the final 5-plan structure (01-00 scaffold, 01-01 case store + audit, 01-02 image seam + hashing + RO guarantee, 01-03 safe-extract jail, 01-04 ingest orchestrator + CLI).*
+
+| Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
+|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
+| 01-00 | 0 | scaffold | — | src layout + pyproject + pytest import OK; failing e2e smoke pins target | unit | `pytest -q` | ❌ W0 | ⬜ pending |
+| 01-02 | 1 | INGEST-01 | T-1-01 | raw/dd image opened read-only via pytsk3 (never mounted) | unit | `pytest -q tests/test_image.py` | ❌ W0 | ⬜ pending |
+| 01-02 | 1 | INGEST-01 | T-1-01 | E01 opened via EWFImgInfo adapter (mocked pyewf) | unit | `pytest -q tests/test_ewf_adapter.py` | ❌ W0 | ⬜ pending |
+| 01-02 | 1 | INGEST-02 | T-1-02 | MD5+SHA-256 single-pass; acquisition mismatch fails loudly (non-zero exit) | unit | `pytest -q tests/test_hashing.py` | ❌ W0 | ⬜ pending |
+| 01-02 | 1 | INGEST-03 | T-1-03 | source never written/mounted; re-verify hash at end; output only in case dir | unit | `pytest -q tests/test_readonly_guarantee.py` | ❌ W0 | ⬜ pending |
+| 01-03 | 1 | INGEST-04 | T-1-04 | safe_extract rejects Zip Slip / symlink escape / bomb on fixture | unit | `pytest -q tests/test_safe_extract.py` | ❌ W0 | ⬜ pending |
+| 01-01 | 1 | REPORT-01 | T-1-05 | case/COC metadata persisted in SQLite case store | unit | `pytest -q tests/test_case_store.py` | ❌ W0 | ⬜ pending |
+| 01-01 | 1 | REPORT-02 | T-1-06 | append-only JSONL audit log written only to case dir, UTC events | unit | `pytest -q tests/test_audit_log.py` | ❌ W0 | ⬜ pending |
+| 01-04 | 2 | INGEST-01..03 + REPORT-01/02 | T-1-01..06 | `run_ingest` orchestration: RO open, hash + re-verify, COC row, JSONL audit, output confined to case dir | integration | `pytest -q tests/test_ingest.py` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
-*Plan/Task IDs are indicative — the planner sets final IDs; this map fixes the requirement→observable-test contract.*
+*Final test filenames owned by the listed plan's `files_modified`.*
 
 ---
 
@@ -77,11 +79,11 @@ against a mocked `pyewf.handle` (per RESEARCH.md A3 / environment caveat).
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 15s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (plan 01-00 stands up pytest + tests/ + fixtures)
+- [x] No watch-mode flags
+- [x] Feedback latency < 15s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-05-30 (plan-check confirmed Wave 0 coverage; `wave_0_complete` flips true after execution)
