@@ -111,39 +111,46 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INGEST-01 | TBD | Pending |
-| INGEST-02 | TBD | Pending |
-| INGEST-03 | TBD | Pending |
-| INGEST-04 | TBD | Pending |
-| META-01 | TBD | Pending |
-| META-02 | TBD | Pending |
-| META-03 | TBD | Pending |
-| META-04 | TBD | Pending |
-| META-05 | TBD | Pending |
-| RECOV-01 | TBD | Pending |
-| RECOV-02 | TBD | Pending |
-| RECOV-03 | TBD | Pending |
-| FILTER-01 | TBD | Pending |
-| LOG-01 | TBD | Pending |
-| LOG-02 | TBD | Pending |
-| LOG-03 | TBD | Pending |
-| LOG-04 | TBD | Pending |
-| TIME-01 | TBD | Pending |
-| TIME-02 | TBD | Pending |
-| SEARCH-01 | TBD | Pending |
-| SEARCH-02 | TBD | Pending |
-| REPORT-01 | TBD | Pending |
-| REPORT-02 | TBD | Pending |
-| REPORT-03 | TBD | Pending |
-| REPORT-04 | TBD | Pending |
-| CLI-01 | TBD | Pending |
-| CLI-02 | TBD | Pending |
+| INGEST-01 | Phase 1 | Pending |
+| INGEST-02 | Phase 1 | Pending |
+| INGEST-03 | Phase 1 | Pending |
+| INGEST-04 | Phase 1 | Pending |
+| META-01 | Phase 2 | Pending |
+| META-02 | Phase 2 | Pending |
+| META-03 | Phase 2 | Pending |
+| META-04 | Phase 2 | Pending |
+| META-05 | Phase 2 | Pending |
+| RECOV-01 | Phase 4 | Pending |
+| RECOV-02 | Phase 4 | Pending |
+| RECOV-03 | Phase 4 | Pending |
+| FILTER-01 | Phase 4 | Pending |
+| LOG-01 | Phase 5 | Pending |
+| LOG-02 | Phase 5 | Pending |
+| LOG-03 | Phase 5 | Pending |
+| LOG-04 | Phase 5 | Pending |
+| TIME-01 | Phase 3 | Pending |
+| TIME-02 | Phase 5 | Pending |
+| SEARCH-01 | Phase 5 | Pending |
+| SEARCH-02 | Phase 5 | Pending |
+| REPORT-01 | Phase 1 | Pending |
+| REPORT-02 | Phase 1 | Pending |
+| REPORT-03 | Phase 3 | Pending |
+| REPORT-04 | Phase 3 | Pending |
+| CLI-01 | Phase 3 | Pending |
+| CLI-02 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 27 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 27 ⚠️ (resolved by roadmapper)
+- Mapped to phases: 27 ✓
+- Unmapped: 0 ✓
+
+**Per-phase counts:**
+- Phase 1 (Forensic Foundation): 6 — INGEST-01..04, REPORT-01, REPORT-02
+- Phase 2 (Filesystem Walk & Metadata): 5 — META-01..05
+- Phase 3 (Timeline & MVP Report): 5 — TIME-01, REPORT-03, REPORT-04, CLI-01, CLI-02
+- Phase 4 (Deleted Recovery & Known-File Filtering): 4 — RECOV-01..03, FILTER-01
+- Phase 5 (Log Parsing, Super-Timeline & Search): 7 — LOG-01..04, TIME-02, SEARCH-01, SEARCH-02
 
 ---
 *Requirements defined: 2026-05-30*
-*Last updated: 2026-05-30 after initial definition*
+*Last updated: 2026-05-30 after roadmap creation (traceability mapped)*

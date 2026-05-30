@@ -1,0 +1,109 @@
+# Roadmap: PyAutopsy
+
+## Overview
+
+PyAutopsy turns an acquired disk image (plus its logs) into a defensible,
+presentation-ready forensic report through a single automated Python/Linux CLI
+built on The Sleuth Kit (pytsk3). The journey is dictated by forensic
+soundness: a read-only, hash-verified, audited foundation must gate everything,
+because integrity and chain-of-custody cannot be retrofitted. From that spine we
+walk the filesystem with UTC-everywhere metadata, close an end-to-end MVP
+(image -> timeline -> HTML+JSON report) early, then layer the headline forensic
+capabilities — deleted-file recovery with honest confidence tiers, known-file
+filtering, log parsing into a shared event model, the super-timeline, and
+search — onto the proven, normalized SQLite store. Every phase is an MVP vertical
+slice that produces something demonstrable and defensible.
+
+## Phases
+
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+
+Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 1: Forensic Foundation** - Read-only ingest (raw/dd + E01), source hash verify, case store, safe-extraction jail, COC + audit log
+- [ ] **Phase 2: Filesystem Walk & Metadata** - Walk ext4/NTFS/FAT yielding per-file inventory, UTC MACB times, owner/perms, per-file hashes, type-by-signature
+- [ ] **Phase 3: Timeline & MVP Report** - Chronological timeline + deterministic HTML/JSON report from one command (closes image -> report MVP)
+- [ ] **Phase 4: Deleted Recovery & Known-File Filtering** - Recover deleted/orphan files with confidence tiers; filter against NSRL + custom hash sets
+- [ ] **Phase 5: Log Parsing, Super-Timeline & Search** - Parse Linux logs into a shared event model, merge into a UTC super-timeline, keyword/IOC search
+
+## Phase Details
+
+### Phase 1: Forensic Foundation
+**Goal**: An examiner can ingest a raw/dd or E01 image entirely read-only, prove the source was never modified, and have every action recorded — establishing the integrity spine all later analysis writes into.
+**Mode:** mvp
+**Depends on**: Nothing (first phase)
+**Requirements**: INGEST-01, INGEST-02, INGEST-03, INGEST-04, REPORT-01, REPORT-02
+**Success Criteria** (what must be TRUE):
+  1. Examiner runs `pyautopsy ingest <image> --case ...` on a raw/dd or E01 image and a SQLite case store is created with the image opened read-only (never mounted)
+  2. Tool computes MD5 + SHA-256 of the source, compares against a supplied acquisition hash when provided, and re-verifies the source hash at end of run — failing loudly on any mismatch
+  3. Case/chain-of-custody metadata (case ID, examiner, evidence ID, acquisition source, tool + TSK versions, timestamps) is recorded in the case store
+  4. An append-only audit log records inputs, hashes, parameters, tool versions, start/end times, and errors, written only to the separate case directory
+  5. The safe-extraction utility rejects path-traversal (Zip Slip), symlink escape, and decompression-bomb inputs (size/ratio/depth/count limits) on a malicious-archive fixture
+**Plans**: TBD
+
+### Phase 2: Filesystem Walk & Metadata
+**Goal**: An examiner gets a complete, normalized inventory of every file on supported filesystems with UTC-correct timestamps and per-file hashes — the second source-of-truth that feeds the timeline.
+**Mode:** mvp
+**Depends on**: Phase 1
+**Requirements**: META-01, META-02, META-03, META-04, META-05
+**Success Criteria** (what must be TRUE):
+  1. Tool walks an ext4, NTFS, or FAT image and inventories every file with path, size, inode/MFT address, and allocated/unallocated status, recorded as normalized rows in the case store
+  2. MACB timestamps are captured per file as tz-aware UTC (ISO-8601 with explicit offset), with original timezone and timestamp source recorded; no naive/local-time datetimes exist in the pipeline
+  3. Ownership (UID/GID) and permission/mode bits are recorded per file
+  4. MD5, SHA-1, and SHA-256 are computed per file during the walk in a single streaming pass
+  5. File type is identified by content signature (not extension), and encrypted/unsupported volumes are reported as an explicit known-limitation finding rather than producing empty or garbage results
+**Plans**: TBD
+
+### Phase 3: Timeline & MVP Report
+**Goal**: An examiner runs one command and gets a complete, reproducible forensic report (human-readable + structured) from a disk image — closing the end-to-end MVP vertical slice and proving the spine before more producers are added.
+**Mode:** mvp
+**Depends on**: Phase 2
+**Requirements**: TIME-01, REPORT-03, REPORT-04, CLI-01, CLI-02
+**Success Criteria** (what must be TRUE):
+  1. Tool builds a chronological timeline (bodyfile/mactime style) from filesystem MACB metadata, UTC-ordered with explicit offsets
+  2. Tool generates a human-readable HTML/Markdown report containing case/COC, methodology + tool/TSK versions, findings, evidence hashes, timeline, and a limitations section (no overclaiming)
+  3. Tool emits a structured machine-readable JSON report alongside the human-readable report
+  4. Examiner runs the full analysis as a single command (`pyautopsy analyze <image> --case ...`) producing the complete report set
+  5. Two runs on the same fixture image produce byte-identical analytical report bodies (run metadata segregated), with TSK/tool versions pinned and recorded
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 4: Deleted Recovery & Known-File Filtering
+**Goal**: An examiner can recover deleted and orphaned files with honest, filesystem-aware confidence labeling, and cut noise by filtering files against NSRL and custom hash sets — the headline forensic capability layered onto the proven spine.
+**Mode:** mvp
+**Depends on**: Phase 3
+**Requirements**: RECOV-01, RECOV-02, RECOV-03, FILTER-01
+**Success Criteria** (what must be TRUE):
+  1. Tool enumerates and recovers deleted files where metadata/data remain intact, writing them as recovered `files` rows with source offset/inode and per-file hashes
+  2. Orphan files (deleted files whose parent directory is gone) are reported separately
+  3. Each recovered file is labeled with a confidence tier (metadata-intact vs journal vs signature-carving / partial-overwritten), with per-filesystem caveats and overwrite detection — never asserting "the user deleted this"
+  4. Tool filters files against NSRL RDS and user-supplied custom hash sets (allow/block lists), surfacing matches as "known" rather than a good/bad verdict
+**Plans**: TBD
+
+### Phase 5: Log Parsing, Super-Timeline & Search
+**Goal**: An examiner sees filesystem and log evidence merged into one UTC-ordered super-timeline and can search across allocated, unallocated, and file content — completing the full "image + logs -> defensible report" pipeline.
+**Mode:** mvp
+**Depends on**: Phase 4
+**Requirements**: LOG-01, LOG-02, LOG-03, LOG-04, TIME-02, SEARCH-01, SEARCH-02
+**Success Criteria** (what must be TRUE):
+  1. Tool parses Linux authentication logs (`auth.log`/`secure`) from the evidence image, surfacing logins, SSH, sudo, and failed-auth events, with rotated/compressed sets reassembled and year/timezone inferred-and-flagged
+  2. Tool parses syslog/messages (service, kernel, cron, error events) and per-user shell history (`.bash_history`/`.zsh_history`), noting tamperability and log completeness as findings
+  3. All parsed log events are normalized into the shared forensic-event model (timestamp, source, type, actor, action, outcome, evidence-ref) identical in shape to filesystem events
+  4. Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
+  5. Examiner can run literal and regex keyword searches across allocated content, unallocated space, and file content, and match against supplied IOC lists and known-bad hash sets — reporting hits with file and offset
+**Plans**: TBD
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Forensic Foundation | 0/TBD | Not started | - |
+| 2. Filesystem Walk & Metadata | 0/TBD | Not started | - |
+| 3. Timeline & MVP Report | 0/TBD | Not started | - |
+| 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
+| 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
