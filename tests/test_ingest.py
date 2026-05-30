@@ -269,3 +269,99 @@ def test_run_ingest_reverify_mismatch_raises_and_audits_fail(
     events = _read_audit(case_dir)
     reverify = next(e for e in events if e["action"] == "ingest.reverify")
     assert reverify["outcome"] == "FAIL"
+
+
+# -- FAIL audit on a non-integrity error (CR-03) --------------------------
+
+
+def test_run_ingest_audits_fail_on_open_error(
+    tiny_raw_image: Path, case_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An open/hash failure writes a terminal FAIL event before propagating."""
+    from pyautopsy.core import ingest as ingest_mod
+    from pyautopsy.evidence import image as image_seam
+
+    class _BoomOpen(Exception):
+        pass
+
+    def _boom(path: object) -> object:
+        raise _BoomOpen("open failed (injected)")
+
+    monkeypatch.setattr(ingest_mod.image_seam, "open_image", _boom)
+    assert image_seam is not None  # keep the import meaningful
+    with pytest.raises(_BoomOpen):
+        run_ingest(tiny_raw_image, case_dir, examiner="X", evidence_id="E1")
+
+    events = _read_audit(case_dir)
+    error = next(e for e in events if e["action"] == "ingest.error")
+    assert error["outcome"] == "FAIL"
+    assert error["error_type"] == "_BoomOpen"
+    # The terminal FAIL event is the last thing written for a failed run.
+    assert _actions(events)[-1] == "ingest.error"
+
+
+# -- COC atomicity: orphaned case row never persists (WR-01) --------------
+
+
+def test_run_ingest_rolls_back_case_row_on_failure(
+    tiny_raw_image: Path, case_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If ingest fails after the case insert, no orphaned cases row remains."""
+    from pyautopsy.core import ingest as ingest_mod
+
+    def _boom(source: object, chunk: int = 0) -> dict[str, str]:
+        raise RuntimeError("hash failed (injected)")
+
+    monkeypatch.setattr(ingest_mod.integrity, "hash_image", _boom)
+    with pytest.raises(RuntimeError):
+        run_ingest(tiny_raw_image, case_dir, examiner="X", evidence_id="E1")
+
+    conn = sqlite3.connect(case_dir / "case.db")
+    try:
+        cases = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
+        sources = conn.execute(
+            "SELECT COUNT(*) FROM evidence_sources"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    # Neither COC row was committed — the transaction rolled both back (WR-01).
+    assert cases == 0
+    assert sources == 0
+
+
+# -- WR-02 source re-check after open -------------------------------------
+
+
+def test_run_ingest_writes_write_guard_recheck(
+    tiny_raw_image: Path, case_dir: Path
+) -> None:
+    """A successful run re-checks the source-not-mounted guard after open."""
+    run_ingest(tiny_raw_image, case_dir, examiner="X", evidence_id="E1")
+    actions = _actions(_read_audit(case_dir))
+    assert "ingest.write_guard_recheck" in actions
+
+
+# -- WR-05 malformed acquisition hash is audited before propagating -------
+
+
+def test_run_ingest_malformed_acquisition_hash_audits_fail(
+    tiny_raw_image: Path, case_dir: Path
+) -> None:
+    """A malformed --acquisition-hash records a FAIL compare event (WR-05)."""
+    malformed = "z" * 64  # right length, not hexadecimal
+    with pytest.raises(IntegrityError):
+        run_ingest(
+            tiny_raw_image,
+            case_dir,
+            examiner="X",
+            evidence_id="E1",
+            acquisition_hash=malformed,
+        )
+    events = _read_audit(case_dir)
+    compare = next(
+        e for e in events if e["action"] == "ingest.acquisition_compare"
+    )
+    assert compare["outcome"] == "FAIL"
+    assert compare.get("reason") == "malformed_hash"
+    # CR-03 terminal FAIL event also present.
+    assert any(e["action"] == "ingest.error" for e in events)

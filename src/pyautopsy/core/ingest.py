@@ -181,56 +181,72 @@ def run_ingest(
     try:
         audit.write("ingest.write_guard", outcome="PASS", source=str(image_path))
 
-        case_id = store.insert_case(Case(name=evidence_id, examiner=examiner))
-        audit.write("ingest.case_init", case_id=case_id, examiner=examiner)
-
-        # (3) Open the evidence read-only through the single native seam.
-        handle = image_seam.open_image(image_path)
-        try:
-            image_type = str(handle.image_format)
-            tsk = image_seam.tsk_version()
-            audit.write(
-                "ingest.open",
-                image=str(image_path),
-                image_type=image_type,
-                byte_size=handle.get_size(),
-                read_only=True,
-                tsk_version=tsk,
+        # The two chain-of-custody inserts (cases + evidence_sources) land in a
+        # single transaction so a failure between them can never leave an
+        # orphaned cases row with no evidence_sources row (WR-01). The commit
+        # happens once, after a clean re-verify; any exception rolls both back.
+        with store.transaction():
+            case_id = store.insert_case(
+                Case(name=evidence_id, examiner=examiner)
             )
+            audit.write("ingest.case_init", case_id=case_id, examiner=examiner)
 
-            # (4) Single-pass MD5 + SHA-256 (D-07); capture the baseline.
-            baseline = integrity.hash_image(handle)
-            byte_size = handle.get_size()
-            audit.write(
-                "ingest.hash",
-                sha256=baseline["sha256"],
-                md5=baseline["md5"],
-                byte_size=byte_size,
-            )
+            # (3) Open the evidence read-only through the single native seam.
+            handle = image_seam.open_image(image_path)
+            try:
+                # (WR-02) Re-assert the source did not become mounted between
+                # the up-front guard and the open, before any digest is taken.
+                integrity.assert_source_not_mounted(image_path)
+                audit.write(
+                    "ingest.write_guard_recheck",
+                    outcome="PASS",
+                    source=str(image_path),
+                )
 
-            acquisition_verified = _compare_acquisition(
-                audit, baseline, acquisition_hash
-            )
-
-            # (5) Persist the evidence_sources COC row (REPORT-01).
-            source_id = store.insert_evidence_source(
-                EvidenceSource(
-                    case_id=case_id,
-                    evidence_id=evidence_id,
-                    path=str(image_path),
+                image_type = str(handle.image_format)
+                tsk = image_seam.tsk_version()
+                audit.write(
+                    "ingest.open",
+                    image=str(image_path),
                     image_type=image_type,
+                    byte_size=handle.get_size(),
+                    read_only=True,
+                    tsk_version=tsk,
+                )
+
+                # (4) Single-pass MD5 + SHA-256 (D-07); capture the baseline.
+                baseline = integrity.hash_image(handle)
+                byte_size = handle.get_size()
+                audit.write(
+                    "ingest.hash",
                     sha256=baseline["sha256"],
                     md5=baseline["md5"],
                     byte_size=byte_size,
-                    acquired_utc=iso_utc(),
-                    tsk_version=tsk,
                 )
-            )
 
-            # (6) End-of-run re-verify (D-08/INGEST-03).
-            _reverify(audit, handle, baseline)
-        finally:
-            handle.close()
+                acquisition_verified = _compare_acquisition(
+                    audit, baseline, acquisition_hash
+                )
+
+                # (5) Persist the evidence_sources COC row (REPORT-01).
+                source_id = store.insert_evidence_source(
+                    EvidenceSource(
+                        case_id=case_id,
+                        evidence_id=evidence_id,
+                        path=str(image_path),
+                        image_type=image_type,
+                        sha256=baseline["sha256"],
+                        md5=baseline["md5"],
+                        byte_size=byte_size,
+                        acquired_utc=iso_utc(),
+                        tsk_version=tsk,
+                    )
+                )
+
+                # (6) End-of-run re-verify (D-08/INGEST-03).
+                _reverify(audit, handle, baseline)
+            finally:
+                handle.close()
 
         audit.write(
             "ingest.end",
@@ -239,6 +255,17 @@ def run_ingest(
             evidence_source_id=source_id,
             sha256=baseline["sha256"],
         )
+    except Exception as exc:
+        # (CR-03) Every failed run leaves a terminal FAIL audit event before the
+        # exception propagates — honouring the docstring/REPORT-02 contract for
+        # open/hash/persist failures, not just the integrity checks.
+        audit.write(
+            "ingest.error",
+            outcome="FAIL",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
     finally:
         store.close()
 
@@ -271,7 +298,19 @@ def _compare_acquisition(
     """
     if acquisition_hash is None:
         return None
-    result = integrity.verify_acquisition(baseline, acquisition_hash)
+    try:
+        result = integrity.verify_acquisition(baseline, acquisition_hash)
+    except IntegrityError as exc:
+        # (WR-05) A malformed/unrecognised supplied hash raises before any
+        # compare can run; audit the failed comparison attempt before it
+        # propagates, closing the same FAIL-before-propagate gap as CR-03.
+        audit.write(
+            "ingest.acquisition_compare",
+            outcome="FAIL",
+            reason="malformed_hash",
+            error=str(exc),
+        )
+        raise
     audit.write(
         "ingest.acquisition_compare",
         outcome="PASS" if result.passed else "FAIL",
