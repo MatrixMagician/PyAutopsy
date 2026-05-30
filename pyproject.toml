@@ -72,3 +72,10 @@ disallow_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
+
+# pytsk3 and pyewf are native C-extension bindings that ship no type stubs;
+# they are confined to the single seam (evidence/image.py). Suppress the
+# missing-stub error for these modules only (D-06).
+[[tool.mypy.overrides]]
+module = ["pytsk3", "pyewf"]
+ignore_missing_imports = true
