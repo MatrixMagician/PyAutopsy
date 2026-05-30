@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -48,6 +49,14 @@ _DEFAULT_CHUNK = 8 * 1024 * 1024
 
 # Map a supplied hex-digest length to the algorithm it identifies.
 _LEN_TO_ALGO: dict[int, str] = {32: "md5", 64: "sha256"}
+
+# /proc/mounts escapes a handful of bytes in the mountpoint field as a
+# three-digit octal sequence (``\040`` space, ``\011`` tab, ``\012`` newline,
+# ``\134`` backslash). We unescape ONLY these octal sequences on the raw bytes
+# and then decode the result as UTF-8 — never routing UTF-8 through
+# ``unicode_escape`` (a Latin-1 codec that corrupts multi-byte mountpoints and
+# silently defeats the guard for non-ASCII paths).
+_OCTAL_ESCAPE = re.compile(rb"\\([0-7]{3})")
 
 
 class IntegrityError(Exception):
@@ -126,6 +135,10 @@ def hash_image(
 
     Raises:
         ValueError: If ``chunk`` is not positive.
+        IntegrityError: If the source short-reads — fewer bytes are retrievable
+            than ``get_size()`` reports (a truncated/corrupt acquisition). A
+            digest must never silently cover less than the whole image
+            (INGEST-02/D-08), so a short read is a loud failure.
     """
     if chunk <= 0:
         raise ValueError(f"chunk must be positive, got {chunk}")
@@ -142,6 +155,12 @@ def hash_image(
         md5.update(block)
         sha256.update(block)
         offset += len(block)
+    if offset != total:
+        raise IntegrityError(
+            f"short read while hashing source: read {offset} of {total} bytes "
+            "(image truncated or unreadable); refusing to record a partial "
+            "digest"
+        )
     return {"md5": md5.hexdigest(), "sha256": sha256.hexdigest()}
 
 
@@ -163,7 +182,10 @@ def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
 
     Raises:
         IntegrityError: If ``supplied`` has no recognised digest length (i.e. it
-            matches neither MD5 nor SHA-256), so it cannot be compared at all.
+            matches neither MD5 nor SHA-256), or is not valid hexadecimal, so it
+            cannot be compared at all. Only md5/sha256 acquisition hashes are
+            accepted; a malformed input is rejected as malformed rather than
+            silently treated as a mismatch.
     """
     normalised = supplied.strip().lower()
     algorithm = _LEN_TO_ALGO.get(len(normalised))
@@ -172,6 +194,13 @@ def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
             f"supplied acquisition hash is not a recognised md5/sha256 hex "
             f"digest (length {len(normalised)}): {supplied!r}"
         )
+    try:
+        int(normalised, 16)
+    except ValueError as exc:
+        raise IntegrityError(
+            f"supplied acquisition hash is not valid hexadecimal: "
+            f"{supplied!r}"
+        ) from exc
     computed_digest = computed[algorithm].lower()
     return VerifyResult(
         passed=computed_digest == normalised,
@@ -219,6 +248,27 @@ def _read_proc_mounts() -> str:
         return ""
 
 
+def _unescape_mount_field(field: str) -> str:
+    """Decode a ``/proc/mounts`` field's octal escapes back to a real path.
+
+    The kernel escapes only space/tab/newline/backslash as three-digit octal
+    sequences (e.g. ``\\040`` → space); all other bytes — including multi-byte
+    UTF-8 — are emitted verbatim. We therefore unescape ONLY those octal
+    sequences on the raw bytes, then decode the result as UTF-8. This is the
+    fix for the ``unicode_escape`` mis-decode that corrupted every non-ASCII
+    mountpoint and let a mounted evidence path bypass the P1 guard.
+
+    Args:
+        field: The raw mountpoint field as split from a ``/proc/mounts`` line.
+
+    Returns:
+        The decoded mountpoint path with octal escapes resolved.
+    """
+    raw = field.encode("utf-8")
+    raw = _OCTAL_ESCAPE.sub(lambda m: bytes([int(m.group(1), 8)]), raw)
+    return raw.decode("utf-8", errors="surrogateescape")
+
+
 def _mountpoints(mounts_text: str) -> list[str]:
     """Parse mountpoint paths from ``/proc/mounts``-formatted text.
 
@@ -229,7 +279,7 @@ def _mountpoints(mounts_text: str) -> list[str]:
         fields = line.split()
         if len(fields) < 2:
             continue
-        mountpoint = fields[1].encode("utf-8").decode("unicode_escape")
+        mountpoint = _unescape_mount_field(fields[1])
         points.append(os.path.realpath(mountpoint))
     return points
 

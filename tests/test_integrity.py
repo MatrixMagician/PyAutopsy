@@ -21,7 +21,9 @@ import pytest
 from pyautopsy.evidence.image import open_image
 from pyautopsy.evidence.integrity import (
     IntegrityError,
+    MountedSourceError,
     VerifyResult,
+    assert_source_not_mounted,
     hash_image,
     reverify,
     verify_acquisition,
@@ -39,6 +41,24 @@ class _FakeImage:
 
     def get_size(self) -> int:
         return len(self._data)
+
+
+class _TruncatedImage:
+    """A source whose ``get_size()`` over-reports the retrievable bytes.
+
+    Models a truncated/corrupt acquisition: ``read`` returns ``b""`` (EOF)
+    once the real bytes are exhausted, before ``offset`` reaches ``total``.
+    """
+
+    def __init__(self, data: bytes, reported_size: int) -> None:
+        self._data = data
+        self._reported_size = reported_size
+
+    def read(self, offset: int, size: int) -> bytes:
+        return self._data[offset : offset + size]
+
+    def get_size(self) -> int:
+        return self._reported_size
 
 
 def test_hash_image_matches_hashlib_reference() -> None:
@@ -82,6 +102,22 @@ def test_hash_image_chunk_invariant(chunk: int) -> None:
     assert result["sha256"] == hashlib.sha256(data).hexdigest()
 
 
+def test_hash_image_short_read_raises_loudly() -> None:
+    """A source that short-reads vs get_size() fails — no partial digest (CR-02)."""
+    # 100 real bytes but get_size() claims 1000: read() EOFs at offset 100.
+    handle = _TruncatedImage(b"\x00" * 100, reported_size=1000)
+    with pytest.raises(IntegrityError, match="short read"):
+        hash_image(handle)
+
+
+def test_reverify_short_read_raises_loudly() -> None:
+    """Re-verify over a now-truncated source fails loud, not a false PASS (CR-02)."""
+    handle = _TruncatedImage(b"\x00" * 100, reported_size=1000)
+    baseline = {"sha256": "0" * 64, "md5": "0" * 32}
+    with pytest.raises(IntegrityError, match="short read"):
+        reverify(handle, baseline)
+
+
 def test_verify_acquisition_pass_sha256() -> None:
     """A matching supplied SHA-256 (any case) returns PASS."""
     data = b"acquired bytes"
@@ -118,6 +154,55 @@ def test_verify_acquisition_unknown_length_raises() -> None:
     computed = hash_image(_FakeImage(b"x"))
     with pytest.raises(IntegrityError):
         verify_acquisition(computed, "deadbeef")
+
+
+def test_verify_acquisition_non_hex_right_length_raises() -> None:
+    """A right-length but non-hex hash is rejected as malformed, not FAIL (WR-07)."""
+    computed = hash_image(_FakeImage(b"x"))
+    not_hex = "z" * 64  # correct sha256 length, but not hexadecimal
+    with pytest.raises(IntegrityError, match="hexadecimal"):
+        verify_acquisition(computed, not_hex)
+
+
+# -- mounted-source guard: non-ASCII mountpoint decode (CR-01) -------------
+
+
+def test_assert_source_not_mounted_matches_non_ascii_mountpoint(
+    tmp_path: Path,
+) -> None:
+    """A non-ASCII mountpoint must still match and refuse the source (CR-01)."""
+    source = tmp_path / "café"
+    source.mkdir()
+    real = source.resolve()
+    # /proc/mounts emits the mountpoint field; non-ASCII bytes are verbatim.
+    mounts_text = f"/dev/sdb1 {real} ext4 rw,relatime 0 0\n"
+    with pytest.raises(MountedSourceError):
+        assert_source_not_mounted(source, mounts_text=mounts_text)
+
+
+def test_assert_source_not_mounted_decodes_octal_escapes(
+    tmp_path: Path,
+) -> None:
+    """An octal-escaped space in the mountpoint field is decoded correctly."""
+    source = tmp_path / "mnt point"  # contains a space
+    source.mkdir()
+    real = str(source.resolve())
+    escaped = real.replace(" ", r"\040")
+    mounts_text = f"/dev/sdb1 {escaped} ext4 rw,relatime 0 0\n"
+    with pytest.raises(MountedSourceError):
+        assert_source_not_mounted(source, mounts_text=mounts_text)
+
+
+def test_assert_source_not_mounted_allows_non_mount_path(
+    tmp_path: Path,
+) -> None:
+    """An ordinary path that is not a mountpoint is permitted."""
+    source = tmp_path / "café" / "image.dd"
+    source.parent.mkdir()
+    source.write_bytes(b"data")
+    mounts_text = "/dev/sda1 / ext4 rw 0 0\n"
+    # Must not raise — the source is not itself a mountpoint.
+    assert_source_not_mounted(source, mounts_text=mounts_text)
 
 
 def test_reverify_passes_on_unchanged_source() -> None:
