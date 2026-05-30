@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyautopsy"
+description = "Forensically-sound disk-image ingest on The Sleuth Kit (Python/Linux CLI)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "PyAutopsy" }]
+keywords = ["forensics", "dfir", "sleuthkit", "pytsk3", "disk-image"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+]
+dynamic = ["version"]
+dependencies = [
+    "pytsk3==20260520",
+    "typer>=0.12,<1",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+# E01/EWF support. libewf-python is sdist-only and needs system libewf-dev to
+# build, so it is kept out of the core install (D-04).
+ewf = ["libewf-python==20240506"]
+dev = ["pytest", "ruff", "mypy"]
+
+[project.scripts]
+pyautopsy = "pyautopsy.cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/MatrixMagician/PyAutopsy"
+
+[tool.hatch.version]
+path = "src/pyautopsy/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyautopsy"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# pycodestyle (E), pyflakes (F), isort (I), pyupgrade (UP), bugbear (B).
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
