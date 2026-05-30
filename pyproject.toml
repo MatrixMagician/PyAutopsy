@@ -60,6 +60,10 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 # pycodestyle (E), pyflakes (F), isort (I), pyupgrade (UP), bugbear (B).
 select = ["E", "F", "I", "UP", "B"]
+# UP017 rewrites `timezone.utc` -> `datetime.UTC`. We deliberately keep the
+# explicit `timezone.utc` form: it is the documented forensic-soundness idiom
+# (D-10 / PITFALLS P4) and the convention every later module follows.
+ignore = ["UP017"]
 
 [tool.mypy]
 python_version = "3.11"
