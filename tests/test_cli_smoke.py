@@ -1,69 +1,112 @@
-"""End-to-end ``pyautopsy ingest`` smoke test — the Walking Skeleton target.
+"""End-to-end ``pyautopsy ingest`` smoke + CLI-surface tests (D-12).
 
-This test pins the finish line for Phase 1: invoking the exact D-12 CLI
+This is the Walking-Skeleton finish line for Phase 1: invoking the exact D-12 CLI
 signature must exit 0 and create the case store (``case.db``) and the audit log
-(``logs/audit.jsonl``) under the case directory.
+(``logs/audit.jsonl``) under the case directory. Plan 01-04 implements the
+``ingest`` command, so the original ``xfail(strict=True)`` marker is **removed**
+here and the test now asserts the real contract.
 
-It is marked ``xfail(strict=True)`` because the ``ingest`` command is not yet
-implemented (the ``pyautopsy.cli.main`` module / Typer app does not exist until
-plan 01-04). ``strict=True`` means:
-
-* while ``ingest`` is missing, the test xfails → the suite stays green; and
-* the moment plan 01-04 makes it pass, ``strict`` turns the unexpected pass into
-  a FAILURE, forcing the executor of 01-04 to remove this xfail marker and let
-  the smoke test assert the real contract.
-
-So this single marker both keeps the suite green today and guarantees the
-Walking-Skeleton target is wired up (not silently forgotten) tomorrow.
+Alongside the happy-path smoke test, this module checks the CLI's loud-failure
+and help behaviors: a wrong ``--acquisition-hash`` exits non-zero with a FAIL
+audit event (D-08), ``--help`` lists the documented options, and a missing
+required option errors clearly (Typer validation).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
-import pytest
+from typer.testing import CliRunner
+
+from pyautopsy.cli.main import app
+
+runner = CliRunner()
 
 
-def _run_ingest(image: Path, case: Path) -> int:
-    """Invoke ``pyautopsy ingest`` against the D-12 signature.
-
-    Returns the process exit code. Raises (e.g. ``ModuleNotFoundError`` /
-    ``AttributeError``) while the command does not yet exist — which is exactly
-    the expected-failure condition this test documents.
-    """
-    # Imported lazily so the xfail captures the "not yet implemented" state
-    # rather than failing at module import time.
-    from pyautopsy.cli.main import app  # noqa: PLC0415 — intentional lazy import
-    from typer.testing import CliRunner  # noqa: PLC0415 — intentional lazy import
-
-    result = CliRunner().invoke(
-        app,
-        [
-            "ingest",
-            str(image),
-            "--case",
-            str(case),
-            "--examiner",
-            "X",
-            "--evidence-id",
-            "E1",
-        ],
-    )
-    return result.exit_code
+def _ingest_args(image: Path, case: Path, *, acquisition_hash: str | None = None):
+    """Build the D-12 ``ingest`` argument vector."""
+    args = [
+        "ingest",
+        str(image),
+        "--case",
+        str(case),
+        "--examiner",
+        "X",
+        "--evidence-id",
+        "E1",
+    ]
+    if acquisition_hash is not None:
+        args += ["--acquisition-hash", acquisition_hash]
+    return args
 
 
-@pytest.mark.xfail(
-    reason="Walking Skeleton target — ingest command implemented in plan 01-04",
-    strict=True,
-)
 def test_ingest_smoke(tiny_raw_image: Path, case_dir: Path) -> None:
     """`pyautopsy ingest <img> --case <dir> --examiner X --evidence-id E1` works.
 
-    Asserts exit 0 and that the case store + audit log are created. Currently
-    xfails because the ``ingest`` command is not implemented (plan 01-04).
+    Asserts exit 0 and that the case store + audit log are created — the
+    Walking-Skeleton contract that was xfail-pinned by plan 01-00.
     """
-    exit_code = _run_ingest(tiny_raw_image, case_dir)
+    result = runner.invoke(app, _ingest_args(tiny_raw_image, case_dir))
 
-    assert exit_code == 0
+    assert result.exit_code == 0, result.output
     assert (case_dir / "case.db").is_file()
     assert (case_dir / "logs" / "audit.jsonl").is_file()
+
+
+def test_ingest_acquisition_match_exits_zero(
+    tiny_raw_image: Path, case_dir: Path
+) -> None:
+    """A correct ``--acquisition-hash`` still exits 0."""
+    sha256 = hashlib.sha256(tiny_raw_image.read_bytes()).hexdigest()
+    result = runner.invoke(
+        app, _ingest_args(tiny_raw_image, case_dir, acquisition_hash=sha256)
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_ingest_wrong_acquisition_hash_exits_nonzero(
+    tiny_raw_image: Path, case_dir: Path
+) -> None:
+    """A wrong ``--acquisition-hash`` exits non-zero + records a FAIL event."""
+    result = runner.invoke(
+        app, _ingest_args(tiny_raw_image, case_dir, acquisition_hash="0" * 64)
+    )
+    assert result.exit_code != 0
+
+    log = case_dir / "logs" / "audit.jsonl"
+    events = [
+        json.loads(line)
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    compare = next(
+        e for e in events if e["action"] == "ingest.acquisition_compare"
+    )
+    assert compare["outcome"] == "FAIL"
+
+
+def test_ingest_help_lists_documented_options() -> None:
+    """``ingest --help`` lists every D-12 option."""
+    result = runner.invoke(app, ["ingest", "--help"])
+    assert result.exit_code == 0
+    for option in ("--case", "--examiner", "--evidence-id", "--acquisition-hash"):
+        assert option in result.output
+
+
+def test_ingest_missing_required_option_errors(
+    tiny_raw_image: Path,
+) -> None:
+    """Omitting a required option errors clearly (non-zero, Typer validation)."""
+    result = runner.invoke(app, ["ingest", str(tiny_raw_image)])
+    assert result.exit_code != 0
+
+
+def test_version_flag() -> None:
+    """``pyautopsy --version`` prints the package version and exits 0."""
+    import pyautopsy
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert pyautopsy.__version__ in result.output
