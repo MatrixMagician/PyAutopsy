@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-05-30T16:18:36.826Z"
-last_activity: 2026-05-30 — Roadmap created (5 phases, 27/27 requirements mapped)
+last_updated: "2026-05-30T16:27:32.392Z"
+last_activity: 2026-05-30 -- Phase 1 execution started
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 
 ## Current Position
 
-Phase: 1 of 5 (Forensic Foundation)
-Plan: 0 of TBD in current phase
+Phase: 1 (Forensic Foundation) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-05-30 — Roadmap created (5 phases, 27/27 requirements mapped)
+Last activity: 2026-05-30 -- Phase 1 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01 P00 | 5 | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,9 @@ Recent decisions affecting current work:
 - [Roadmap]: Normalized SQLite case store is the architectural spine; all producers write rows, the reporter only reads.
 - [Roadmap]: Forensic soundness (read-only, hashing, UTC-everywhere, audit, safe extraction) is gated in Phase 1 and enforced every phase — it cannot be retrofitted.
 - [Roadmap]: v1 recovery scoped to ext4/NTFS/FAT + raw/dd/E01; exFAT/HFS+/APFS gated behind a runtime capability probe (deferred to v2).
+- [Phase ?]: 01-00: hatchling dynamic version makes __version__ the single source of truth
+- [Phase ?]: 01-00: committed deterministic 64 KiB tiny_raw.dd fixture instead of mkfs-at-test-time (A3)
+- [Phase ?]: 01-00: kept timezone.utc idiom (ruff UP017 ignored) per D-10/PITFALLS P4
 
 ### Pending Todos
 
@@ -88,6 +92,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-30T15:54:28.631Z
+Last session: 2026-05-30T16:27:15.278Z
 Stopped at: Phase 1 context gathered
 Resume file: .planning/phases/01-forensic-foundation/01-CONTEXT.md

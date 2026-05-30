@@ -10,10 +10,10 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### Ingestion & Integrity
 
-- [ ] **INGEST-01**: User can ingest a disk image (raw/dd and E01/EWF) for analysis
-- [ ] **INGEST-02**: Tool verifies source image integrity by computing MD5 + SHA-256 and comparing against a supplied acquisition hash when provided
-- [ ] **INGEST-03**: Tool guarantees evidence is never modified — source opened read-only, never mounted, all output written to a separate case directory, source hash re-verified at end of run
-- [ ] **INGEST-04**: Tool extracts/parses evidence and archives safely, rejecting path-traversal (Zip Slip) and decompression-bomb inputs
+- [x] **INGEST-01**: User can ingest a disk image (raw/dd and E01/EWF) for analysis
+- [x] **INGEST-02**: Tool verifies source image integrity by computing MD5 + SHA-256 and comparing against a supplied acquisition hash when provided
+- [x] **INGEST-03**: Tool guarantees evidence is never modified — source opened read-only, never mounted, all output written to a separate case directory, source hash re-verified at end of run
+- [x] **INGEST-04**: Tool extracts/parses evidence and archives safely, rejecting path-traversal (Zip Slip) and decompression-bomb inputs
 
 ### Metadata Analysis
 
@@ -52,8 +52,8 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### Reporting & Case Management
 
-- [ ] **REPORT-01**: Tool records case / chain-of-custody metadata (case ID, examiner, evidence ID, acquisition source, tool + versions, timestamps)
-- [ ] **REPORT-02**: Tool writes an append-only audit log of its actions (inputs, hashes, parameters, tool versions, start/end times, errors)
+- [x] **REPORT-01**: Tool records case / chain-of-custody metadata (case ID, examiner, evidence ID, acquisition source, tool + versions, timestamps)
+- [x] **REPORT-02**: Tool writes an append-only audit log of its actions (inputs, hashes, parameters, tool versions, start/end times, errors)
 - [ ] **REPORT-03**: Tool generates a human-readable report (HTML/Markdown) with case/COC, methodology + tool versions, findings, evidence hashes, timeline, and exhibits
 - [ ] **REPORT-04**: Tool emits a structured machine-readable JSON report alongside the human-readable report
 
@@ -111,10 +111,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INGEST-01 | Phase 1 | Pending |
-| INGEST-02 | Phase 1 | Pending |
-| INGEST-03 | Phase 1 | Pending |
-| INGEST-04 | Phase 1 | Pending |
+| INGEST-01 | Phase 1 | Complete |
+| INGEST-02 | Phase 1 | Complete |
+| INGEST-03 | Phase 1 | Complete |
+| INGEST-04 | Phase 1 | Complete |
 | META-01 | Phase 2 | Pending |
 | META-02 | Phase 2 | Pending |
 | META-03 | Phase 2 | Pending |
@@ -132,19 +132,21 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TIME-02 | Phase 5 | Pending |
 | SEARCH-01 | Phase 5 | Pending |
 | SEARCH-02 | Phase 5 | Pending |
-| REPORT-01 | Phase 1 | Pending |
-| REPORT-02 | Phase 1 | Pending |
+| REPORT-01 | Phase 1 | Complete |
+| REPORT-02 | Phase 1 | Complete |
 | REPORT-03 | Phase 3 | Pending |
 | REPORT-04 | Phase 3 | Pending |
 | CLI-01 | Phase 3 | Pending |
 | CLI-02 | Phase 3 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 27 total
 - Mapped to phases: 27 ✓
 - Unmapped: 0 ✓
 
 **Per-phase counts:**
+
 - Phase 1 (Forensic Foundation): 6 — INGEST-01..04, REPORT-01, REPORT-02
 - Phase 2 (Filesystem Walk & Metadata): 5 — META-01..05
 - Phase 3 (Timeline & MVP Report): 5 — TIME-01, REPORT-03, REPORT-04, CLI-01, CLI-02

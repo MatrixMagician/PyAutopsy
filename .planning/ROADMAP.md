@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plansPlans:
 **Wave 1**
 
-- [ ] 01-00-PLAN.md — Wave 0: project scaffold, src layout, pytest infra, UTC helper, fixtures, failing end-to-end ingest test (D-13, D-10)
+- [x] 01-00-PLAN.md — Wave 0: project scaffold, src layout, pytest infra, UTC helper, fixtures, failing end-to-end ingest test (D-13, D-10)
 - [ ] 01-01-PLAN.md — Case store (SQLite, typed+JSON-attributes schema) + append-only JSONL audit log (REPORT-01, REPORT-02)
 - [ ] 01-02-PLAN.md — Single native seam (pytsk3/pyewf read-only open) + single-pass MD5/SHA-256 integrity + re-verify + read-only guarantee (INGEST-01/02/03)
 - [ ] 01-03-PLAN.md — Hardened safe_extract jail vs Zip Slip / symlink / decompression bombs (INGEST-04, phase security gate)
@@ -128,7 +128,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Forensic Foundation | 0/5 | Planned | - |
+| 1. Forensic Foundation | 1/5 | In Progress|  |
 | 2. Filesystem Walk & Metadata | 0/TBD | Not started | - |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
