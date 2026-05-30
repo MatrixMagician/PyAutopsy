@@ -245,6 +245,47 @@ def test_ratio_bomb_zip_rejected(ratio_bomb_zip: Path, tmp_path: Path) -> None:
     assert _no_escape(tmp_path, jail)
 
 
+def test_ratio_bomb_tar_rejected(tmp_path: Path) -> None:
+    """A highly compressible tar.gz trips the archive-scope ratio cap (WR-03)."""
+    # Gzip-compressed tar; the .tar suffix keeps _no_escape's archive allowance
+    # working (it ignores .tar/.zip fixtures), and tarfile detects gzip by
+    # content regardless of the name.
+    archive = tmp_path / "ratio.tar"
+    # 4 MiB of zeros compresses to a few KiB — an enormous ratio.
+    payload = b"\x00" * (4 * 1024 * 1024)
+    with tarfile.open(archive, "w:gz") as tar:
+        info = tarfile.TarInfo(name="bomb.bin")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+    jail = tmp_path / "jail"
+    # Per-entry and total caps are generous; only the ratio guard should fire.
+    limits = ExtractionLimits(
+        max_entry_size=64 * 1024 * 1024,
+        max_total_uncompressed=64 * 1024 * 1024,
+        max_ratio=10,
+    )
+    with pytest.raises(ExtractionRejected, match="compression-ratio"):
+        safe_extract(archive, jail, limits=limits)
+    assert _no_escape(tmp_path, jail)
+
+
+def test_benign_normalizable_tar_name_not_false_rejected(tmp_path: Path) -> None:
+    """A benign member whose name the data filter normalizes still extracts (WR-04)."""
+    archive = tmp_path / "norm.tar"
+    payload = b"alpha\n"
+    with tarfile.open(archive, "w") as tar:
+        # `a//b.txt` is benign but the data filter collapses the double slash;
+        # a raw-equality escape check would false-reject it.
+        info = tarfile.TarInfo(name="a//b.txt")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+    jail = tmp_path / "jail"
+    result = safe_extract(archive, jail)
+    assert not result.rejected
+    assert (jail / "a" / "b.txt").read_bytes() == payload
+    assert _no_escape(tmp_path, jail)
+
+
 def test_count_bomb_tar_rejected(count_bomb_tar: Path, tmp_path: Path) -> None:
     jail = tmp_path / "jail"
     with pytest.raises(ExtractionRejected):

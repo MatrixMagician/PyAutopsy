@@ -36,6 +36,7 @@ contract early (01-RESEARCH.md §Architecture note).
 from __future__ import annotations
 
 import os
+import posixpath
 import stat
 import tarfile
 import zipfile
@@ -194,6 +195,18 @@ def _confined_target(dest_real: str, name: str) -> str:
     return target
 
 
+def _normalized_member_name(name: str) -> str:
+    """Return a POSIX-normalized, leading-slash-stripped member name (WR-04).
+
+    Collapses ``.``/duplicate-separator noise (``a//b`` → ``a/b``) and strips a
+    leading ``/`` so a benign rewrite by the tar data filter does not read as an
+    escape attempt. Path-traversal (``..``) and absolute paths are rejected
+    earlier by :func:`_confined_target`, so this only normalizes cosmetic
+    differences for the escape-detection compare.
+    """
+    return posixpath.normpath(name.replace("\\", "/")).lstrip("/")
+
+
 def _check_ratio(file_size: int, compress_size: int, limits: ExtractionLimits) -> None:
     """Reject an entry whose uncompressed/compressed ratio is too high.
 
@@ -222,6 +235,13 @@ def _extract_tar(
     result: ExtractionResult,
 ) -> None:
     """Extract a tar archive under the jail with all guards applied."""
+    # Compressed on-disk size of the whole archive. Tar members carry no
+    # per-entry compressed size (compression is applied to the whole stream),
+    # so the ratio cap (WR-03) is enforced at archive scope: total uncompressed
+    # bytes / compressed archive size must stay within limits.max_ratio. This
+    # closes the gap where a highly compressible tar.gz member under the
+    # per-entry cap evaded the ratio guard the zip path already enforces.
+    archive_compressed_size = max(archive_path.stat().st_size, 1)
     with tarfile.open(archive_path, "r:*") as tar:
         # Pin the stdlib extraction filter explicitly to the hardened 'data'
         # profile and apply it per member below (filter='data', Pitfall 3 — the
@@ -268,7 +288,16 @@ def _extract_tar(
                     raise ExtractionRejected(
                         f"tar data-filter rejected {original_name!r}: {exc}"
                     ) from exc
-                if filtered.name != original_name.lstrip("/"):
+                # Compare on a NORMALIZED form, not raw equality (WR-04): the
+                # data filter may legitimately collapse a benign name
+                # (e.g. `a//b` -> `a/b`, strip a trailing slash) which an
+                # lstrip("/")-only compare would false-reject. Absolute paths
+                # and `..` traversal were already rejected by _confined_target
+                # above, so any *normalized* difference here is a real escape
+                # attempt the filter rewrote, not cosmetic noise.
+                if _normalized_member_name(
+                    filtered.name
+                ) != _normalized_member_name(original_name):
                     raise ExtractionRejected(
                         f"member name rewritten by data filter "
                         f"(escape attempt): {original_name!r}"
@@ -311,6 +340,15 @@ def _extract_tar(
                             raise ExtractionRejected(
                                 "total-uncompressed bomb: "
                                 f"{total} > {limits.max_total_uncompressed}"
+                            )
+                        # Archive-scope compression-ratio cap (WR-03): abort
+                        # mid-stream once the cumulative uncompressed/compressed
+                        # ratio exceeds the limit.
+                        if total // archive_compressed_size > limits.max_ratio:
+                            raise ExtractionRejected(
+                                f"compression-ratio bomb: {total}/"
+                                f"{archive_compressed_size} "
+                                f"> {limits.max_ratio}x"
                             )
                         out.write(chunk)
                 result.extracted.append(Path(target))
