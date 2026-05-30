@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-05-30T16:27:32.392Z"
-last_activity: 2026-05-30 -- Phase 1 execution started
+stopped_at: Completed 01-01-PLAN.md (case store + audit log)
+last_updated: "2026-05-30T16:35:00.000Z"
+last_activity: 2026-05-30 -- Completed 01-01 (REPORT-01, REPORT-02)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
-  percent: 0
+  completed_plans: 2
+  percent: 40
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 ## Current Position
 
 Phase: 1 (Forensic Foundation) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
-Last activity: 2026-05-30 -- Phase 1 execution started
+Last activity: 2026-05-30 -- Completed 01-01 (case store + audit log)
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 01 P00 | 5 | 3 tasks | 13 files |
+| Phase 01 P01 | 8 | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 01-00: hatchling dynamic version makes __version__ the single source of truth
 - [Phase ?]: 01-00: committed deterministic 64 KiB tiny_raw.dd fixture instead of mkfs-at-test-time (A3)
 - [Phase ?]: 01-00: kept timezone.utc idiom (ruff UP017 ignored) per D-10/PITFALLS P4
+- [Phase 1]: 01-01: CaseStore is the sole DB writer abstraction — no raw SQL outside src/pyautopsy/case/store.py
+- [Phase 1]: 01-01: run_log table present as optional SQLite mirror target (D-09); JSONL audit log stays authoritative
+- [Phase 1]: 01-01: tool version via importlib.metadata.version('pyautopsy') with __version__ fallback for uninstalled checkouts
+- [Phase 1]: 01-01: audit writer rejects reserved action/ts keys to prevent shadowing the UTC stamp (tamper-evidence)
 
 ### Pending Todos
 
@@ -92,6 +97,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-30T16:27:15.278Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-forensic-foundation/01-CONTEXT.md
+Last session: 2026-05-30T16:35:00.000Z
+Stopped at: Completed 01-01-PLAN.md (case store + audit log)
+Resume file: .planning/phases/01-forensic-foundation/01-02-PLAN.md
