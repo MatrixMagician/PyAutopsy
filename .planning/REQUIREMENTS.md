@@ -35,20 +35,20 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### Log Analysis
 
-- [ ] **LOG-01**: Tool parses Linux authentication logs (`auth.log` / `secure`) from the evidence image, surfacing logins, SSH, sudo, and failed-auth events
-- [ ] **LOG-02**: Tool parses syslog/messages for service, kernel, cron, and error events
-- [ ] **LOG-03**: Tool parses shell history (`.bash_history` / `.zsh_history`) per user, noting tamperability
-- [ ] **LOG-04**: Tool normalizes all parsed log events into a shared forensic-event model (timestamp, source, type, actor, action, outcome, evidence-ref)
+- [x] **LOG-01**: Tool parses Linux authentication logs (`auth.log` / `secure`) from the evidence image, surfacing logins, SSH, sudo, and failed-auth events
+- [x] **LOG-02**: Tool parses syslog/messages for service, kernel, cron, and error events
+- [x] **LOG-03**: Tool parses shell history (`.bash_history` / `.zsh_history`) per user, noting tamperability
+- [x] **LOG-04**: Tool normalizes all parsed log events into a shared forensic-event model (timestamp, source, type, actor, action, outcome, evidence-ref)
 
 ### Timeline
 
 - [x] **TIME-01**: Tool builds a chronological timeline from filesystem MACB metadata (bodyfile/mactime style)
-- [ ] **TIME-02**: Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
+- [x] **TIME-02**: Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
 
 ### Search & Matching
 
-- [ ] **SEARCH-01**: User can run literal and regex keyword searches across allocated content, unallocated space, and file content
-- [ ] **SEARCH-02**: Tool matches files and content against supplied IOC lists and known-bad hash sets, reporting hits with file and offset
+- [x] **SEARCH-01**: User can run literal and regex keyword searches across allocated content, unallocated space, and file content
+- [x] **SEARCH-02**: Tool matches files and content against supplied IOC lists and known-bad hash sets, reporting hits with file and offset
 
 ### Reporting & Case Management
 
@@ -124,14 +124,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RECOV-02 | Phase 4 | Complete |
 | RECOV-03 | Phase 4 | Complete |
 | FILTER-01 | Phase 4 | Complete |
-| LOG-01 | Phase 5 | Pending |
-| LOG-02 | Phase 5 | Pending |
-| LOG-03 | Phase 5 | Pending |
-| LOG-04 | Phase 5 | Pending |
+| LOG-01 | Phase 5 | Complete |
+| LOG-02 | Phase 5 | Complete |
+| LOG-03 | Phase 5 | Complete |
+| LOG-04 | Phase 5 | Complete |
 | TIME-01 | Phase 3 | Complete |
-| TIME-02 | Phase 5 | Pending |
-| SEARCH-01 | Phase 5 | Pending |
-| SEARCH-02 | Phase 5 | Pending |
+| TIME-02 | Phase 5 | Complete |
+| SEARCH-01 | Phase 5 | Complete |
+| SEARCH-02 | Phase 5 | Complete |
 | REPORT-01 | Phase 1 | Complete |
 | REPORT-02 | Phase 1 | Complete |
 | REPORT-03 | Phase 3 | Complete |

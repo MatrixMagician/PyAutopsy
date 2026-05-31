@@ -179,7 +179,7 @@ Plans:
 Plans:
 **Wave 0**
 
-- [ ] 05-00-PLAN.md — Wave 0 scaffold: committed log/search fixtures + RED test stubs (LOG/SEARCH/TIME) + D-43 no-new-deps guard
+- [x] 05-00-PLAN.md — Wave 0 scaffold: committed log/search fixtures + RED test stubs (LOG/SEARCH/TIME) + D-43 no-new-deps guard
 
 **Wave 1** *(blocked on Wave 0)*
 
@@ -205,4 +205,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 0/5 | Not started | - |
+| 5. Log Parsing, Super-Timeline & Search | 1/5 | In Progress|  |
