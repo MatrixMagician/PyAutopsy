@@ -56,8 +56,10 @@
     color: var(--destructive);
     font-weight: 600;
   }
+  .card.warn { background: #fffbeb; border: 1px solid #d97706; }
   .status-pass { color: var(--success); font-weight: 600; }
   .status-fail { color: var(--destructive); font-weight: 700; }
+  .status-warn { color: #b45309; font-weight: 700; }
   .tag {
     display: inline-block;
     background: var(--secondary-bg);
@@ -127,13 +129,17 @@
 {# 2. Integrity verification (prominent, near the top) #}
 <section>
   <h2>Integrity Verification</h2>
-  {% if body.integrity.passed %}
+  {% if not body.integrity.passed %}
+  <div class="card fail">
+    <span class="status-fail">FAIL &#x2717;</span> {{ body.integrity["copy"] }}
+  </div>
+  {% elif body.integrity.acquisition_compare_pass %}
   <div class="card pass">
     <span class="status-pass">PASS &#x2713;</span> {{ body.integrity["copy"] }}
   </div>
   {% else %}
-  <div class="card fail">
-    <span class="status-fail">FAIL &#x2717;</span> {{ body.integrity["copy"] }}
+  <div class="card warn">
+    <span class="status-warn">NOT COMPARED</span> {{ body.integrity["copy"] }}
   </div>
   {% endif %}
 </section>

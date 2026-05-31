@@ -245,7 +245,15 @@ def run_analyze(
         #     through one open store.
         store = CaseStore.open(case_path)
         event_count = build_timeline(store, source_id)
-        body = assemble_report_body(store, source_id)
+        # (WR-02) Pass the REAL acquisition-compare outcome through so the report
+        # renders an honest integrity state (verified-pass / not-compared / fail)
+        # instead of a hardcoded PASS: None = no acquisition hash supplied,
+        # True = supplied and matched (a FAIL would have raised in ingest).
+        body = assemble_report_body(
+            store,
+            source_id,
+            acquisition_verified=ingest_result.acquisition_verified,
+        )
         json_path = write_json(body, case_path)
         # (W-1) render_html takes NO run_metadata argument — report.html carries
         # zero run metadata, so it stays byte-deterministic across runs.

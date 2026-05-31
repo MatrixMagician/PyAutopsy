@@ -42,9 +42,10 @@ _MVP_LIMITATIONS = (
     "search. Absence of a finding here does not mean absence of evidence."
 )
 
-# Integrity copy strings, verbatim from 03-UI-SPEC.md:166-167. An evidence source
-# only persists after a clean acquisition-compare + end-of-run re-verify (ingest
-# raises and rolls back on any FAIL), so a readable source means PASS.
+# Integrity copy strings, verbatim from 03-UI-SPEC.md:166-167, plus the honest
+# "not supplied" state (WR-02). The PASS copy is only ever rendered when an
+# acquisition hash was actually supplied AND matched; it never claims a hash
+# match that did not happen (D-28 forbids overclaiming).
 _INTEGRITY_PASS_COPY = (
     "Integrity verification: PASS — source hash matches acquisition value and "
     "end-of-run re-verification."
@@ -53,6 +54,16 @@ _INTEGRITY_FAIL_COPY = (
     "Integrity verification: FAIL — source hash mismatch. This report's findings "
     "may not correspond to the originally acquired evidence. Re-acquire and "
     "re-verify the source."
+)
+# No acquisition hash was supplied, so there was nothing to compare the source
+# against. End-of-run re-verify still ran inside ingest (a readable, persisted
+# source confirms the image was internally self-consistent), but the report must
+# NOT claim a match against an acquisition value that was never provided (WR-02).
+_INTEGRITY_NOT_SUPPLIED_COPY = (
+    "Integrity verification: NOT COMPARED — no acquisition hash was supplied, so "
+    "the source could not be compared against an acquisition value. End-of-run "
+    "re-verification ran and the source read consistently, but no acquisition "
+    "match is claimed."
 )
 
 
@@ -86,7 +97,10 @@ def _surface_provenance(file_row: FileRow) -> dict[str, str]:
 
 
 def assemble_report_body(
-    store: CaseStore, evidence_source_id: int
+    store: CaseStore,
+    evidence_source_id: int,
+    *,
+    acquisition_verified: bool | None = None,
 ) -> dict[str, Any]:
     """Assemble the deterministic report body for one evidence source.
 
@@ -100,6 +114,13 @@ def assemble_report_body(
     Args:
         store: An open :class:`~pyautopsy.case.CaseStore`.
         evidence_source_id: The evidence source to report on.
+        acquisition_verified: The real acquisition-compare outcome from ingest
+            (``IngestResult.acquisition_verified``): ``True`` = an acquisition
+            hash was supplied and matched, ``False`` = it was supplied and
+            mismatched, ``None`` = none was supplied (nothing to compare). The
+            report renders three honest states and NEVER claims a hash match that
+            did not happen (WR-02 / D-28). Defaults to ``None`` (not compared) so
+            a caller without the ingest result never overclaims a PASS.
 
     Returns:
         The analytical report body. Notable keys: ``case``, ``evidence``,
@@ -189,10 +210,30 @@ def assemble_report_body(
     ]
     timeline_total = len(timeline)
 
-    # An evidence source only persists after a clean acquisition-compare + end-of-
-    # run re-verify (ingest raises + rolls back on FAIL), so a readable source is
-    # integrity PASS. The booleans + copy keep the renderer honest regardless.
-    integrity_pass = True
+    # Derive the THREE honest integrity states from the real ingest outcome
+    # (WR-02) — never a hardcoded PASS:
+    #   acquisition_verified is True  -> hash supplied AND matched (PASS)
+    #   acquisition_verified is None  -> no hash supplied (NOT COMPARED)
+    #   acquisition_verified is False -> hash supplied but mismatched (FAIL)
+    # End-of-run re-verify always ran inside ingest and the source persisted (a
+    # FAIL there raises + rolls back), so reverify_pass is True for any reachable
+    # report. acquisition_compare_pass is True ONLY when a match actually
+    # happened, so the report never claims "source hash matches acquisition
+    # value" when no acquisition hash was supplied (D-28 no-overclaim).
+    if acquisition_verified is False:
+        acquisition_compare_pass = False
+        overall_pass = False
+        integrity_copy = _INTEGRITY_FAIL_COPY
+    elif acquisition_verified is True:
+        acquisition_compare_pass = True
+        overall_pass = True
+        integrity_copy = _INTEGRITY_PASS_COPY
+    else:  # None — no acquisition hash supplied, nothing to compare against
+        acquisition_compare_pass = False
+        overall_pass = True
+        integrity_copy = _INTEGRITY_NOT_SUPPLIED_COPY
+    reverify_pass = True
+    acquisition_supplied = acquisition_verified is not None
 
     return {
         # 1. Header / identity band
@@ -231,12 +272,13 @@ def assemble_report_body(
             "md5": evidence.md5,
             "sha256": evidence.sha256,
         },
-        # 2. Integrity verification (prominent; PASS/FAIL booleans + literal copy)
+        # 2. Integrity verification (prominent; three honest states, WR-02)
         "integrity": {
-            "acquisition_compare_pass": integrity_pass,
-            "reverify_pass": integrity_pass,
-            "passed": integrity_pass,
-            "copy": _INTEGRITY_PASS_COPY if integrity_pass else _INTEGRITY_FAIL_COPY,
+            "acquisition_supplied": acquisition_supplied,
+            "acquisition_compare_pass": acquisition_compare_pass,
+            "reverify_pass": reverify_pass,
+            "passed": overall_pass,
+            "copy": integrity_copy,
         },
         # 3. Methodology + pinned tool/TSK versions (verbatim, CLI-02/D-26)
         "methodology": {
@@ -259,9 +301,10 @@ def assemble_report_body(
             "file_type_distribution": file_type_distribution,
             "provenance_flags": provenance_flags,
             "integrity": {
-                "acquisition_compare_pass": integrity_pass,
-                "reverify_pass": integrity_pass,
-                "passed": integrity_pass,
+                "acquisition_supplied": acquisition_supplied,
+                "acquisition_compare_pass": acquisition_compare_pass,
+                "reverify_pass": reverify_pass,
+                "passed": overall_pass,
             },
             "limitations": limitation_rows,
         },
