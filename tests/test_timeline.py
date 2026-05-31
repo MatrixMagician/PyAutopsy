@@ -141,7 +141,7 @@ def test_total_order() -> None:
 
 
 def test_total_order_null_meta_addr_is_deterministic() -> None:
-    """Distinct deleted/orphan events tying on the six D-26 keys still order stably (CR-01).
+    """Distinct deleted/orphan events tying on six D-26 keys still order stably (CR-01).
 
     Builds ≥2 DISTINCT events that tie on ts_utc + volume + path + event_type
     with NULL ``meta_addr`` (the reclaimed-path/orphan case the six-column order
