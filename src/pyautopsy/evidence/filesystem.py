@@ -82,6 +82,15 @@ _FS_META_FLAG_ALLOC = int(pytsk3.TSK_FS_META_FLAG_ALLOC)
 _FS_META_TYPE_DIR = int(pytsk3.TSK_FS_META_TYPE_DIR)
 _FS_META_TYPE_VIRT_DIR = int(pytsk3.TSK_FS_META_TYPE_VIRT_DIR)
 
+# (WR-04) Hard cap on directory-recursion depth. Real filesystems nest far
+# shallower than this; a crafted image with thousands of nested directories
+# (the directory-cycle/deep-nesting DoS, threat T-2-01-CYCLE) would otherwise
+# exhaust Python's C call stack and raise ``RecursionError``, aborting the whole
+# walk. At the cap we stop descending (the entries at that depth are still
+# yielded by their parent's loop) rather than crash. The inode seen-set already
+# stops true cycles; this bounds adversarial *acyclic* deep nesting too.
+_MAX_WALK_DEPTH = 512
+
 # Map the TSK meta-type integer to a stable, pytsk3-free label string. Anything
 # unmapped falls back to ``"unknown"`` so a label always exists for a row.
 _META_TYPE_LABELS: dict[int, str] = {
@@ -324,7 +333,9 @@ def walk_fs(
     volume_id: int,
     volume_offset: int,
     parent_path: str = "/",
+    parent_addr: int | None = None,
     _seen: set[int] | None = None,
+    _depth: int = 0,
 ) -> Iterator[FileEntry]:
     """Recursively yield a :class:`FileEntry` for every entry in ``fs``.
 
@@ -344,7 +355,12 @@ def walk_fs(
         volume_id: The volume id to tag yielded entries with (D-15).
         volume_offset: The volume byte offset to tag yielded entries with (D-15).
         parent_path: The directory path currently being walked (recursion state).
+        parent_addr: Inode/MFT address of ``parent_path``'s directory, tagged onto
+            every entry yielded at this level so parent/child reconstruction is
+            possible downstream (WR-03); ``None`` at the root.
         _seen: Inode seen-set guarding recursion (recursion state).
+        _depth: Current recursion depth, bounded by :data:`_MAX_WALK_DEPTH`
+            against adversarial deep nesting (WR-04, recursion state).
 
     Yields:
         A :class:`FileEntry` per filesystem entry.
@@ -379,7 +395,7 @@ def walk_fs(
         yield FileEntry(
             name=name,
             path=child_path,
-            parent_addr=None,
+            parent_addr=parent_addr,
             meta_addr=meta_addr,
             allocated=allocated,
             meta_type=_meta_type_label(meta_type_int, name_type_int),
@@ -404,12 +420,28 @@ def walk_fs(
         )
 
         # Recurse into real directories (and $OrphanFiles VIRT_DIR), guarding
-        # against inode revisits so a cycle/orphan loop cannot run forever.
+        # against inode revisits so a cycle/orphan loop cannot run forever, and
+        # bounding total depth so adversarial deep nesting cannot exhaust the
+        # stack (WR-04). The child's parent_addr is THIS entry's inode (WR-03).
         if meta is not None and meta_type_int in (
             _FS_META_TYPE_DIR,
             _FS_META_TYPE_VIRT_DIR,
         ):
             if meta.addr in _seen:
                 continue
+            if _depth >= _MAX_WALK_DEPTH:
+                # Depth cap reached: stop descending rather than risk a
+                # RecursionError that would abort the whole walk. Entries below
+                # this point are not inventoried (a bounded, documented loss far
+                # beyond any real filesystem's nesting).
+                continue
             _seen.add(meta.addr)
-            yield from walk_fs(fs, volume_id, volume_offset, child_path, _seen)
+            yield from walk_fs(
+                fs,
+                volume_id,
+                volume_offset,
+                child_path,
+                meta_addr,
+                _seen,
+                _depth + 1,
+            )

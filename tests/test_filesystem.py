@@ -158,3 +158,62 @@ def test_fat_fs_types_is_plain_int_frozenset() -> None:
     assert isinstance(FAT_FS_TYPES, frozenset)
     assert FAT_FS_TYPES
     assert all(isinstance(t, int) and type(t) is int for t in FAT_FS_TYPES)
+
+
+def test_root_entries_have_no_parent_addr(tiny_ext4_image: Path) -> None:
+    """WR-03: root-level entries carry ``parent_addr is None``.
+
+    The walk starts at the root with no parent, so every top-level entry's
+    ``parent_addr`` is ``None``; deeper entries (none in this flat fixture) would
+    carry their parent directory's inode. This pins the wiring so the column can
+    never silently revert to a hardcoded ``None`` everywhere (the original bug).
+    """
+    rows = _walk_all(tiny_ext4_image)
+    assert rows
+    for row in rows:
+        # The ext4 fixture is flat: lost+found and $OrphanFiles are empty, so
+        # every yielded entry is at the root and must have a null parent_addr.
+        assert row.parent_addr is None
+
+
+def test_parent_addr_threaded_through_recursion() -> None:
+    """WR-03: a child entry's ``parent_addr`` is its parent directory's inode.
+
+    Uses a fake pytsk3-shaped filesystem (root contains one subdirectory which
+    contains one regular file) so the recursion is exercised without a fixture.
+    The file under ``sub/`` must carry ``parent_addr == sub.inode``.
+    """
+    from tests.fixtures.fake_fs import FakeDirEntry, FakeFS
+
+    fs = FakeFS(
+        {
+            "/": [FakeDirEntry("sub", addr=2, is_dir=True)],
+            "/sub": [FakeDirEntry("file.txt", addr=3, is_dir=False)],
+        }
+    )
+    rows = list(walk_fs(fs, volume_id=0, volume_offset=0))
+    sub = next(r for r in rows if r.name == "sub")
+    child = next(r for r in rows if r.name == "file.txt")
+    assert sub.parent_addr is None  # sub is at the root
+    assert child.parent_addr == sub.meta_addr == 2
+
+
+def test_recursion_depth_is_capped() -> None:
+    """WR-04: adversarial deep nesting stops at the cap, never RecursionError.
+
+    A fake filesystem of self-referential-by-name directories (each level a new
+    inode so the inode seen-set never fires) would recurse unbounded; the depth
+    cap must stop descent at :data:`_MAX_WALK_DEPTH` and return cleanly rather
+    than blowing the Python stack and aborting the walk.
+    """
+    from pyautopsy.evidence.filesystem import _MAX_WALK_DEPTH
+    from tests.fixtures.fake_fs import DeepFakeFS
+
+    fs = DeepFakeFS()  # every directory contains one deeper directory, forever
+    rows = list(walk_fs(fs, volume_id=0, volume_offset=0))
+
+    # Descent stopped at the cap without raising RecursionError. An entry is
+    # yielded at each recursion level BEFORE the cap is checked, so levels
+    # 0.._MAX_WALK_DEPTH inclusive each emit one row (the level at the cap emits
+    # its own entry, then refuses to descend further).
+    assert len(rows) == _MAX_WALK_DEPTH + 1
