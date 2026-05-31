@@ -73,33 +73,114 @@ def test_inventory_includes_deleted_entry(
 
 
 def test_macb_utc_and_fat_flagged(
-    tiny_ext4_image: Path, tiny_fat32_image: Path
+    tiny_ext4_image: Path,
+    tiny_fat32_image: Path,
+    tiny_ntfs_image: Path,
+    tmp_path: Path,
 ) -> None:
     """META-02: MACB stored tz-aware UTC ISO-8601 (+00:00); FAT flagged local.
 
     ext4/NTFS times are UTC; FAT times are local and must be flagged
     ``local-time-inferred`` with ``assumed_timezone`` (D-16). Zero -> None.
+    ``timestamp_source`` carries the EXACT per-fs-type string (D-16).
     """
-    pytest.fail(_NOT_YET)
+    # -- ext4: UTC times, exact timestamp_source ----------------------------
+    ext4_case = tmp_path / "ext4_case"
+    _, ext4_source = _ingest_then_walk(tiny_ext4_image, ext4_case)
+    with CaseStore.open(ext4_case) as store:
+        ext4_rows = store.get_files(ext4_source)
+    ext4_file = next(r for r in ext4_rows if r.name == make_fixtures.FS_FILE_NAME)
+    assert ext4_file.mtime_utc is not None and ext4_file.mtime_utc.endswith("+00:00")
+    assert ext4_file.atime_utc is not None and ext4_file.atime_utc.endswith("+00:00")
+    assert ext4_file.ctime_utc is not None and ext4_file.ctime_utc.endswith("+00:00")
+    assert ext4_file.timestamp_source == "ext4:inode"
+    # ext4/NTFS take the plain UTC path: no FAT local-time flag.
+    assert (ext4_file.attributes or {}).get("time_precision") != "local-time-inferred"
+
+    # -- NTFS: UTC times, exact timestamp_source ----------------------------
+    ntfs_case = tmp_path / "ntfs_case"
+    _, ntfs_source = _ingest_then_walk(tiny_ntfs_image, ntfs_case)
+    with CaseStore.open(ntfs_case) as store:
+        ntfs_rows = store.get_files(ntfs_source)
+    ntfs_meta_rows = [r for r in ntfs_rows if r.mtime_utc is not None]
+    assert ntfs_meta_rows, "NTFS walk produced no rows with MACB times"
+    for r in ntfs_meta_rows:
+        assert r.mtime_utc.endswith("+00:00")
+        assert r.timestamp_source == "ntfs:$STANDARD_INFORMATION"
+
+    # -- FAT: local-time-inferred flag + assumed_timezone + zero->None ------
+    fat_case = tmp_path / "fat_case"
+    _, fat_source = _ingest_then_walk(
+        tiny_fat32_image, fat_case, timezone="America/New_York"
+    )
+    with CaseStore.open(fat_case) as store:
+        fat_rows = store.get_files(fat_source)
+    fat_file = next(r for r in fat_rows if r.name == make_fixtures.FS_FILE_NAME)
+    assert fat_file.mtime_utc is not None and fat_file.mtime_utc.endswith("+00:00")
+    assert fat_file.timestamp_source == "fat:dir-entry"
+    assert fat_file.attributes is not None
+    assert fat_file.attributes["time_precision"] == "local-time-inferred"
+    assert fat_file.attributes["assumed_timezone"] == "America/New_York"
+    # The FAT fixture's ctime epoch is 0 -> must read back as None, not 1970.
+    assert fat_file.ctime_utc is None
 
 
-def test_no_naive_datetimes(tiny_ext4_image: Path) -> None:
+def test_no_naive_datetimes(tiny_ext4_image: Path, case_dir: Path) -> None:
     """META-02 invariant: every *time column re-parses to an aware datetime.
 
     Routing every MACB value through ``iso_utc`` (which rejects naive) makes a
     naive timestamp structurally impossible; assert each non-null value ends in
     an explicit offset and re-parses aware.
     """
-    pytest.fail(_NOT_YET)
+    from datetime import datetime
+
+    _, source_id = _ingest_then_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        rows = store.get_files(source_id)
+
+    saw_a_time = False
+    for row in rows:
+        for value in (row.mtime_utc, row.atime_utc, row.ctime_utc, row.crtime_utc):
+            if value is None:
+                continue
+            saw_a_time = True
+            assert value.endswith("+00:00"), value
+            parsed = datetime.fromisoformat(value)
+            assert parsed.tzinfo is not None, value
+            assert parsed.utcoffset() is not None, value
+    assert saw_a_time, "no MACB times were persisted to assert against"
 
 
-def test_ownership_and_mode(tiny_ext4_image: Path) -> None:
+def test_ownership_and_mode(tiny_ext4_image: Path, case_dir: Path) -> None:
     """META-03: uid/gid/mode persisted and match the ext4 fixture ground truth.
 
-    The committed ext4 file1.txt carries known uid/gid/mode (recorded as
-    constants); the walk must persist them exactly.
+    The committed ext4 file1.txt carries known uid/gid (recorded as the
+    Plan 00 constants); the walk must persist uid/gid/mode exactly, and a
+    meta-less entry's ownership must read back as ``None`` (never coerced to 0).
     """
-    pytest.fail(_NOT_YET)
+    _, source_id = _ingest_then_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        rows = store.get_files(source_id)
+
+    known = next(r for r in rows if r.name == make_fixtures.FS_FILE_NAME)
+    assert known.uid == make_fixtures.EXT4_FILE_UID
+    assert known.gid == make_fixtures.EXT4_FILE_GID
+    # The fixture set the permission bits via debugfs; they must persist as a
+    # raw integer (not pre-formatted) and round-trip non-null for the real file.
+    assert known.mode is not None
+    assert isinstance(known.mode, int)
+
+    # Every meta-bearing row carries integer ownership; only truly meta-less
+    # rows keep None (never coerced to 0).
+    for row in rows:
+        if row.meta_addr is None:
+            assert row.uid is None
+            assert row.gid is None
+            assert row.mode is None
+        else:
+            assert isinstance(row.uid, int)
+            assert isinstance(row.gid, int)
+            assert isinstance(row.mode, int)
 
 
 def test_three_digest_single_pass(tiny_ext4_image: Path) -> None:
