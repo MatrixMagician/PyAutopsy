@@ -26,12 +26,20 @@ __all__ = ["to_event"]
 
 
 class _RecordLike(Protocol):
-    """The minimal parsed-record shape :func:`to_event` reads (a ``ParsedRecord``)."""
+    """The minimal parsed-record shape :func:`to_event` reads (a ``ParsedRecord``).
 
-    action: str | None
-    outcome: str | None
-    actor: str | None
-    message: str | None
+    Attributes are declared read-only (``@property``) so a frozen-dataclass
+    :class:`~pyautopsy.log.registry.ParsedRecord` structurally satisfies it.
+    """
+
+    @property
+    def action(self) -> str | None: ...
+    @property
+    def outcome(self) -> str | None: ...
+    @property
+    def actor(self) -> str | None: ...
+    @property
+    def message(self) -> str | None: ...
 
 
 def to_event(

@@ -26,6 +26,7 @@ import pyautopsy
 from pyautopsy.core.analyze import AnalyzeError, run_analyze
 from pyautopsy.core.ingest import IngestError, run_ingest
 from pyautopsy.core.knownfiles import FilterError, run_filter
+from pyautopsy.core.logs import LogsError, run_logs
 from pyautopsy.core.recover import RecoverError, run_recover
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence.image import ImageOpenError
@@ -337,6 +338,64 @@ def recover(
             f" (nsrl {filter_result.nsrl_matches},"
             f" custom {filter_result.custom_matches})"
         )
+    typer.echo(summary)
+
+
+@app.command()
+def logs(
+    image: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the evidence image (raw/dd file or first E01 segment).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    case: Annotated[
+        Path,
+        typer.Option(
+            "--case",
+            help="Existing case directory (created by a prior `ingest`).",
+        ),
+    ],
+) -> None:
+    """Parse the image's logs into the shared super-timeline (LOG-01, TIME-02).
+
+    Reads ``auth.log``/``secure`` (incl. rotated ``.1``/``.2.gz`` members,
+    reassembled oldest→newest) read-only through the native seam, maps sshd/sudo/
+    PAM lines to honest action/outcome events, time-resolves each line to UTC with
+    the image's inferred timezone + inferred year FLAGGED per event (never
+    asserted as fact), and writes them into the same ``timeline_events`` table as
+    filesystem events — so ``get_timeline_events`` returns one merged UTC-ordered
+    super-timeline (D-45/D-46/D-47). The evidence source is never written. Exits
+    non-zero on an operational/integrity failure after the orchestrator records a
+    FAIL audit event.
+    """
+    try:
+        result = run_logs(image, case)
+    except (
+        LogsError,
+        ImageOpenError,
+        MountedSourceError,
+        IntegrityError,
+    ) as exc:
+        typer.echo(f"logs failed: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+    except sqlite3.Error as exc:
+        # BL-02: sqlite3.Error is NOT an OSError — a corrupt case DB would
+        # otherwise escape with a raw traceback. run_logs lists it in
+        # _EXPECTED_LOGS_ERRORS and re-raises; map it to the clean integrity exit.
+        typer.echo(f"logs failed: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    summary = (
+        "logs complete\n"
+        f"  case:           {case}\n"
+        f"  log sets:       {result.log_sets}\n"
+        f"  events parsed:  {result.events_parsed}\n"
+        f"  auth events:    {result.auth_events}"
+    )
     typer.echo(summary)
 
 
