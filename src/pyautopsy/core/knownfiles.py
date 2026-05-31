@@ -160,9 +160,20 @@ def run_filter(
         parsed_lists: list[tuple[str, str, dict[str, set[str]]]] = []
         for raw_path, sense in hash_sets:
             list_path = Path(raw_path)
-            parsed = hashsets.parse_hash_set(
-                list_path.read_text(encoding="utf-8")
-            )
+            # WR-01: a binary / non-UTF-8 custom list makes read_text raise
+            # UnicodeDecodeError (a ValueError subclass) which is NOT in
+            # _EXPECTED_FILTER_ERRORS, so it would be mis-recorded as a
+            # filter.crashed "programming bug". It is actually operator bad
+            # input — convert it to a FilterError naming the offending list so
+            # it surfaces as a clean filter.error + handled exit.
+            try:
+                list_text = list_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                raise FilterError(
+                    f"hash-set list {list_path} is not valid UTF-8 text "
+                    f"(binary or wrong encoding?): {exc}"
+                ) from exc
+            parsed = hashsets.parse_hash_set(list_text)
             parsed_lists.append((list_path.stem, sense, parsed))
 
         # Open the NSRL DB once (read-only), reused for every probe.
