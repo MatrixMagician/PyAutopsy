@@ -9,6 +9,14 @@ ingest`` CLI command drives.
 
 from __future__ import annotations
 
+from pyautopsy.core.analyze import AnalyzeError, AnalyzeResult, run_analyze
 from pyautopsy.core.ingest import IngestError, IngestResult, run_ingest
 
-__all__ = ["IngestError", "IngestResult", "run_ingest"]
+__all__ = [
+    "AnalyzeError",
+    "AnalyzeResult",
+    "IngestError",
+    "IngestResult",
+    "run_analyze",
+    "run_ingest",
+]
