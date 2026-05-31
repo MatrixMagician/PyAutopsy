@@ -140,6 +140,85 @@ def test_total_order() -> None:
     ]
 
 
+def test_total_order_null_meta_addr_is_deterministic() -> None:
+    """Distinct deleted/orphan events tying on the six D-26 keys still order stably (CR-01).
+
+    Builds ≥2 DISTINCT events that tie on ts_utc + volume + path + event_type
+    with NULL ``meta_addr`` (the reclaimed-path/orphan case the six-column order
+    cannot separate). Two of them differ only on ``source``/``actor`` (the
+    content tiebreaks); the final pair is byte-identical on every content column
+    and is separated only by the surrogate ``id`` (insertion order). Asserts the
+    fully-determined output sequence AND that repeated reads of the same DB are
+    identical — i.e. the order never falls through to sqlite's rowid tiebreak.
+    """
+    ts = "2026-01-01T00:00:00+00:00"
+    # All tie on (ts, vol 0/0, "/recovered", "modified") with meta_addr=None.
+    # source/actor are the next content tiebreaks; the last two are identical on
+    # every content column and rely on the surrogate-id (insertion) tiebreak.
+    events = [
+        TimelineEvent(
+            1, ts, "filesystem:ext", "modified", 0, 0, "/recovered",
+            meta_addr=None, actor="uid=1000",
+        ),
+        TimelineEvent(
+            1, ts, "filesystem", "modified", 0, 0, "/recovered",
+            meta_addr=None, actor="uid=1000",
+        ),
+        TimelineEvent(
+            1, ts, "filesystem", "modified", 0, 0, "/recovered",
+            meta_addr=None, actor="uid=0",
+        ),
+        TimelineEvent(
+            1, ts, "filesystem", "modified", 0, 0, "/recovered",
+            meta_addr=None, actor="uid=0",
+        ),
+    ]
+
+    import tempfile
+
+    from pyautopsy.case import Case, EvidenceSource
+
+    with tempfile.TemporaryDirectory() as td:
+        with CaseStore.create(Path(td) / "case") as store:
+            with store.transaction():
+                case_id = store.insert_case(Case(name="c", examiner="x"))
+                source_id = store.insert_evidence_source(
+                    EvidenceSource(
+                        case_id=case_id,
+                        evidence_id="E1",
+                        path="/x.dd",
+                        image_type="raw",
+                    )
+                )
+                store.insert_timeline_events(
+                    [
+                        TimelineEvent(
+                            source_id, e.ts_utc, e.source, e.event_type,
+                            e.volume_id, e.volume_offset, e.path,
+                            meta_addr=e.meta_addr, actor=e.actor,
+                        )
+                        for e in events
+                    ]
+                )
+            first = store.get_timeline_events(source_id)
+            second = store.get_timeline_events(source_id)
+
+    # NULL meta_addr never crashes the ordering and yields a fully-determined
+    # sequence: ts/path/event_type all tie, so source then actor then id decide.
+    observed = [(e.source, e.actor, e.id) for e in first]
+    assert observed == [
+        ("filesystem", "uid=0", observed[0][2]),
+        ("filesystem", "uid=0", observed[1][2]),
+        ("filesystem", "uid=1000", observed[2][2]),
+        ("filesystem:ext", "uid=1000", observed[3][2]),
+    ]
+    # The two byte-identical-content events are separated only by surrogate id,
+    # in ascending (insertion) order — deterministic, never rowid-random.
+    assert observed[0][2] < observed[1][2]
+    # Repeated reads of the same DB are identical (no rowid tiebreak leak).
+    assert [e.id for e in first] == [e.id for e in second]
+
+
 def test_ext4_timeline(tiny_ext4_image: Path, case_dir: Path) -> None:
     """End-to-end on the committed ext4 fixture: known file MACB times appear.
 

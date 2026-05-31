@@ -143,9 +143,16 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     attributes         TEXT    NOT NULL DEFAULT '{}'
 );
 
--- Index supporting the D-26 total-order read.
+-- Index supporting the D-26 total-order read. The first six columns are the
+-- human-sensible grouping but are NOT a total order (distinct deleted/orphan
+-- events tie when meta_addr is NULL, CR-01); source/actor break most ties and
+-- the surrogate id is the final guaranteed-unique, insertion-deterministic
+-- tiebreak. Index matches get_timeline_events' ORDER BY exactly.
 CREATE INDEX IF NOT EXISTS idx_timeline_events_order
-    ON timeline_events (ts_utc, volume_id, volume_offset, path, event_type, meta_addr);
+    ON timeline_events (
+        ts_utc, volume_id, volume_offset, path, event_type, meta_addr,
+        source, actor, id
+    );
 
 CREATE INDEX IF NOT EXISTS idx_timeline_events_evidence_source_id
     ON timeline_events (evidence_source_id);

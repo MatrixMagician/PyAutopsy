@@ -80,9 +80,16 @@ later flow into. PDF rendering is deferred.
   from the byte-comparable body**. Two runs ⇒ byte-identical bodies; run
   metadata differs and is clearly marked as non-analytical.
 - **D-26:** **Total, stable ordering** for the timeline:
-  `timestamp → volume (id/offset) → path → event type (M/A/C/B) → meta_addr`.
-  This guarantees byte-equality (D-25) and is human-sensible (a file's events
-  group together at equal times). TSK/tool/pyautopsy versions are **pinned and
+  `timestamp → volume (id/offset) → path → event type (M/A/C/B) → meta_addr →
+  source → actor → id`. The first six keys are the human-sensible grouping (a
+  file's events cluster at equal times) but are NOT by themselves total: two
+  distinct deleted/orphan events can tie on all six when `meta_addr` is NULL
+  (same reclaimed path/volume/ts/event_type, CR-01). The content-derived
+  `source` and `actor` columns break most such ties, and the surrogate `id` is
+  the final guaranteed-unique tiebreak — deterministic because `build_timeline`
+  inserts events in `get_files` id order within one transaction, so the same
+  fixture always assigns the same `id` to the same event. This extended key set
+  guarantees byte-equality (D-25). TSK/tool/pyautopsy versions are **pinned and
   recorded** in the report (sourced from the Phase 1 COC: `tsk_version`,
   `pyautopsy_version`).
 

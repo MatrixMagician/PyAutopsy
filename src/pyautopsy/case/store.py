@@ -531,10 +531,19 @@ class CaseStore:
 
         This is the SINGLE place the timeline read ordering is defined (no raw
         SQL outside the store): ``ts_utc → volume_id → volume_offset → path →
-        event_type → meta_addr``. That total order is what guarantees the
-        byte-identical report bodies CLI-02/D-25 require — no two distinct
-        events can tie on all six keys, so the result never depends on sqlite's
-        rowid tiebreak.
+        event_type → meta_addr → source → actor → id``. The first six columns
+        are the human-sensible D-26 grouping, but they are NOT a total order:
+        two DISTINCT deleted/orphan events can tie on all six when ``meta_addr``
+        is NULL (a reclaimed path/volume/ts/event_type collision, CR-01). The
+        content-derived ``source`` and ``actor`` columns break most such ties,
+        and the surrogate ``id`` is the final guaranteed-unique tiebreak. ``id``
+        is a deterministic insertion-order key here because ``build_timeline``
+        explodes and inserts events in ``get_files`` id order within one
+        transaction (builder.py → store.py:get_files ``ORDER BY id``), so the
+        same fixture always assigns the same ``id`` to the same event. THIS
+        insertion-order determinism is load-bearing for the byte-identical
+        report bodies CLI-02/D-25 require — it replaces the earlier (false)
+        claim that the six-column order could never tie.
 
         Args:
             evidence_source_id: The owning evidence-source id to filter on.
@@ -548,7 +557,7 @@ class CaseStore:
         sql = (
             "SELECT * FROM timeline_events WHERE evidence_source_id = ? "
             "ORDER BY ts_utc, volume_id, volume_offset, path, event_type, "
-            "meta_addr"
+            "meta_addr, source, actor, id"
         )
         params: tuple[Any, ...] = (evidence_source_id,)
         if limit is not None:
