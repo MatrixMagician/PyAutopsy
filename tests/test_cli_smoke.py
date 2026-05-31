@@ -149,6 +149,35 @@ def test_walk_help_lists_options() -> None:
         assert option in result.output
 
 
+def test_search_smoke_finds_term(
+    log_search_image: Path, case_dir: Path, log_search_groundtruth: dict
+) -> None:
+    """`pyautopsy search <img> --case <dir> --term <needle>` exits 0 with hits.
+
+    Runs against a case created by `ingest`, searches for the committed
+    allocated needle, and asserts exit 0 + a deterministic hit-count summary.
+    """
+    ingest = runner.invoke(app, _ingest_args(log_search_image, case_dir))
+    assert ingest.exit_code == 0, ingest.output
+
+    needle = log_search_groundtruth["allocated_search"]["needle"]
+    result = runner.invoke(
+        app,
+        ["search", str(log_search_image), "--case", str(case_dir), "--term", needle],
+    )
+    assert result.exit_code == 0, result.output
+    assert "search complete" in result.output
+    assert "hits:" in result.output
+
+
+def test_search_help_lists_options() -> None:
+    """``search --help`` lists the documented options."""
+    result = runner.invoke(app, ["search", "--help"])
+    assert result.exit_code == 0
+    for option in ("--case", "--term", "--regex", "--ioc", "--hash-set-block"):
+        assert option in result.output
+
+
 def test_version_flag() -> None:
     """``pyautopsy --version`` prints the package version and exits 0."""
     import pyautopsy

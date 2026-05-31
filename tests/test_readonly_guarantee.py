@@ -105,6 +105,47 @@ def test_recover_does_not_write_source(
     assert_source_not_mounted(ntfs_resident_deleted_image)
 
 
+def test_search_does_not_write_source(
+    log_search_image: Path, tmp_path: Path, log_search_groundtruth: dict
+) -> None:
+    """D-42: a streaming content/unallocated search never modifies the source.
+
+    Mirrors ``test_recover_does_not_write_source`` for the search path: stat the
+    source before, run ``ingest`` + ``search`` (which streams allocated content
+    and unallocated space read-only through the two seams), stat after, and
+    assert ``st_mtime_ns`` + ``st_size`` are unchanged. ``run_search`` re-asserts
+    ``assert_source_not_mounted`` before AND after opening the image (D-42/P1).
+    """
+    from pyautopsy.core.ingest import run_ingest
+    from pyautopsy.core.search import run_search
+
+    case_dir = tmp_path / "case"
+    before = log_search_image.stat()
+
+    ingested = run_ingest(
+        log_search_image, case_dir, examiner="X", evidence_id="E1"
+    )
+    gt = log_search_groundtruth
+    result = run_search(
+        log_search_image,
+        case_dir,
+        evidence_source_id=ingested.evidence_source_id,
+        terms=[gt["allocated_search"]["needle"].encode()],
+    )
+
+    after = log_search_image.stat()
+
+    # The source image is provably never written: identical mtime + size (D-42).
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_size == before.st_size
+
+    # Sanity: the search actually found the planted needle (not a vacuous pass).
+    assert result.hits >= 1
+
+    # The read-only-boundary guard is re-assertable on the source after search.
+    assert_source_not_mounted(log_search_image)
+
+
 def _mounts_table(*device_mount_pairs: tuple[str, str]) -> str:
     """Build a synthetic /proc/mounts body from (device, mountpoint) pairs."""
     return "".join(

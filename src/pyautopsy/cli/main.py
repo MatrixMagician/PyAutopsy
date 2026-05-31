@@ -28,6 +28,7 @@ from pyautopsy.core.ingest import IngestError, run_ingest
 from pyautopsy.core.knownfiles import FilterError, run_filter
 from pyautopsy.core.logs import LogsError, run_logs
 from pyautopsy.core.recover import RecoverError, run_recover
+from pyautopsy.core.search import SearchError, run_search
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.evidence.integrity import IntegrityError, MountedSourceError
@@ -552,4 +553,117 @@ def analyze(
         f"  timeline events:    {result.event_count}\n"
         f"  report (json):      {result.report_json_path}\n"
         f"  report (html):      {result.report_html_path}"
+    )
+
+
+@app.command()
+def search(
+    image: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the evidence image (raw/dd file or first E01 segment).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    case: Annotated[
+        Path,
+        typer.Option(
+            "--case",
+            help="Existing case directory (created by a prior `ingest`).",
+        ),
+    ],
+    term: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--term",
+            help="Literal (or, with --regex, regex) needle to search for "
+            "(repeatable).",
+        ),
+    ] = None,
+    regex: Annotated[
+        bool,
+        typer.Option(
+            "--regex",
+            help="Treat each --term as a regular expression (ReDoS-bounded).",
+        ),
+    ] = False,
+    ioc: Annotated[
+        Path | None,
+        typer.Option(
+            "--ioc",
+            help="IOC list file; its indicators are searched as literal terms.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    hash_set_block: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--hash-set-block",
+            help="Known-bad hash list (repeatable); matched against the "
+            "inventory's file hashes.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+) -> None:
+    """Search allocated content, unallocated space, and file hashes (SEARCH-01/02).
+
+    Streams each ``--term`` (literal, or regex with ``--regex``) and any ``--ioc``
+    indicators over every volume's allocated file content and unallocated space,
+    reporting hits by file + absolute byte offset (boundary-spanning matches
+    handled). Known-bad hash lists (``--hash-set-block``) are matched against the
+    inventory's file hashes (reusing the Phase-4 matcher). All hits persist as
+    ``search_hits`` rows in a deterministic order. The evidence source is read
+    read-only and never mounted (D-42). Exits non-zero on an operational/integrity
+    failure after the orchestrator records a FAIL audit event.
+    """
+    terms = [t.encode("utf-8") for t in (term or [])]
+    literal_terms: list[bytes] = [] if regex else terms
+    regex_terms: list[bytes] = terms if regex else []
+
+    # Read known-bad hash lists as data (tolerant parser handles each file).
+    bad_hashes: list[str] = []
+    for path in hash_set_block or []:
+        try:
+            bad_hashes.extend(path.read_text(encoding="utf-8").splitlines())
+        except UnicodeDecodeError as exc:
+            typer.echo(
+                f"search failed: hash list {path} is not valid UTF-8: {exc}",
+                err=True,
+            )
+            raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    try:
+        result = run_search(
+            image,
+            case,
+            terms=literal_terms,
+            regexes=regex_terms,
+            ioc_file=ioc,
+            bad_hashes=bad_hashes,
+        )
+    except (
+        SearchError,
+        ImageOpenError,
+        MountedSourceError,
+        IntegrityError,
+        # BL-02: sqlite3.Error is NOT an OSError; run_search lists it in
+        # _EXPECTED_SEARCH_ERRORS and re-raises a corrupt case DB failure, so map
+        # it to the clean integrity exit instead of crashing with a traceback.
+        sqlite3.Error,
+    ) as exc:
+        typer.echo(f"search failed: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    typer.echo(
+        "search complete\n"
+        f"  case:               {case}\n"
+        f"  hits:               {result.hits}\n"
+        f"  unallocated hits:   {result.unallocated_hits}\n"
+        f"  known-bad hits:     {result.hash_hits}"
     )

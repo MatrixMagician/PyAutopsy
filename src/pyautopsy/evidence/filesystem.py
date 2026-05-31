@@ -40,6 +40,7 @@ __all__ = [
     "allocated_data_blocks",
     "allocated_inodes",
     "enumerate_volumes",
+    "block_size",
     "fs_type_int",
     "iter_deleted_inodes",
     "iter_unallocated_blocks",
@@ -564,6 +565,18 @@ def allocated_data_blocks(fs: pytsk3.FS_Info) -> frozenset[int]:
             continue
         blocks.update(_iter_block_runs(f))
     return frozenset(blocks)
+
+
+def block_size(fs: pytsk3.FS_Info) -> int:
+    """Return the filesystem's bytes-per-block as a plain int (SEARCH-01).
+
+    Reads ``fs.info.block_size`` inside the seam so the upper ``search/`` tier can
+    map an unallocated block index to its absolute image offset
+    (``vol.offset + index * block_size``) WITHOUT ever touching the native
+    ``fs.info`` attribute (D-14). Mirrors :func:`fs_type_int`'s pytsk3-free-int
+    export convention.
+    """
+    return int(fs.info.block_size)
 
 
 def iter_unallocated_blocks(
