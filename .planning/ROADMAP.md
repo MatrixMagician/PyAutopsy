@@ -146,7 +146,7 @@ Plans:
 
 **Wave 1** *(blocked on Wave 0)*
 
-- [ ] 04-01-PLAN.md — Recovery vertical slice: filesystem.py seam helpers (recover_meta/allocated_data_blocks) → additive recovery schema/store methods → core/recover.py orchestrator → `pyautopsy recover` CLI → Recovered/Orphan report sections (RECOV-01/02/03, D-29..D-35)
+- [x] 04-01-PLAN.md — Recovery vertical slice: filesystem.py seam helpers (recover_meta/allocated_data_blocks) → additive recovery schema/store methods → core/recover.py orchestrator → `pyautopsy recover` CLI → Recovered/Orphan report sections (RECOV-01/02/03, D-29..D-35)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -182,5 +182,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
-| 4. Deleted Recovery & Known-File Filtering | 1/4 | In Progress|  |
+| 4. Deleted Recovery & Known-File Filtering | 2/4 | In Progress|  |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |

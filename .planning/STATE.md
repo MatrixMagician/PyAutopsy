@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-05-31T14:17:49.740Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-05-31T14:31:41.591Z"
 last_activity: 2026-05-31 -- Phase 4 execution started
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 17
-  completed_plans: 14
+  completed_plans: 15
   percent: 60
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 ## Current Position
 
 Phase: 4 (deleted-recovery-known-file-filtering) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-05-31 -- Phase 4 execution started
 
@@ -63,6 +63,7 @@ Progress: [████████░░] 80%
 | Phase 03-timeline-mvp-report P02 | 5min | 2 tasks | 5 files |
 | Phase 03-timeline-mvp-report P03 | 25m | 2 tasks | 5 files |
 | Phase 04 P00 | 60 | 2 tasks | 9 files |
+| Phase 04 P04-01 | ~75min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,8 @@ Recent decisions affecting current work:
 - [Phase ?]: report.html + report.json carry zero run metadata (whole-file byte-deterministic); jinja2 autoescape neutralizes evidence strings; outputs confined to case_dir/reports/ via _is_within
 - [Phase ?]: analyze removes wall-clock COC timestamps from the report body — run metadata stays in case.db + run_metadata.json sidecar, keeping report.json/html byte-deterministic (CLI-02/W-1)
 - [Phase ?]: report.html.j2 uses item access body.integrity[copy] — attribute access resolved the dict built-in .copy method, leaking a memory address
+- [Phase 04]: 04-01: recovery enumerates deleted inodes via a new seam helper (iter_deleted_inodes: directory-walk + inode-range scan), not a prior walk inventory — required for standalone ingest->recover and NTFS broken name->meta links
+- [Phase 04]: 04-01: orphan-ness = parent-gone (parent_addr not in allocated-inode set) OR the TSK ORPHAN meta flag, since the ext4 orphan fixture leaves the meta flag unset
 
 ### Pending Todos
 
@@ -120,6 +123,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T14:17:44.520Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-deleted-recovery-known-file-filtering/04-CONTEXT.md
+Last session: 2026-05-31T14:31:41.587Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None
