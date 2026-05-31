@@ -18,7 +18,9 @@ from pyautopsy.evidence.filesystem import (
     FAT_FS_TYPES,
     FileEntry,
     enumerate_volumes,
+    iter_deleted_inodes,
     open_fs,
+    recover_meta,
     walk_fs,
 )
 from pyautopsy.evidence.image import open_image
@@ -196,6 +198,48 @@ def test_parent_addr_threaded_through_recursion() -> None:
     child = next(r for r in rows if r.name == "file.txt")
     assert sub.parent_addr is None  # sub is at the root
     assert child.parent_addr == sub.meta_addr == 2
+
+
+def test_recover_meta_reader_survives_subsequent_inode_iteration(
+    ext4_orphan_image: Path,
+) -> None:
+    """WR-05: a recover_meta read_random closure stays valid after later opens.
+
+    recover_meta returns a ``read_random`` closure that captures the TSK ``File``
+    ``f`` from ``open_meta``; the File's lifetime is bound only by that closure
+    capture. The recovery orchestrator calls the reader ACROSS the recover_meta
+    return boundary and AFTER ``iter_deleted_inodes`` has opened other ``open_meta``
+    handles on the same ``fs``. This pins that contract: capture the orphan inode's
+    reader FIRST, then iterate every deleted inode on the same fs (each opening
+    fresh native File handles), and only THEN read — the bytes must still be exact.
+    A future refactor that drops the closure capture (e.g. extracts bytes eagerly)
+    would GC the File and make this read return garbage / fail, catching the
+    regression.
+    """
+    with open_image(ext4_orphan_image) as handle:
+        fs = open_fs(handle.image, 0)
+
+        # 1. Capture the orphan inode's reader BEFORE touching any other inode.
+        entry = recover_meta(fs, make_fixtures.EXT4_ORPHAN_META_ADDR)
+        assert entry is not None, "orphan inode did not reopen via recover_meta"
+        assert entry.read_random is not None, "orphan inode carried no reader"
+        captured_reader = entry.read_random
+        size = entry.size
+
+        # 2. Iterate every deleted inode on the SAME fs — this opens many further
+        #    native open_meta handles, exactly as the orchestrator does between
+        #    recover_meta and the deferred read. Force full materialization.
+        discovered = list(iter_deleted_inodes(fs, volume_id=0, volume_offset=0))
+        assert discovered, "no deleted inodes discovered on the orphan fixture"
+
+        # 3. NOW read through the originally-captured closure. If the File were
+        #    not pinned alive by the closure, this would be use-after-free.
+        recovered_bytes = captured_reader(0, size)
+
+    assert recovered_bytes == make_fixtures.EXT4_ORPHAN_CONTENT, (
+        "recover_meta reader returned wrong bytes after iterating other inodes "
+        "(File lifetime not held across the return boundary)"
+    )
 
 
 def test_recursion_depth_is_capped() -> None:
