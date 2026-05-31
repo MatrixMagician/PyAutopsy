@@ -39,7 +39,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
@@ -48,6 +51,7 @@ from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
 from pyautopsy.evidence.filesystem import FAT_FS_TYPES
+from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
 
 __all__ = ["WalkError", "WalkResult", "run_walk"]
 
@@ -69,6 +73,95 @@ def _fs_type_label(fs_ftype: int) -> str:
     if fs_ftype == _EXT4_FTYPE or fs_ftype in _EXT_FTYPES:
         return "ext"
     return "unknown"
+
+
+# Exact per-fs-type provenance strings for the ``files.timestamp_source`` column
+# (D-16). These are the canonical originating-attribute labels for each filesystem
+# family and are asserted verbatim by the META-02 tests — do not paraphrase them.
+_TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
+    "ext": "ext4:inode",
+    "ntfs": "ntfs:$STANDARD_INFORMATION",
+    "fat": "fat:dir-entry",
+}
+
+
+def _macb_to_utc_iso(
+    secs: int, nano: int, *, is_fat: bool, walk_tz: ZoneInfo
+) -> str | None:
+    """Normalise one raw TSK MACB epoch to a tz-aware UTC ISO-8601 string (D-16).
+
+    A ``0`` epoch means "not recorded" and yields ``None`` — never a fake
+    ``1970-01-01`` (PITFALLS Pitfall 3). For FAT the integer is wall-clock time in
+    ``walk_tz`` (FAT stores *local* time, PITFALLS Pitfall 2); it is interpreted in
+    that zone then converted to UTC. For ext4/NTFS the epoch is already UTC. Every
+    value is routed through :func:`iso_utc`, which raises on a naive datetime, so a
+    naive/local timestamp is structurally impossible to persist (D-10, threat
+    T-2-02-NAIVE). Sub-second ``nano`` is folded onto the datetime when present.
+
+    Args:
+        secs: Raw epoch seconds as TSK reports them (``0`` ⇒ not recorded).
+        nano: Sub-second nanoseconds for this stamp (``0`` when absent).
+        is_fat: Whether the source filesystem is a FAT variant (local-time).
+        walk_tz: The IANA zone used to rebase FAT local times.
+
+    Returns:
+        An ISO-8601 string ending in ``+00:00``, or ``None`` for a ``0`` epoch.
+    """
+    if not secs:
+        return None
+    micro = (nano // 1000) if nano else 0
+    if is_fat:
+        # FAT epochs are wall-clock in walk_tz; interpret then convert aware→UTC.
+        dt = datetime.fromtimestamp(secs, tz=walk_tz)
+    else:
+        # ext4/NTFS epochs are already UTC.
+        dt = from_epoch_utc(secs)
+    if micro:
+        dt = dt.replace(microsecond=micro)
+    return iso_utc(dt)
+
+
+def _macb_fields(
+    entry: fs_seam.FileEntry, walk_tz: ZoneInfo
+) -> tuple[dict[str, str | None], str | None, dict[str, Any]]:
+    """Compute normalised MACB columns + provenance + FAT attrs for one entry.
+
+    Returns a triple of:
+      * the ``{m,a,c,b}`` → UTC-ISO-or-``None`` mapping for the ``*_utc`` columns,
+      * the ``timestamp_source`` provenance string (or ``None`` for meta-less
+        entries / unknown filesystems),
+      * any extra ``attributes`` to merge (FAT local-time flags only).
+
+    Meta-less entries (no ``meta_addr``) keep null MACB and no provenance.
+    """
+    if entry.meta_addr is None:
+        return ({"m": None, "a": None, "c": None, "b": None}, None, {})
+
+    is_fat = entry.fs_ftype in FAT_FS_TYPES
+    label = _fs_type_label(entry.fs_ftype)
+    macb = {
+        "m": _macb_to_utc_iso(
+            entry.mtime, entry.mtime_nano, is_fat=is_fat, walk_tz=walk_tz
+        ),
+        "a": _macb_to_utc_iso(
+            entry.atime, entry.atime_nano, is_fat=is_fat, walk_tz=walk_tz
+        ),
+        "c": _macb_to_utc_iso(
+            entry.ctime, entry.ctime_nano, is_fat=is_fat, walk_tz=walk_tz
+        ),
+        "b": _macb_to_utc_iso(
+            entry.crtime, entry.crtime_nano, is_fat=is_fat, walk_tz=walk_tz
+        ),
+    }
+    timestamp_source = _TIMESTAMP_SOURCE_BY_LABEL.get(label)
+    attributes: dict[str, Any] = {}
+    if is_fat:
+        # FAT stores LOCAL time at second precision: flag the inference and record
+        # the assumed zone so the report never overclaims FAT precision (D-16,
+        # threat T-2-02-FAT).
+        attributes["time_precision"] = "local-time-inferred"
+        attributes["assumed_timezone"] = str(walk_tz)
+    return (macb, timestamp_source, attributes)
 
 
 class WalkError(Exception):
@@ -117,14 +210,17 @@ def _latest_evidence_source_id(store: CaseStore) -> int:
 
 
 def _build_file_row(
-    entry: fs_seam.FileEntry, evidence_source_id: int
+    entry: fs_seam.FileEntry, evidence_source_id: int, walk_tz: ZoneInfo
 ) -> FileRow:
-    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01).
+    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01/02).
 
-    Only the META-01 spine is populated here (path/name/addr/status + volume
-    tagging + meta-type + fs-type); MACB/ownership/hash/file-type stay ``None``
-    until Plans 02-02/02-03.
+    Populates the META-01 spine (path/name/addr/status + volume tagging +
+    meta-type + fs-type) and the META-02 MACB columns (normalised to tz-aware UTC
+    ISO-8601 with FAT local-time handling + zero→None, D-16) plus
+    ``timestamp_source``. Ownership/mode (META-03) and hash/file-type columns stay
+    ``None`` until Task 2 / Plan 02-03 respectively.
     """
+    macb, timestamp_source, attributes = _macb_fields(entry, walk_tz)
     return FileRow(
         evidence_source_id=evidence_source_id,
         volume_id=entry.volume_id,
@@ -137,6 +233,12 @@ def _build_file_row(
         size=entry.size,
         allocated=entry.allocated,
         meta_type=entry.meta_type,
+        mtime_utc=macb["m"],
+        atime_utc=macb["a"],
+        ctime_utc=macb["c"],
+        crtime_utc=macb["b"],
+        timestamp_source=timestamp_source,
+        attributes=attributes,
     )
 
 
@@ -175,6 +277,10 @@ def run_walk(
     """
     image_path = Path(image).resolve()
     case_path = Path(case_dir).resolve()
+
+    # Resolve the FAT local-time zone once (validated here; a bad zone raises
+    # before any evidence access — threat T-2-02-TZ / Security V5).
+    walk_tz = ZoneInfo(timezone)
 
     # (1) Re-assert the read-only / not-mounted guard before any access (D-05/P1).
     integrity.assert_source_not_mounted(image_path)
@@ -249,7 +355,7 @@ def run_walk(
                     rows: list[FileRow] = []
                     vol_deleted = 0
                     for entry in fs_seam.walk_fs(fs, vol.volume_id, vol.offset):
-                        rows.append(_build_file_row(entry, source_id))
+                        rows.append(_build_file_row(entry, source_id, walk_tz))
                         if entry.allocated is False:
                             vol_deleted += 1
                     store.insert_files(rows)
