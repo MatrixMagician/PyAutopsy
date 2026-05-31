@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-30)
 
 **Core value:** Turn a raw disk image (and associated logs) into a defensible, presentation-ready forensic report — with deleted-file recovery and metadata analysis — through a single automated Python workflow.
-**Current focus:** Phase 4 — deleted-recovery-known-file-filtering
+**Current focus:** Phase 5 — log-parsing-supertimeline-search
 
 ## Current Position
 
 Phase: 5
 Plan: Not started
-Status: Phase complete — ready for verification
+Status: Context gathered — ready to plan
 Last activity: 2026-05-31
 
 Progress: [████████░░] 80%
