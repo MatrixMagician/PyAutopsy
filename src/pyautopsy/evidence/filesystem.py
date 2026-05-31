@@ -421,7 +421,12 @@ def allocated_inodes(fs: pytsk3.FS_Info) -> frozenset[int]:
     allocated: set[int] = set()
     first = int(fs.info.first_inum)
     last = int(fs.info.last_inum)
-    for inum in range(first, last + 1):
+    root = int(fs.info.root_inum)
+    # Always probe the root inode even if it sits below first_inum, so a
+    # root-level deletion classifies against its (live) root parent rather than
+    # re-introducing the RECOV-02 false-orphan bug on a filesystem that reports
+    # first_inum > root_inum (the orphan check must not depend on the scan floor).
+    for inum in {root, *range(first, last + 1)}:
         try:
             f = fs.open_meta(inode=inum)
         except OSError:
