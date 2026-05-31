@@ -150,7 +150,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 04-02-PLAN.md — Known-file filtering vertical slice: filter/nsrl.py (read-only probe, UPPERCASE/variant) + filter/hashsets.py → known_file_matches store methods → core/knownfiles.py post-walk pass → Known-File report section (FILTER-01, D-36..D-39)
+- [x] 04-02-PLAN.md — Known-file filtering vertical slice: filter/nsrl.py (read-only probe, UPPERCASE/variant) + filter/hashsets.py → known_file_matches store methods → core/knownfiles.py post-walk pass → Known-File report section (FILTER-01, D-36..D-39)
 
 **Wave 3** *(blocked on Waves 1+2)*
 
@@ -182,5 +182,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
-| 4. Deleted Recovery & Known-File Filtering | 2/4 | In Progress|  |
+| 4. Deleted Recovery & Known-File Filtering | 3/4 | In Progress|  |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
