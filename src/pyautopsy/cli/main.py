@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import typer
 
 import pyautopsy
+from pyautopsy.core.analyze import AnalyzeError, run_analyze
 from pyautopsy.core.ingest import IngestError, run_ingest
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence.image import ImageOpenError
@@ -202,4 +203,104 @@ def walk(
         f"  deleted entries:      {result.deleted_count}\n"
         f"  volumes walked:       {result.volumes_walked}\n"
         f"  limitations recorded: {result.limitations_recorded}"
+    )
+
+
+@app.command()
+def analyze(
+    image: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the evidence image (raw/dd file or first E01 segment).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    case: Annotated[
+        Path,
+        typer.Option(
+            "--case",
+            help="Case directory to create (must be a fresh dir, no case.db).",
+        ),
+    ],
+    examiner: Annotated[
+        str,
+        typer.Option("--examiner", help="Name of the accountable examiner."),
+    ],
+    evidence_id: Annotated[
+        str,
+        typer.Option("--evidence-id", help="Examiner-supplied evidence id."),
+    ],
+    acquisition_hash: Annotated[
+        str | None,
+        typer.Option(
+            "--acquisition-hash",
+            help="Optional acquisition hash (md5/sha256 hex) to verify against.",
+        ),
+    ] = None,
+    timezone: Annotated[
+        str,
+        typer.Option(
+            "--timezone",
+            help="IANA zone for FAT local-time handling (default UTC).",
+        ),
+    ] = "UTC",
+    max_hash_size: Annotated[
+        int | None,
+        typer.Option(
+            "--max-hash-size",
+            help="Skip hashing files larger than this many bytes.",
+        ),
+    ] = None,
+) -> None:
+    """Run the full single-command pipeline: ingest → walk → timeline → report.
+
+    Composes the read-only ingest (hashed, audited, end-of-run re-verified), the
+    filesystem walk, the MACB timeline, and the report renderers in one process,
+    writing ``reports/report.html`` + ``reports/report.json`` (byte-deterministic
+    across runs) plus a volatile ``reports/run_metadata.json`` sidecar (W-1). The
+    case directory must be fresh — a pre-existing ``case.db`` fails loudly (A2).
+    Exits non-zero on any operational/integrity failure after the orchestrator
+    records a FAIL audit event (D-08/D-14).
+    """
+    # (Security V5) Validate the timezone before any work; reject a bad zone with
+    # a clear usage error rather than passing an attacker-controlled string on.
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        typer.echo(
+            f"analyze failed: invalid --timezone {timezone!r}: {exc}", err=True
+        )
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    try:
+        result = run_analyze(
+            image,
+            case,
+            examiner=examiner,
+            evidence_id=evidence_id,
+            acquisition_hash=acquisition_hash,
+            timezone=timezone,
+            max_hash_size=max_hash_size,
+        )
+    except (
+        AnalyzeError,
+        IngestError,
+        WalkError,
+        ImageOpenError,
+        MountedSourceError,
+        IntegrityError,
+    ) as exc:
+        typer.echo(f"analyze failed: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    typer.echo(
+        "analyze complete\n"
+        f"  case:               {case}\n"
+        f"  files inventoried:  {result.files_inventoried}\n"
+        f"  deleted entries:    {result.deleted_count}\n"
+        f"  timeline events:    {result.event_count}\n"
+        f"  report (json):      {result.report_json_path}\n"
+        f"  report (html):      {result.report_html_path}"
     )
