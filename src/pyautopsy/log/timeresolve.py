@@ -218,10 +218,23 @@ def infer_years(
             and components[i][0] >= 7  # older record in H2 (Jul–Dec)
             and anchor_md[0] <= 6  # anchor in H1 (Jan–Jun)
         )
-        # Confirm the boundary is sustained: the NEXT-older record must also be in
-        # the back half of the year. A lone spike (older neighbour back in H1) is
-        # an out-of-order line, not a year boundary — do not roll (CR-03 cascade).
-        confirmed = wrap and (i == 0 or components[i - 1][0] >= 7)
+        # Confirm the boundary is sustained so a lone out-of-order line does not
+        # cascade a permanent year shift (CR-03). A wrap is confirmed when EITHER:
+        #   (a) the NEXT-older record is also in the back half of the year (the
+        #       original sustained-boundary signal), OR
+        #   (b) the current record itself is a strong year-end signal — Nov/Dec
+        #       (month >= 11) that is later-in-calendar than an H1 anchor. A
+        #       Nov/Dec record preceding a Jan-side anchor is an unambiguous
+        #       December->January wrap even when its own older neighbour happens to
+        #       sit in H1 (WR-01 shape #1: a genuine boundary whose pre-boundary
+        #       neighbour is early-year was previously refused, mis-dating it by a
+        #       year). A lone mid-year spike (e.g. an August anomaly) still fails
+        #       BOTH clauses, so the anti-cascade guarantee holds.
+        confirmed = wrap and (
+            i == 0
+            or components[i - 1][0] >= 7
+            or components[i][0] >= 11
+        )
         years[i] = years[i + 1] - 1 if confirmed else years[i + 1]
         if confirmed:
             # New year segment: reset the anchor to this record's date.
