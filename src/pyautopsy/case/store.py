@@ -26,6 +26,7 @@ from pyautopsy.case.models import (
     Case,
     EvidenceSource,
     FileRow,
+    TimelineEvent,
     VolumeLimitation,
 )
 from pyautopsy.util.timeutil import iso_utc
@@ -499,6 +500,81 @@ class CaseStore:
         ).fetchall()
         return [self.get_volume_limitation(row["id"]) for row in rows]
 
+    # -- timeline events (TIME-01 / D-23/D-24/D-26) -----------------------
+
+    def insert_timeline_events(self, rows: Iterable[TimelineEvent]) -> int:
+        """Bulk-persist many :class:`TimelineEvent` rows in one ``executemany``.
+
+        Like :meth:`insert_files` this calls
+        :meth:`_commit_unless_in_transaction`, so it composes inside an outer
+        :meth:`transaction` block: the timeline producer opens one transaction
+        and every batch of exploded events defers its commit to the single
+        outer commit (WR-01).
+
+        Args:
+            rows: The timeline events to insert (any iterable; materialised
+                once).
+
+        Returns:
+            The number of rows inserted.
+        """
+        params = [_timeline_event_params(row) for row in rows]
+        if params:
+            self.connection.executemany(_TIMELINE_INSERT_SQL, params)
+        self._commit_unless_in_transaction()
+        return len(params)
+
+    def get_timeline_events(
+        self, evidence_source_id: int, *, limit: int | None = None
+    ) -> list[TimelineEvent]:
+        """Read timeline events for a source in the D-26 total order.
+
+        This is the SINGLE place the timeline read ordering is defined (no raw
+        SQL outside the store): ``ts_utc → volume_id → volume_offset → path →
+        event_type → meta_addr``. That total order is what guarantees the
+        byte-identical report bodies CLI-02/D-25 require — no two distinct
+        events can tie on all six keys, so the result never depends on sqlite's
+        rowid tiebreak.
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+            limit: When given, return only the first ``limit`` events in D-26
+                order (the D-27 bounded-HTML slice). ``None`` returns all.
+
+        Returns:
+            The matching :class:`TimelineEvent` rows in D-26 total order
+            (possibly empty).
+        """
+        sql = (
+            "SELECT * FROM timeline_events WHERE evidence_source_id = ? "
+            "ORDER BY ts_utc, volume_id, volume_offset, path, event_type, "
+            "meta_addr"
+        )
+        params: tuple[Any, ...] = (evidence_source_id,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (evidence_source_id, limit)
+        rows = self.connection.execute(sql, params).fetchall()
+        return [
+            TimelineEvent(
+                evidence_source_id=row["evidence_source_id"],
+                ts_utc=row["ts_utc"],
+                source=row["source"],
+                event_type=row["event_type"],
+                volume_id=row["volume_id"],
+                volume_offset=row["volume_offset"],
+                path=row["path"],
+                meta_addr=row["meta_addr"],
+                actor=row["actor"],
+                action=row["action"],
+                outcome=row["outcome"],
+                file_id=row["file_id"],
+                attributes=_load_attributes(row["attributes"]),
+                id=row["id"],
+            )
+            for row in rows
+        ]
+
 
 # The ``files`` insert column order, used by both insert_file and the bulk
 # insert_files ``executemany`` so the single SQL statement and the parameter
@@ -566,6 +642,52 @@ def _file_row_params(file_row: FileRow) -> tuple[Any, ...]:
         file_row.timestamp_source,
         file_row.file_type,
         json.dumps(file_row.attributes, sort_keys=True),
+    )
+
+
+# The ``timeline_events`` insert column order, kept in lockstep with
+# :func:`_timeline_event_params` exactly like ``files`` (WR-01).
+_TIMELINE_COLUMNS: tuple[str, ...] = (
+    "evidence_source_id",
+    "file_id",
+    "ts_utc",
+    "source",
+    "event_type",
+    "volume_id",
+    "volume_offset",
+    "path",
+    "meta_addr",
+    "actor",
+    "action",
+    "outcome",
+    "attributes",
+)
+
+_TIMELINE_INSERT_SQL = (
+    "INSERT INTO timeline_events ("
+    + ", ".join(_TIMELINE_COLUMNS)
+    + ") VALUES ("
+    + ", ".join("?" for _ in _TIMELINE_COLUMNS)
+    + ")"
+)
+
+
+def _timeline_event_params(event: TimelineEvent) -> tuple[Any, ...]:
+    """Flatten a :class:`TimelineEvent` into the :data:`_TIMELINE_COLUMNS` tuple."""
+    return (
+        event.evidence_source_id,
+        event.file_id,
+        event.ts_utc,
+        event.source,
+        event.event_type,
+        event.volume_id,
+        event.volume_offset,
+        event.path,
+        event.meta_addr,
+        event.actor,
+        event.action,
+        event.outcome,
+        json.dumps(event.attributes, sort_keys=True),
     )
 
 

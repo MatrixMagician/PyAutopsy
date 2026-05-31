@@ -18,6 +18,7 @@ __all__ = [
     "Case",
     "EvidenceSource",
     "FileRow",
+    "TimelineEvent",
     "VolumeLimitation",
     "AuditEvent",
 ]
@@ -144,6 +145,60 @@ class FileRow:
     crtime_utc: str | None = None
     timestamp_source: str | None = None
     file_type: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TimelineEvent:
+    """One normalized forensic timeline event (D-23/D-24).
+
+    This is the shared forensic-event model: the filesystem MACB explosion is
+    the first producer (one event per populated MACB timestamp — a file with 4
+    distinct times yields up to 4 events), and Phase 5 log producers will write
+    the same shape into the same table for the TIME-02 super-timeline. The
+    ``ts_utc`` sort key is the UTC ISO-8601 string copied **verbatim** from the
+    walk's ``*_utc`` column — it is never re-derived from a raw epoch (the
+    timezone/FAT/zero-epoch work is already done and tested in the walk).
+
+    Args:
+        evidence_source_id: Owning evidence source id (FK into
+            ``evidence_sources``).
+        ts_utc: Event timestamp as a UTC ISO-8601 string (D-10); the primary
+            sort key of the D-26 total order. Copied verbatim from the source
+            file row, never reformatted.
+        source: Event source label (e.g. ``filesystem`` or
+            ``filesystem:ext4``); future log producers use their own labels.
+        event_type: The MACB kind — one of ``modified``/``accessed``/
+            ``changed``/``born``; log producers use their own action types.
+        volume_id: Volume/partition id the event's entry came from (D-15).
+        volume_offset: Byte offset of that volume within the image (D-15).
+        path: Full path of the entry the event belongs to (evidence-ref).
+        meta_addr: The entry's inode/MFT address (part of the D-26 total order
+            + evidence-ref); ``None`` when not applicable.
+        actor: Actor attribution where known — for filesystem events the
+            owning ``uid``/``gid`` (D-23); reserved otherwise.
+        action: The action performed; reserved for Phase 5 log producers
+            (filesystem timestamp events leave it ``None``).
+        outcome: The action outcome; reserved for Phase 5 log producers.
+        file_id: FK into ``files`` for filesystem events; ``None`` for log
+            events that have no associated file (Phase 5).
+        attributes: Heterogeneous JSON-serialisable extra data (D-02).
+        id: Surrogate primary key; ``None`` until persisted.
+    """
+
+    evidence_source_id: int
+    ts_utc: str
+    source: str
+    event_type: str
+    volume_id: int
+    volume_offset: int
+    path: str
+    meta_addr: int | None = None
+    actor: str | None = None
+    action: str | None = None
+    outcome: str | None = None
+    file_id: int | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 

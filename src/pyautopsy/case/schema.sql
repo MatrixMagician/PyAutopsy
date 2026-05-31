@@ -110,3 +110,42 @@ CREATE TABLE IF NOT EXISTS volume_limitations (
 
 CREATE INDEX IF NOT EXISTS idx_volume_limitations_evidence_source_id
     ON volume_limitations (evidence_source_id);
+
+-- Normalized forensic timeline events — the shared event model (D-23/D-24).
+--
+-- This is the spine Phase 3 reads back for the timeline and report, and the
+-- table Phase 5 log producers will write into and TIME-02 will merge into a
+-- super-timeline — no schema churn, no backfill. Filesystem MACB times are the
+-- first producer: one event per populated MACB timestamp (D-24; a 0-epoch ⇒
+-- None ⇒ no event propagates from the walk). ``event_type`` ∈
+-- {modified, accessed, changed, born}; ``ts_utc`` is the UTC ISO-8601 string
+-- copied verbatim from the file row (never re-derived). ``volume_id`` and
+-- ``volume_offset`` are NOT NULL mirroring ``files`` (WR-06) since every
+-- filesystem event is tagged with its source volume. ``file_id`` is nullable
+-- so Phase 5 log events (which lack a file) reuse the table. ``actor``/
+-- ``action``/``outcome`` are the D-23 forensic-event slots (fs events fill
+-- ``actor`` with uid/gid; ``action``/``outcome`` are reserved for log
+-- producers). ``attributes`` is the D-02 JSON blackboard.
+CREATE TABLE IF NOT EXISTS timeline_events (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_source_id INTEGER NOT NULL REFERENCES evidence_sources (id),
+    file_id            INTEGER REFERENCES files (id),   -- nullable (log events, Phase 5)
+    ts_utc             TEXT    NOT NULL,                 -- the sort key, ISO-8601 +00:00
+    source             TEXT    NOT NULL,                 -- 'filesystem' | 'filesystem:ext' ...
+    event_type         TEXT    NOT NULL,                 -- modified|accessed|changed|born
+    volume_id          INTEGER NOT NULL,
+    volume_offset      INTEGER NOT NULL,
+    path               TEXT    NOT NULL,
+    meta_addr          INTEGER,
+    actor              TEXT,                              -- uid/gid where known (D-23)
+    action             TEXT,                              -- reserved (Phase 5 log producers)
+    outcome            TEXT,                              -- reserved (Phase 5 log producers)
+    attributes         TEXT    NOT NULL DEFAULT '{}'
+);
+
+-- Index supporting the D-26 total-order read.
+CREATE INDEX IF NOT EXISTS idx_timeline_events_order
+    ON timeline_events (ts_utc, volume_id, volume_offset, path, event_type, meta_addr);
+
+CREATE INDEX IF NOT EXISTS idx_timeline_events_evidence_source_id
+    ON timeline_events (evidence_source_id);

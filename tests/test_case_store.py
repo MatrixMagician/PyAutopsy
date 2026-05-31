@@ -19,6 +19,7 @@ from pyautopsy.case import (
     CaseStore,
     EvidenceSource,
     FileRow,
+    TimelineEvent,
     VolumeLimitation,
 )
 
@@ -280,6 +281,146 @@ def test_volume_limitation_round_trips(case_dir: Path) -> None:
     assert len(all_for_source) == 1
 
 
+def _seed_timeline_event(
+    source_id: int, ts_utc: str, event_type: str, **overrides: object
+) -> TimelineEvent:
+    """Build a minimal :class:`TimelineEvent` with sensible defaults for tests."""
+    base: dict[str, object] = {
+        "evidence_source_id": source_id,
+        "ts_utc": ts_utc,
+        "source": "filesystem:ext4",
+        "event_type": event_type,
+        "volume_id": 0,
+        "volume_offset": 0,
+        "path": "/x",
+        "meta_addr": 11,
+    }
+    base.update(overrides)
+    return TimelineEvent(**base)  # type: ignore[arg-type]
+
+
+def test_timeline_events_table_and_indexes_exist(case_dir: Path) -> None:
+    """A fresh case.db carries the timeline_events table + both D-26 indexes."""
+    with CaseStore.create(case_dir) as store:
+        cols = {
+            row[1]
+            for row in store.connection.execute(
+                "PRAGMA table_info(timeline_events)"
+            ).fetchall()
+        }
+        assert cols, "timeline_events table missing from a fresh case.db"
+        assert "attributes" in cols
+        indexes = {
+            row[1]
+            for row in store.connection.execute(
+                "PRAGMA index_list(timeline_events)"
+            ).fetchall()
+        }
+    assert "idx_timeline_events_order" in indexes
+    assert "idx_timeline_events_evidence_source_id" in indexes
+
+
+def test_timeline_event_round_trips(case_dir: Path) -> None:
+    """A TimelineEvent persists via the bulk insert and reads back equal."""
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            source_id = _seed_evidence_source(store)
+            n = store.insert_timeline_events(
+                [
+                    _seed_timeline_event(
+                        source_id,
+                        "2026-01-01T00:00:00+00:00",
+                        "modified",
+                        actor="uid=0,gid=0",
+                        file_id=None,
+                        attributes={"k": "v"},
+                    )
+                ]
+            )
+        events = store.get_timeline_events(source_id)
+
+    assert n == 1
+    assert len(events) == 1
+    event = events[0]
+    assert event.ts_utc == "2026-01-01T00:00:00+00:00"
+    assert event.event_type == "modified"
+    assert event.source == "filesystem:ext4"
+    assert event.volume_id == 0
+    assert event.volume_offset == 0
+    assert event.path == "/x"
+    assert event.meta_addr == 11
+    assert event.actor == "uid=0,gid=0"
+    assert event.attributes == {"k": "v"}
+    assert event.id is not None
+
+
+def test_get_timeline_events_applies_d26_total_order(case_dir: Path) -> None:
+    """get_timeline_events imposes the D-26 total order regardless of insert order.
+
+    The fixture deliberately ties events on ts_utc + volume_id + volume_offset +
+    path so the ``event_type`` and ``meta_addr`` tiebreaks are each exercised:
+    dropping either key flips an adjacent pair and fails this assertion.
+    """
+    ts = "2026-01-01T00:00:00+00:00"
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            source_id = _seed_evidence_source(store)
+            # Insert in a deliberately scrambled order.
+            store.insert_timeline_events(
+                [
+                    # later timestamp, should sort last
+                    _seed_timeline_event(
+                        source_id, "2026-02-02T00:00:00+00:00", "born",
+                        path="/a", meta_addr=1,
+                    ),
+                    # ties on ts/vol/offset/path with the next; differs on type
+                    _seed_timeline_event(
+                        source_id, ts, "modified", path="/a", meta_addr=5,
+                    ),
+                    _seed_timeline_event(
+                        source_id, ts, "changed", path="/a", meta_addr=5,
+                    ),
+                    # same ts/type/path but different meta_addr — meta_addr tiebreak
+                    _seed_timeline_event(
+                        source_id, ts, "changed", path="/a", meta_addr=2,
+                    ),
+                ]
+            )
+        events = store.get_timeline_events(source_id)
+
+    observed = [(e.ts_utc, e.path, e.event_type, e.meta_addr) for e in events]
+    assert observed == [
+        # event_type 'changed' < 'modified' lexicographically; within 'changed'
+        # meta_addr 2 < 5 — both tiebreaks gate distinct adjacent pairs.
+        (ts, "/a", "changed", 2),
+        (ts, "/a", "changed", 5),
+        (ts, "/a", "modified", 5),
+        ("2026-02-02T00:00:00+00:00", "/a", "born", 1),
+    ]
+
+
+def test_get_timeline_events_limit(case_dir: Path) -> None:
+    """The optional limit returns only the first N events in D-26 order."""
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            source_id = _seed_evidence_source(store)
+            store.insert_timeline_events(
+                [
+                    _seed_timeline_event(
+                        source_id, f"2026-01-0{i}T00:00:00+00:00", "modified",
+                        path="/a", meta_addr=i,
+                    )
+                    for i in range(1, 6)
+                ]
+            )
+        first_two = store.get_timeline_events(source_id, limit=2)
+
+    assert [e.ts_utc for e in first_two] == [
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-02T00:00:00+00:00",
+    ]
+
+
 def test_schema_has_attributes_column_on_every_table(case_dir: Path) -> None:
     """Each table carries a JSON ``attributes`` column (blackboard pattern)."""
     with CaseStore.create(case_dir) as store:
@@ -289,6 +430,7 @@ def test_schema_has_attributes_column_on_every_table(case_dir: Path) -> None:
             "run_log",
             "files",
             "volume_limitations",
+            "timeline_events",
         ):
             cols = {
                 row[1]
