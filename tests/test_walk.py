@@ -43,6 +43,40 @@ def _bytes_reader(data: bytes):
     return read_random
 
 
+def _reg_entry(reader, *, allocated: bool = True, size: int = 10):
+    """Build a minimal regular-file ``FileEntry`` with the given content reader.
+
+    Used by the WR-01/WR-02 unit tests to exercise ``_content_fields`` in
+    isolation with a reader/typer that can raise, without needing a fixture image.
+    """
+    from pyautopsy.evidence.filesystem import FileEntry
+
+    return FileEntry(
+        name="x",
+        path="/x",
+        parent_addr=None,
+        meta_addr=42,
+        allocated=allocated,
+        meta_type="reg",
+        size=size,
+        uid=0,
+        gid=0,
+        mode=0o644,
+        mtime=0,
+        atime=0,
+        ctime=0,
+        crtime=0,
+        mtime_nano=0,
+        atime_nano=0,
+        ctime_nano=0,
+        crtime_nano=0,
+        fs_ftype=8192,
+        volume_id=0,
+        volume_offset=0,
+        read_random=reader,
+    )
+
+
 def _ingest_then_walk(
     image: Path, case_dir: Path, *, timezone: str = "UTC"
 ) -> tuple[WalkResult, int]:
@@ -430,3 +464,62 @@ def test_unsupported_volume_records_limitation(
     assert len(limitations) == 1
     assert limitations[0].reason  # the FS_Info OSError message was recorded
     assert files == [], "no empty/garbage file rows for the unsupported volume"
+
+
+def test_content_read_error_does_not_abort(monkeypatch) -> None:
+    """WR-01: a per-entry content read failure degrades to null + continues.
+
+    A reader/typer that raises ``OSError`` (the data-runs-gone case for a deleted
+    entry) must NOT propagate out of ``_content_fields`` and abort the walk. The
+    entry instead records null hashes, a null type, and a ``read_error`` reason —
+    the spirit of D-20 / Pitfall 6 (one bad entry never destroys the run).
+    """
+    from pyautopsy.core import walk as walk_mod
+
+    def boom(*_args, **_kwargs):
+        raise OSError("data run gone")
+
+    # hash_file raises on the content read.
+    monkeypatch.setattr(walk_mod.integrity, "hash_file", boom)
+    entry = _reg_entry(_bytes_reader(b"abc"), allocated=True)
+
+    # The typer also raises; both must be swallowed.
+    hashes, file_type, attributes = walk_mod._content_fields(
+        entry, max_hash_size=None, typer=boom
+    )
+
+    assert hashes == {"md5": None, "sha1": None, "sha256": None}
+    assert file_type is None
+    assert attributes["hash_skipped"] == "read_error"
+
+
+def test_unallocated_typing_flags_provenance() -> None:
+    """WR-02: a deleted/unallocated regular file's type carries a reuse caveat.
+
+    Typing an unallocated entry is still useful, but its blocks may have been
+    reused (D-18: status only). The recorded type must therefore carry a
+    ``file_type_provenance`` flag; an allocated file must NOT carry it.
+    """
+    from pyautopsy.core import walk as walk_mod
+
+    def typer(_reader, _size):
+        return "text/plain"
+
+    # Unallocated: hashing is skipped (D-18) but typing runs and is flagged.
+    unalloc = _reg_entry(_bytes_reader(b"deleted bytes"), allocated=False)
+    hashes, file_type, attributes = walk_mod._content_fields(
+        unalloc, max_hash_size=None, typer=typer
+    )
+    assert hashes == {"md5": None, "sha1": None, "sha256": None}
+    assert file_type == "text/plain"
+    assert (
+        attributes["file_type_provenance"] == "unallocated-blocks-may-be-reused"
+    )
+
+    # Allocated: same type, but NO provenance caveat.
+    alloc = _reg_entry(_bytes_reader(b"deleted bytes"), allocated=True)
+    _, alloc_type, alloc_attrs = walk_mod._content_fields(
+        alloc, max_hash_size=None, typer=typer
+    )
+    assert alloc_type == "text/plain"
+    assert "file_type_provenance" not in alloc_attrs

@@ -286,15 +286,27 @@ def _content_fields(
     attributes: dict[str, Any] = {}
     hashes: dict[str, str | None] = dict(null_hashes)
     if entry.allocated:
-        digests = integrity.hash_file(
-            reader, entry.size, max_size=max_hash_size
-        )
+        # (WR-01) A per-entry content read can raise OSError/IOError — common for
+        # a deleted/corrupt entry whose data runs are gone. That MUST NOT abort
+        # the whole inventory (D-20 spirit / Pitfall 6): degrade this one entry to
+        # null hashes + a ``read_error`` reason and continue the walk. ``OSError``
+        # covers ``IOError`` (an alias since Py3.3).
+        try:
+            digests = integrity.hash_file(
+                reader, entry.size, max_size=max_hash_size
+            )
+        except OSError:
+            digests = None
+            attributes["hash_skipped"] = "read_error"
         if digests is not None:
             hashes = {
                 "md5": digests["md5"],
                 "sha1": digests["sha1"],
                 "sha256": digests["sha256"],
             }
+        elif "hash_skipped" in attributes:
+            # A read_error was already recorded above; leave it.
+            pass
         elif max_hash_size is not None and entry.size > max_hash_size:
             attributes["hash_skipped"] = "exceeds_max_hash_size"
         else:
@@ -303,7 +315,22 @@ def _content_fields(
 
     # Content typing reads only the leading HEAD_BYTES and is independent of the
     # hash skip, so a file too big to hash can still be typed (head bytes only).
-    file_type = typer(reader, entry.size)
+    # (WR-01) Guard the typing read the same way: a read failure degrades to a
+    # null type rather than aborting the walk.
+    try:
+        file_type = typer(reader, entry.size)
+    except OSError:
+        file_type = None
+        # Record a read_error if hashing did not already flag one.
+        attributes.setdefault("hash_skipped", "read_error")
+
+    # (WR-02) Typing a deleted/unallocated regular file is still useful, but its
+    # blocks may have been reused by another file (D-18: status only, no recovery
+    # claims). Flag the provenance so the report never presents the type of a
+    # reclaimed-block deleted file as equivalent to an allocated-file type.
+    if file_type is not None and not entry.allocated:
+        attributes["file_type_provenance"] = "unallocated-blocks-may-be-reused"
+
     return (hashes, file_type, attributes)
 
 
