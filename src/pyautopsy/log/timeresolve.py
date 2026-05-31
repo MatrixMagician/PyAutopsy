@@ -1,0 +1,212 @@
+"""D-46 tz/year inference + honest per-event timestamp flagging.
+
+RFC3164 log lines carry a month/day/time wall-clock with **no year and no
+timezone** — the same "naive wall-clock → flagged UTC" problem the walk already
+solved for FAT local time (:func:`pyautopsy.core.walk._macb_to_utc_iso`, D-16).
+This module mirrors that exactly:
+
+* :func:`resolve_host_tz` derives the image's local zone from ``/etc/localtime``
+  (symlink target ``…/zoneinfo/<Zone>``) then ``/etc/timezone`` (Debian text),
+  via reader callbacks supplied by the orchestrator (so this module stays
+  pytsk3-free, D-14). On failure it returns ``(None, "tz-undeterminable")``.
+* :func:`to_utc` interprets a naive wall-clock IN the host zone then converts to
+  UTC through :func:`iso_utc` (which rejects naive datetimes — the structural
+  SOUND-02 guard). The inference is ALWAYS flagged in the returned ``attributes``
+  (``timestamp_source`` + ``assumed_timezone``); an undeterminable zone falls
+  back to UTC **with an explicit warning flag**, never silently (the CR-01
+  silent-offset lesson).
+* :func:`infer_years` assigns each RFC3164 record a year, seeded from the log
+  file mtime and decremented on a backwards month roll (logs are append-ordered,
+  so a Dec→Jan jump within / across a rotated set crosses a year boundary). The
+  inferred year + its basis are flagged per event.
+
+This module imports no native bindings (D-14) and adds no runtime dependency
+(D-43): pure ``datetime``/``zoneinfo`` + the project's :func:`iso_utc`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pyautopsy.util.timeutil import iso_utc
+
+__all__ = [
+    "TIMESTAMP_SOURCE_BY_LABEL",
+    "zone",
+    "resolve_host_tz",
+    "to_utc",
+    "rfc3164_components",
+    "infer_years",
+]
+
+# Canonical provenance labels for the event ``timestamp_source`` attribute — the
+# log-side sibling of ``walk._TIMESTAMP_SOURCE_BY_LABEL`` (D-16). These describe
+# HOW a UTC instant was derived; they are asserted verbatim by the D-46 tests.
+TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
+    "inferred-tz": "log:inferred-tz",
+    "assumed-utc": "log:assumed-utc",
+    "rfc5424": "log:rfc5424-offset",
+}
+
+# RFC3164 month abbreviations → 1..12 (the only month spelling in the format).
+_MONTHS: dict[str, int] = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
+
+
+def zone(name: str) -> ZoneInfo:
+    """Return a :class:`ZoneInfo` for an IANA zone ``name`` (validated here)."""
+    return ZoneInfo(name)
+
+
+def resolve_host_tz(
+    *,
+    read_symlink: Callable[[str], str | None],
+    read_text: Callable[[str], str | None],
+) -> tuple[ZoneInfo | None, str]:
+    """Derive the image's local zone, or ``(None, "tz-undeterminable")``.
+
+    Tries ``/etc/localtime``'s symlink target first (the canonical Linux source —
+    a fast ext4 symlink whose target ``…/zoneinfo/<Zone>`` is only readable via
+    the seam's symlink API, Assumption A5), then the ``/etc/timezone`` text
+    fallback (Debian). Both are read through orchestrator-supplied callbacks so
+    this module never imports pytsk3 (D-14).
+
+    Args:
+        read_symlink: ``path -> target | None`` symlink-target reader (seam).
+        read_text: ``path -> text | None`` small-file text reader (seam).
+
+    Returns:
+        ``(ZoneInfo, "etc-localtime"|"etc-timezone")`` on success, else
+        ``(None, "tz-undeterminable")`` — the caller then assumes UTC + warns.
+    """
+    target = read_symlink("/etc/localtime")
+    if target:
+        marker = "/zoneinfo/"
+        idx = target.find(marker)
+        zone_name = target[idx + len(marker):] if idx >= 0 else target.lstrip("/")
+        zone_name = zone_name.strip()
+        if zone_name:
+            try:
+                return ZoneInfo(zone_name), "etc-localtime"
+            except (ZoneInfoNotFoundError, ValueError):
+                pass
+
+    text = read_text("/etc/timezone")
+    if text:
+        zone_name = text.strip().splitlines()[0].strip() if text.strip() else ""
+        if zone_name:
+            try:
+                return ZoneInfo(zone_name), "etc-timezone"
+            except (ZoneInfoNotFoundError, ValueError):
+                pass
+
+    return None, "tz-undeterminable"
+
+
+def to_utc(
+    ts_naive_wallclock: datetime, host_tz: ZoneInfo | None
+) -> tuple[str, dict[str, str]]:
+    """Convert a naive wall-clock to a flagged UTC ISO-8601 string (D-46).
+
+    Mirrors ``walk._macb_to_utc_iso`` (the FAT D-16 path): interpret the naive
+    components IN ``host_tz`` then convert to UTC via :func:`iso_utc` (which
+    raises on a naive datetime — naive is structurally impossible to persist).
+    The inference is ALWAYS recorded in the returned attributes; an undeterminable
+    zone falls back to UTC WITH an explicit warning (never silent — SOUND-02 /
+    CR-01).
+
+    Args:
+        ts_naive_wallclock: The parsed naive wall-clock datetime (no tzinfo).
+        host_tz: The inferred host zone, or ``None`` to assume UTC + warn.
+
+    Returns:
+        ``(utc_iso, attributes)`` where ``utc_iso`` ends in ``+00:00`` and
+        ``attributes`` carries ``timestamp_source`` (+ ``assumed_timezone`` or a
+        ``time_warning``).
+    """
+    if host_tz is None:
+        dt = ts_naive_wallclock.replace(tzinfo=timezone.utc)
+        return iso_utc(dt), {
+            "timestamp_source": TIMESTAMP_SOURCE_BY_LABEL["assumed-utc"],
+            "time_warning": "WARNING: host timezone undeterminable; assumed UTC",
+        }
+    dt = ts_naive_wallclock.replace(tzinfo=host_tz)
+    return iso_utc(dt), {
+        "timestamp_source": TIMESTAMP_SOURCE_BY_LABEL["inferred-tz"],
+        "assumed_timezone": str(host_tz),
+    }
+
+
+def rfc3164_components(raw_timestamp: str) -> tuple[int, int, int, int, int] | None:
+    """Parse an RFC3164 ``Mmm [d]d HH:MM:SS`` head into ``(mon, day, h, m, s)``.
+
+    Returns ``None`` for an unparseable head (the record then carries no resolved
+    time rather than aborting the parse). Tolerant of the space-padded day.
+    """
+    parts = raw_timestamp.split()
+    if len(parts) < 3:
+        return None
+    mon = _MONTHS.get(parts[0])
+    if mon is None:
+        return None
+    try:
+        day = int(parts[1])
+        hh, mm, ss = (int(x) for x in parts[2].split(":"))
+    except (ValueError, IndexError):
+        return None
+    return mon, day, hh, mm, ss
+
+
+def infer_years(
+    components: list[tuple[int, int, int, int, int]], *, seed_year: int
+) -> list[tuple[int, dict[str, object]]]:
+    """Assign a year to each ordered RFC3164 record (D-46 year inference).
+
+    Records are expected in append/rotation order (oldest→newest). The year is
+    seeded from the log file's mtime and DECREMENTED whenever the month rolls
+    backwards relative to the previous record (a Dec→Jan jump means the prior
+    record was in an earlier year). Because the input is oldest→newest, a single
+    forward pass with a running year — applied in reverse from the seed — yields a
+    monotonic-by-construction assignment; each record's inferred year and basis
+    are flagged for honesty.
+
+    Args:
+        components: The ``(mon, day, h, m, s)`` heads in oldest→newest order.
+        seed_year: The year to anchor the NEWEST record to (the log mtime year).
+
+    Returns:
+        One ``(year, flags)`` per input record, in the same order; ``flags``
+        carries ``year_inferred`` + ``year_basis``.
+    """
+    n = len(components)
+    years: list[int] = [seed_year] * n
+    # Walk newest→oldest: when the month INCREASES going backwards in time (i.e.
+    # an earlier record has a LATER month than its successor), a year boundary
+    # was crossed — the earlier record belongs to the previous year.
+    for i in range(n - 2, -1, -1):
+        cur_mon = components[i][0]
+        next_mon = components[i + 1][0]
+        if cur_mon > next_mon:
+            years[i] = years[i + 1] - 1
+        else:
+            years[i] = years[i + 1]
+    return [
+        (
+            years[i],
+            {
+                "year_inferred": years[i],
+                "year_basis": "file mtime + rotation order",
+            },
+        )
+        for i in range(n)
+    ]
+
+
+def naive_from_components(year: int, comp: tuple[int, int, int, int, int]) -> datetime:
+    """Build a naive :class:`datetime` from an inferred year + RFC3164 head."""
+    mon, day, hh, mm, ss = comp
+    return datetime(year, mon, day, hh, mm, ss)  # noqa: DTZ001 (naive by design)

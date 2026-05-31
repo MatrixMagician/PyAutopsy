@@ -633,6 +633,75 @@ def open_fs(img: pytsk3.Img_Info, offset: int) -> pytsk3.FS_Info:
     return pytsk3.FS_Info(img, offset=offset)
 
 
+def read_symlink_target(fs: pytsk3.FS_Info, path: str) -> str | None:
+    """Return a symlink's target path, or ``None`` if not a readable symlink.
+
+    On ext4 a *fast* symlink stores its target inline in the inode (no data
+    block), so the entry's ``read_random`` content reads back as zeros — the
+    target is only available via the meta object's ``link`` field. This seam
+    helper exposes that target as a decoded string WITHOUT leaking the native
+    ``meta`` object (D-14), so upper-tier callers (``log/timeresolve``) can read
+    ``/etc/localtime`` -> ``/usr/share/zoneinfo/<Zone>`` for tz inference.
+
+    Args:
+        fs: The open filesystem (from :func:`open_fs`).
+        path: Absolute in-filesystem path to the symlink (e.g. ``/etc/localtime``).
+
+    Returns:
+        The decoded target path (``utf-8``/``errors="replace"`` — DATA only,
+        never used as a host write path, Security V5), or ``None`` when the path
+        does not resolve, has no meta, or carries no link target.
+    """
+    try:
+        entry = fs.open(path)
+    except OSError:
+        return None
+    meta = entry.info.meta
+    if meta is None:
+        return None
+    link = getattr(meta, "link", None)
+    if not link:
+        return None
+    if isinstance(link, bytes):
+        return link.decode("utf-8", "replace")
+    return str(link)
+
+
+def read_file_bytes(
+    fs: pytsk3.FS_Info, path: str, max_size: int = 1 << 20
+) -> bytes | None:
+    """Read up to ``max_size`` bytes of a regular file at ``path`` (read-only).
+
+    A small, bounded convenience reader for the seam's upper-tier callers that
+    need a single file's content by path (e.g. ``log/timeresolve`` reading
+    ``/etc/timezone``). The size cap bounds a crafted-size read (PERF-01); the
+    source is never written or mounted (D-05/P1).
+
+    Args:
+        fs: The open filesystem (from :func:`open_fs`).
+        path: Absolute in-filesystem path to a regular file.
+        max_size: Maximum bytes to read (default 1 MiB).
+
+    Returns:
+        The file bytes (truncated to ``max_size``), or ``None`` when the path
+        does not resolve / has no readable content.
+    """
+    try:
+        entry = fs.open(path)
+    except OSError:
+        return None
+    meta = entry.info.meta
+    if meta is None:
+        return None
+    size = min(int(meta.size), max_size)
+    if size <= 0:
+        return b""
+    try:
+        return entry.read_random(0, size)
+    except OSError:
+        return None
+
+
 def _make_reader(entry: object) -> Callable[[int, int], bytes] | None:
     """Build a read-only byte-reader closure over a TSK directory entry.
 
