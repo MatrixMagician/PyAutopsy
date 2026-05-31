@@ -34,6 +34,20 @@ def test_source_mtime_and_size_unchanged_after_open_and_hash(
     assert after.st_size == before.st_size
 
 
+def test_source_unchanged_after_walk(tiny_ext4_image: Path) -> None:
+    """D-05/P1: a full filesystem walk never modifies the source (RED scaffold).
+
+    Mirrors ``test_source_mtime_and_size_unchanged_after_open_and_hash`` for the
+    walk path: stat before, run the walk over the fs fixtures, stat after, assert
+    ``st_mtime_ns`` + ``st_size`` unchanged. References ``core.walk`` (Plan
+    02-02/02-03) which does not exist yet, so this is RED until the walk lands.
+    """
+    pytest.fail(
+        "Plan 02-02/02-03: core/walk.py read-only-after-walk guarantee not "
+        "implemented yet (RED)"
+    )
+
+
 def _mounts_table(*device_mount_pairs: tuple[str, str]) -> str:
     """Build a synthetic /proc/mounts body from (device, mountpoint) pairs."""
     return "".join(
