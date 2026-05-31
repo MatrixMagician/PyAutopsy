@@ -72,7 +72,7 @@ created: 2026-05-31
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
 | Real partitioned multi-FS disk image at scale | META-01 (volume offsets) | Session only built bare-FS + a small synthetic partitioned fixture; large real-world partition tables not exercised in CI | On a partitioned E01/dd, run the walk and confirm each volume's rows carry the correct `volume_id`/byte-offset |
-| Sub-second / nano MACB folding | META-02 (D-16) | The committed ext4 fixture has `mtime_nano=0` (debugfs does not set it — Assumption A3), so the `*_nano`→`attributes` fold branch has no green automated target; real images differ | On a real ext4/NTFS image with non-zero `*_nano`, run the walk and confirm `attributes` carries the sub-second values for at least one file |
+| Sub-second / nano MACB folding | META-02 (D-16) | The committed ext4 fixture has `mtime_nano=0` (debugfs does not set it — Assumption A3), so the `*_nano`→`*_utc` microsecond fold branch has no green automated target; real images differ | On a real ext4/NTFS image with non-zero `*_nano`, run the walk and confirm the `*_utc` timestamp columns carry the folded sub-second (microsecond) value for at least one file. NOTE: sub-seconds fold into the microsecond component of the `*_utc` ISO timestamps (`_macb_to_utc_iso`: `nano // 1000` → `datetime.replace(microsecond=…)`), NOT into `attributes` (which holds FAT local-time flags only); Python `datetime`'s microsecond cap truncates sub-µs 100 ns digits. VERIFIED 2026-05-31 on a host-built `mkntfs` image — 14/23 files carried non-zero sub-second precision (e.g. `mtime_utc=…T16:00:19.060007+00:00`). |
 
 *All other phase behaviors have automated verification.*
 
