@@ -18,7 +18,8 @@ findings:
   warning: 5
   info: 4
   total: 10
-status: issues_found
+status: resolved
+resolution: 2026-05-31 — CR-01 + WR-01..05 fixed (commits d632123, dbcb168, 8ec29a3, 08b9d8b, bdf052e, 456eefc, 1f831d2); 173 tests + ruff + mypy green. IN-01..04 (Info) deferred as non-blocking.
 ---
 
 # Phase 3: Code Review Report
@@ -26,7 +27,7 @@ status: issues_found
 **Reviewed:** 2026-05-31
 **Depth:** standard
 **Files Reviewed:** 9
-**Status:** issues_found
+**Status:** resolved (Critical + Warning fixed; Info deferred)
 
 ## Summary
 
