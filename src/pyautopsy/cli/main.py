@@ -488,6 +488,22 @@ def analyze(
             readable=True,
         ),
     ] = None,
+    logs: Annotated[
+        bool,
+        typer.Option(
+            "--logs",
+            help="Also parse the image's system logs into the super-timeline "
+            "(opt-in; the default report stays Phase-4 byte-identical).",
+        ),
+    ] = False,
+    search: Annotated[
+        str | None,
+        typer.Option(
+            "--search",
+            help="Literal term to search across allocated/unallocated content + "
+            "file hashes; opts into the search-results section (opt-in).",
+        ),
+    ] = None,
 ) -> None:
     """Run the full single-command pipeline: ingest → walk → timeline → report.
 
@@ -525,6 +541,8 @@ def analyze(
             recover=recover,
             nsrl_db=nsrl,
             hash_sets=hash_sets,
+            logs=logs,
+            search=search,
         )
     except (
         AnalyzeError,
@@ -532,6 +550,8 @@ def analyze(
         WalkError,
         RecoverError,
         FilterError,
+        LogsError,
+        SearchError,
         ImageOpenError,
         MountedSourceError,
         IntegrityError,
@@ -550,6 +570,8 @@ def analyze(
         f"  deleted entries:    {result.deleted_count}\n"
         f"  files recovered:    {result.files_recovered}\n"
         f"  known matches:      {result.known_matches}\n"
+        f"  log events:         {result.log_events}\n"
+        f"  search hits:        {result.search_hits}\n"
         f"  timeline events:    {result.event_count}\n"
         f"  report (json):      {result.report_json_path}\n"
         f"  report (html):      {result.report_html_path}"

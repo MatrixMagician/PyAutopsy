@@ -61,19 +61,27 @@ _MVP_LIMITATIONS = (
 )
 
 
-def _mvp_limitations(*, recovery_ran: bool, filtering_ran: bool) -> str:
+def _mvp_limitations(
+    *,
+    recovery_ran: bool,
+    filtering_ran: bool,
+    logs_ran: bool = False,
+    search_ran: bool = False,
+) -> str:
     """Return the honest MVP-limitations disclaimer for what ACTUALLY ran.
 
-    When neither recovery nor filtering ran, returns :data:`_MVP_LIMITATIONS`
-    verbatim — so the default-path report stays byte-identical to the Phase-3
-    baseline (D-40). When recovery and/or filtering ran, the disclaimer is
-    rebuilt so it (a) no longer flatly asserts the report EXCLUDES the feature
-    that ran, and (b) carries that feature's honest caveat — recovery is best-
-    effort data survival with carving deferred (CARVE-01); NSRL/custom filtering
-    is examiner-supplied noise reduction, not an adjudication of any file
+    When NONE of recovery/filtering/logs/search ran, returns
+    :data:`_MVP_LIMITATIONS` verbatim — so the default-path report stays
+    byte-identical to the Phase-3/4 baseline (D-40/D-48). When any of them ran,
+    the disclaimer is rebuilt so it (a) no longer flatly asserts the report
+    EXCLUDES the feature that ran, and (b) carries that feature's honest caveat —
+    recovery is best-effort data survival with carving deferred (CARVE-01);
+    NSRL/custom filtering is examiner-supplied noise reduction, not an
+    adjudication of any file; log analysis carries inferred time/order as a flag,
+    never as fact (D-46); content search reports located evidence, not a verdict
     (D-28/D-32 — no over/under-claim, no good/bad language).
     """
-    if not recovery_ran and not filtering_ran:
+    if not recovery_ran and not filtering_ran and not logs_ran and not search_ran:
         return _MVP_LIMITATIONS
 
     # Build the "covers" clause from what ran, plus the still-excluded set.
@@ -82,22 +90,32 @@ def _mvp_limitations(*, recovery_ran: bool, filtering_ran: bool) -> str:
         covered.append("deleted/orphan-file recovery (data survival only)")
     if filtering_ran:
         covered.append("known-file filtering (NSRL/custom noise reduction)")
+    if logs_ran:
+        covered.append("log analysis merged into the super-timeline")
+    if search_ran:
+        covered.append("content search")
 
-    excluded = ["log analysis", "super-timeline", "content search"]
+    excluded = []
     if not recovery_ran:
-        excluded.insert(0, "deleted-file recovery")
+        excluded.append("deleted-file recovery")
     if not filtering_ran:
-        excluded.insert(0, "known-file (NSRL) filtering")
+        excluded.append("known-file (NSRL) filtering")
+    if not logs_ran:
+        excluded.append("log analysis")
+        excluded.append("super-timeline")
+    if not search_ran:
+        excluded.append("content search")
 
-    parts = [
+    covers_clause = (
         "This is an MVP report. It covers "
         + ", ".join(covered[:-1])
         + ", and "
         + covered[-1]
-        + ". It does NOT include "
-        + ", ".join(excluded)
         + "."
-    ]
+    )
+    if excluded:
+        covers_clause += " It does NOT include " + ", ".join(excluded) + "."
+    parts = [covers_clause]
     if recovery_ran:
         parts.append(
             "Recovered content is best-effort data survival only: ext4 clears "
@@ -111,6 +129,19 @@ def _mvp_limitations(*, recovery_ran: bool, filtering_ran: bool) -> str:
             "Known-file filtering is examiner-supplied noise reduction, not a "
             "verdict: a hash match means the file is KNOWN to the supplied "
             "reference set — it does not assert the file is good or bad."
+        )
+    if logs_ran:
+        parts.append(
+            "Log analysis merges parsed system-log events into the UTC-ordered "
+            "super-timeline; where a year or host timezone had to be inferred it "
+            "is FLAGGED per event, not asserted as a recorded fact (D-46), and a "
+            "log line is what the system recorded, not proof of who acted or why."
+        )
+    if search_ran:
+        parts.append(
+            "Content search reports byte-pattern matches at offsets — located "
+            "evidence for review, not a judgement that a containing file is "
+            "malicious."
         )
     parts.append("Absence of a finding here does not mean absence of evidence.")
     return " ".join(parts)
@@ -175,6 +206,31 @@ def _recovered_section(file_row: FileRow) -> dict[str, Any]:
     }
 
 
+# Neutral intro for the Log Findings section (LOG-01/04, D-45/D-46). Like the
+# known-file copy this is HONEST framing, not adjudication: a parsed log line is
+# an evidence-recorded statement, and any inferred timezone/year is FLAGGED as an
+# inference, never asserted as fact (D-46). Absence is not absence of evidence.
+_LOG_FINDINGS_INTRO = (
+    "Log Findings parses the image's system logs (auth/sudo/PAM and shell "
+    "history) into the same UTC-ordered super-timeline as the filesystem MACB "
+    "events (TIME-02). Each event carries its honest provenance: where a "
+    "timezone or year had to be INFERRED (logs often omit the year and the host "
+    "zone), that inference is flagged here and never presented as a recorded "
+    "fact (D-46). A log line is what the system recorded — not proof of who "
+    "acted or why."
+)
+
+# Neutral intro for the Content Search section (SEARCH-01/02, D-49). A hit is a
+# byte-pattern match at an offset — it is located evidence, not a verdict.
+_SEARCH_INTRO = (
+    "Content Search reports byte-pattern matches across allocated file content, "
+    "unallocated space, and (for known-bad hash lists) the inventory's file "
+    "hashes. A hit records WHAT matched and WHERE (volume, path, byte offset) — "
+    "it is located evidence for the examiner to review, not a judgement that the "
+    "containing file is malicious."
+)
+
+
 def _surface_provenance(file_row: FileRow) -> dict[str, str]:
     """Lift the Phase 2 provenance flags out of ``FileRow.attributes``.
 
@@ -201,6 +257,8 @@ def assemble_report_body(
     acquisition_verified: bool | None = None,
     recovery_ran: bool = False,
     filtering_ran: bool = False,
+    logs_ran: bool = False,
+    search_ran: bool = False,
 ) -> dict[str, Any]:
     """Assemble the deterministic report body for one evidence source.
 
@@ -227,6 +285,12 @@ def assemble_report_body(
             is byte-identical to the Phase-3 baseline.
         filtering_ran: Whether the known-file filtering pass actually ran. Same
             honesty contract as ``recovery_ran``.
+        logs_ran: Whether log parsing ran (``--logs``). Drives the honest
+            disclaimer and is independent of the log-findings section, which is
+            derived from the persisted events. Default ``False`` keeps the
+            disclaimer byte-identical to the Phase-4 baseline (D-48).
+        search_ran: Whether content search ran (``--search``). Same honesty
+            contract as ``logs_ran``.
 
     Returns:
         The analytical report body. Notable keys: ``case``, ``evidence``,
@@ -253,6 +317,10 @@ def assemble_report_body(
     # Neutral known-file annotations in the store's total order (never re-sorted
     # here — D-41); aggregated below into deterministic per-source/per-list counts.
     known_matches = store.get_known_matches(evidence_source_id)
+    # Search hits in the store's D-41 total order (never re-sorted here). On the
+    # default analyze path (no --search) this is empty, so the search section is
+    # byte-identical across runs (CLI-02/D-48).
+    search_hits = store.get_search_hits(evidence_source_id)
 
     # -- Inventory aggregation set (BL-01): exclude recovered rows ---------------
     # The walk records every deleted inode as a ``files`` row (allocated=False,
@@ -348,6 +416,93 @@ def assemble_report_body(
         for ev in events
     ]
     timeline_total = len(timeline)
+
+    # -- Log Findings (LOG-01/04, D-45/D-46) -------------------------------------
+    # The merged super-timeline IS `timeline` above (the get_timeline_events read,
+    # TIME-02 — NO new ORDER BY here). This section surfaces the LOG slice of that
+    # same total order plus its honest tamperability/completeness provenance. A
+    # log event is any event whose source is not the filesystem MACB source
+    # (filesystem events use a `filesystem`/`filesystem:<fs>` label); the filter
+    # preserves the store's D-26 order so the section stays byte-stable, and is
+    # empty on the default analyze path so report bytes are unchanged (D-48).
+    log_events = [
+        ev for ev in events if not ev.source.startswith("filesystem")
+    ]
+    # Per-source counts (e.g. auth / syslog / shell-history), ranked by
+    # (-count, source) so the breakdown is deterministic regardless of insert
+    # order; the source labels are content-derived, not wall-clock.
+    log_source_counter: Counter[str] = Counter(ev.source for ev in log_events)
+    log_by_source = [
+        {"source": source, "count": count}
+        for source, count in sorted(
+            log_source_counter.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
+    # Honest provenance flags (D-46): how many log events relied on an INFERRED
+    # timezone or year. These are surfaced as a completeness/tamperability caveat,
+    # never erased — the report must not present an inferred time as recorded
+    # fact. Derived deterministically by counting attribute presence.
+    inferred_year_count = sum(
+        1
+        for ev in log_events
+        if (ev.attributes or {}).get("year_inferred") is not None
+    )
+    inferred_tz_count = sum(
+        1
+        for ev in log_events
+        if (ev.attributes or {}).get("assumed_timezone") is not None
+    )
+    log_findings = {
+        "intro": _LOG_FINDINGS_INTRO,
+        "count": len(log_events),
+        "by_source": log_by_source,
+        "provenance": {
+            "inferred_year_count": inferred_year_count,
+            "inferred_timezone_count": inferred_tz_count,
+            "caveat": (
+                "Where a year or host timezone was inferred (logs frequently omit "
+                "the year and the host zone), each affected event carries that "
+                "inference as a flag in the super-timeline — it is not asserted as "
+                "a recorded fact (D-46). Absence of a log finding does not mean "
+                "absence of evidence."
+            ),
+        },
+    }
+
+    # -- Content Search (SEARCH-01/02, D-49): per-region/per-kind counts ---------
+    # Read in the store's D-41 total order (never re-sorted here). Counts are
+    # ranked by sorted keys so the section is byte-stable across runs; the
+    # `term` bytes are decoded latin-1 (lossless round-trip) for display so a
+    # non-UTF-8 needle never crashes the body. Empty on the default path (D-48).
+    search_region_counter: Counter[str] = Counter(h.region for h in search_hits)
+    search_by_region = [
+        {"region": region, "count": count}
+        for region, count in sorted(
+            search_region_counter.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
+    search_kind_counter: Counter[str] = Counter(h.term_kind for h in search_hits)
+    search_by_kind = [
+        {"term_kind": kind, "count": count}
+        for kind, count in sorted(
+            search_kind_counter.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
+    search_results = [
+        {
+            "term": h.term.decode("latin-1"),
+            "term_kind": h.term_kind,
+            "region": h.region,
+            "volume_id": h.volume_id,
+            "volume_offset": h.volume_offset,
+            "byte_offset": h.byte_offset,
+            "path": h.path,
+            # A bounded surrounding-bytes snippet (data only; the HTML autoescapes
+            # it, Security V5 / threat T-05-04-02). May be None.
+            "context": h.context,
+        }
+        for h in search_hits
+    ]
 
     # -- Known-File Filtering (noise reduction): per-source/per-list counts ------
     # Deterministic aggregation: NSRL matches by which hash matched, and custom
@@ -522,6 +677,19 @@ def assemble_report_body(
                 "lists": custom_lists,
             },
         },
+        # 6d. Log Findings (LOG-01/04, D-45/D-46) — the LOG slice of the merged
+        # super-timeline (`timeline` above is that merged read, TIME-02) plus its
+        # honest inferred-time provenance. Empty on the default path (D-48).
+        "log_findings": log_findings,
+        # 6e. Content Search (SEARCH-01/02, D-49) — byte-pattern hits by region/
+        # kind; located evidence, not a verdict. Empty on the default path (D-48).
+        "search": {
+            "intro": _SEARCH_INTRO,
+            "count": len(search_results),
+            "by_region": search_by_region,
+            "by_kind": search_by_kind,
+            "hits": search_results,
+        },
         # 7. Limitations: D-20 volumes + the honest MVP disclaimer (mandatory).
         # The disclaimer reflects what ACTUALLY ran (D-40): default-path text is
         # byte-identical to Phase 3; it is rewritten only when recovery/filtering
@@ -529,7 +697,10 @@ def assemble_report_body(
         "limitations": {
             "volumes": limitation_rows,
             "mvp_disclaimer": _mvp_limitations(
-                recovery_ran=recovery_ran, filtering_ran=filtering_ran
+                recovery_ran=recovery_ran,
+                filtering_ran=filtering_ran,
+                logs_ran=logs_ran,
+                search_ran=search_ran,
             ),
         },
     }

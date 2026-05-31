@@ -49,7 +49,9 @@ from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.core.ingest import IngestError, run_ingest
 from pyautopsy.core.knownfiles import FilterError, run_filter
+from pyautopsy.core.logs import LogsError, run_logs
 from pyautopsy.core.recover import RecoverError, run_recover
+from pyautopsy.core.search import SearchError, run_search
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence import integrity
 from pyautopsy.evidence.image import ImageOpenError
@@ -95,6 +97,8 @@ _EXPECTED_ANALYZE_ERRORS: tuple[type[BaseException], ...] = (
     WalkError,
     RecoverError,
     FilterError,
+    LogsError,
+    SearchError,
     integrity.MountedSourceError,
     integrity.IntegrityError,
     ImageOpenError,
@@ -124,6 +128,10 @@ class AnalyzeResult:
             recovery was not requested — D-40 opt-in).
         known_matches: How many neutral known-file annotations filtering wrote
             (0 when no ``--nsrl``/``--hash-set`` input was supplied — D-40 opt-in).
+        log_events: How many log events the log pass merged into the
+            super-timeline (0 when ``--logs`` was not supplied — D-40 opt-in).
+        search_hits: How many search hits the content-search pass wrote (0 when
+            ``--search`` was not supplied — D-40 opt-in).
         report_json_path: Path of the written ``reports/report.json``.
         report_html_path: Path of the written ``reports/report.html``.
     """
@@ -135,6 +143,8 @@ class AnalyzeResult:
     event_count: int
     files_recovered: int
     known_matches: int
+    log_events: int
+    search_hits: int
     report_json_path: Path
     report_html_path: Path
 
@@ -174,6 +184,8 @@ def run_analyze(
     recover: bool = False,
     nsrl_db: str | Path | None = None,
     hash_sets: Sequence[tuple[str | Path, str]] = (),
+    logs: bool = False,
+    search: str | None = None,
 ) -> AnalyzeResult:
     """Run the full single-command pipeline: ingest → walk → timeline → report (CLI-01).
 
@@ -208,6 +220,17 @@ def run_analyze(
         hash_sets: ``(path, sense)`` pairs for custom allow/block hash lists.
             Supplying any of these (or ``nsrl_db``) opts the pipeline into the
             filtering pass.
+        logs: When ``True``, run log parsing
+            (:func:`pyautopsy.core.logs.run_logs`) after the walk so the report
+            gains its log-findings section and the super-timeline carries log
+            events (LOG-01/04, TIME-02, D-40 opt-in). When ``False`` (default)
+            the log pass is skipped and the report stays byte-identical to the
+            Phase-4 baseline (D-48).
+        search: When a non-empty term is supplied, run content search
+            (:func:`pyautopsy.core.search.run_search`) after the walk so the
+            report gains its search-results section (SEARCH-01/02, D-40 opt-in).
+            When ``None`` (default) search is skipped and the report stays
+            byte-identical to the Phase-4 baseline (D-48).
 
     Returns:
         An :class:`AnalyzeResult` with the analytical pipeline outcome (no
@@ -251,6 +274,10 @@ def run_analyze(
     # explicitly requested. With NEITHER, the pipeline is byte-identical to the
     # Phase-3 baseline (test_default_analyze_unchanged).
     filter_requested = nsrl_db is not None or len(tuple(hash_sets)) > 0
+    # (D-40) Search runs only when the examiner supplied a non-empty term;
+    # ``logs`` is a plain opt-in bool. With NEITHER, the new sections stay empty
+    # and the report is byte-identical to the Phase-4 baseline (D-48).
+    search_requested = bool(search)
     audit.write(
         "analyze.start",
         image=str(image_path),
@@ -261,11 +288,15 @@ def run_analyze(
         max_hash_size=max_hash_size,
         recover=recover,
         filter=filter_requested,
+        logs=logs,
+        search=search_requested,
     )
 
     store: CaseStore | None = None
     files_recovered = 0
     known_matches = 0
+    log_events = 0
+    search_hits = 0
     try:
         # (2) Walk the filesystem into the per-file inventory (META-01).
         walk_result = run_walk(
@@ -300,10 +331,44 @@ def run_analyze(
             )
             known_matches = filter_result.nsrl_matches + filter_result.custom_matches
 
-        # (3) Build the timeline + assemble/render the report set, reading back
-        #     through one open store.
+        # (3) Build the filesystem MACB timeline FIRST (so the log pass below
+        #     finds the fs events already present and its idempotent backfill is a
+        #     no-op — TIME-02, no double-insert), then open one store for the
+        #     report read-back.
         store = CaseStore.open(case_path)
-        event_count = build_timeline(store, source_id)
+        build_timeline(store, source_id)
+
+        # (2c) OPT-IN log parsing (D-40): merge parsed system-log events into the
+        # shared super-timeline ONLY when requested. run_logs opens its own store
+        # and re-asserts the not-mounted guard; it runs AFTER build_timeline so
+        # the filesystem MACB events already exist and its idempotent fs-event
+        # backfill is a no-op (TIME-02 — no new ordering). Never writes the
+        # source (D-42).
+        if logs:
+            logs_result = run_logs(
+                image_path,
+                case_path,
+                evidence_source_id=source_id,
+            )
+            log_events = logs_result.events_parsed
+
+        # (2d) OPT-IN content search (D-40): scan allocated/unallocated content +
+        # file hashes for the supplied term ONLY when requested. The store owns
+        # hit ordering (D-41). Never writes the source (D-42).
+        if search_requested:
+            assert search is not None  # narrowed by search_requested
+            search_result = run_search(
+                image_path,
+                case_path,
+                terms=[search.encode("utf-8")],
+                evidence_source_id=source_id,
+            )
+            search_hits = search_result.hits
+
+        # The merged super-timeline total = whatever get_timeline_events now
+        # returns (fs MACB + any merged log events, TIME-02), read once after both
+        # opt-in passes have written. No new ORDER BY; the store owns the order.
+        event_count = len(store.get_timeline_events(source_id))
         # (WR-02) Pass the REAL acquisition-compare outcome through so the report
         # renders an honest integrity state (verified-pass / not-compared / fail)
         # instead of a hardcoded PASS: None = no acquisition hash supplied,
@@ -318,6 +383,8 @@ def run_analyze(
             acquisition_verified=ingest_result.acquisition_verified,
             recovery_ran=recover,
             filtering_ran=filter_requested,
+            logs_ran=logs,
+            search_ran=search_requested,
         )
         json_path = write_json(body, case_path)
         # (W-1) render_html takes NO run_metadata argument — report.html carries
@@ -345,6 +412,8 @@ def run_analyze(
             event_count=event_count,
             files_recovered=files_recovered,
             known_matches=known_matches,
+            log_events=log_events,
+            search_hits=search_hits,
         )
     except _EXPECTED_ANALYZE_ERRORS as exc:
         # An EXPECTED operational failure: leave a terminal FAIL event before
@@ -381,6 +450,8 @@ def run_analyze(
         event_count=event_count,
         files_recovered=files_recovered,
         known_matches=known_matches,
+        log_events=log_events,
+        search_hits=search_hits,
         report_json_path=json_path,
         report_html_path=html_path,
     )

@@ -389,6 +389,65 @@
   {% endif %}
 </section>
 
+{# 6d. Log Findings (LOG-01/04) — the log slice of the merged super-timeline #}
+<section>
+  <h2>Log Findings</h2>
+  <p>{{ body.log_findings.intro }}</p>
+  {% if body.log_findings.count == 0 %}
+  <p class="empty-state">No system-log events were parsed (run with
+    <code>--logs</code> to merge auth/sudo/PAM and shell-history events into the
+    super-timeline).</p>
+  {% else %}
+  <p>{{ body.log_findings.count }} log event(s) merged into the super-timeline.</p>
+  <table>
+    <thead><tr><th>Log source</th><th>Events</th></tr></thead>
+    <tbody>
+      {% for row in body.log_findings.by_source %}
+      <tr><td>{{ row.source }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if body.log_findings.provenance.inferred_year_count
+        or body.log_findings.provenance.inferred_timezone_count %}
+  <div class="disclosure">&#x26A0;
+    {{ body.log_findings.provenance.inferred_year_count }} event(s) with an
+    inferred year and
+    {{ body.log_findings.provenance.inferred_timezone_count }} with an inferred
+    timezone. {{ body.log_findings.provenance.caveat }}</div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# 6e. Content Search (SEARCH-01/02) — located evidence, not a verdict #}
+<section>
+  <h2>Content Search</h2>
+  <p>{{ body.search.intro }}</p>
+  {% if body.search.count == 0 %}
+  <p class="empty-state">No content-search hits (run with <code>--search
+    &lt;term&gt;</code> to scan allocated/unallocated content and file hashes).</p>
+  {% else %}
+  <p>{{ body.search.count }} hit(s).</p>
+  <table>
+    <thead>
+      <tr><th>Term</th><th>Kind</th><th>Region</th><th>Volume</th>
+        <th>Path</th><th>Byte offset</th></tr>
+    </thead>
+    <tbody>
+      {% for hit in body.search.hits %}
+      <tr>
+        <td class="mono">{{ hit.term }}</td>
+        <td>{{ hit.term_kind }}</td>
+        <td>{{ hit.region }}</td>
+        <td class="mono">{{ hit.volume_id }}@{{ hit.volume_offset }}</td>
+        <td class="mono">{{ hit.path if hit.path else "(unallocated)" }}</td>
+        <td class="mono">{{ hit.byte_offset if hit.byte_offset is not none else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
 {# 7. Limitations (mandatory; D-20 volumes + standing MVP disclaimer) #}
 <section>
   <h2>Limitations</h2>
