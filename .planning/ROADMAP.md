@@ -84,7 +84,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 02-02-PLAN.md — MACB → tz-aware UTC ISO-8601 (FAT local-time flagged, zero→None, no-naive invariant) + UID/GID/mode (META-02, META-03, D-16)
+- [x] 02-02-PLAN.md — MACB → tz-aware UTC ISO-8601 (FAT local-time flagged, zero→None, no-naive invariant) + UID/GID/mode (META-02, META-03, D-16)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -146,7 +146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
-| 2. Filesystem Walk & Metadata | 2/4 | In Progress|  |
+| 2. Filesystem Walk & Metadata | 3/4 | In Progress|  |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
