@@ -162,69 +162,119 @@ def test_fat_fs_types_is_plain_int_frozenset() -> None:
     assert all(isinstance(t, int) and type(t) is int for t in FAT_FS_TYPES)
 
 
-def test_root_entries_have_no_parent_addr(tiny_ext4_image: Path) -> None:
-    """WR-03: root-level entries carry ``parent_addr is None``.
+def test_root_entries_carry_root_inode_parent_addr(tiny_ext4_image: Path) -> None:
+    """WR-03/RECOV-02: root-level entries carry ``parent_addr == fs root inode``.
 
-    The walk starts at the root with no parent, so every top-level entry's
-    ``parent_addr`` is ``None``; deeper entries (none in this flat fixture) would
-    carry their parent directory's inode. This pins the wiring so the column can
-    never silently revert to a hardcoded ``None`` everywhere (the original bug).
-    """
-    rows = _walk_all(tiny_ext4_image)
-    assert rows
-    for row in rows:
-        # The ext4 fixture is flat: lost+found and $OrphanFiles are empty, so
-        # every yielded entry is at the root and must have a null parent_addr.
-        assert row.parent_addr is None
-
-
-def test_root_level_deletion_is_not_orphan(tiny_ext4_image: Path) -> None:
-    """RECOV-02: a deleted file in the volume ROOT classifies is_orphan=False.
-
-    Regression for the root-level misclassification gap: ``walk_fs`` now tags
-    root entries with the filesystem root inode, so ``iter_deleted_inodes`` sees
-    an allocated parent for ``deleted.txt`` (which lives in the ext4 root) and
-    does NOT flag it as an orphan. None is reserved for genuine range-scan
-    orphans with no surviving dir link. A revert (root entries back to
-    parent_addr=None) would re-flag this as an orphan and FAIL this test.
+    Corrected contract (was ``parent_addr is None``): ``walk_fs`` now tags every
+    top-level entry with the filesystem root inode (``fs.info.root_inum``) so a
+    deleted file in the root carries an *allocated* parent and classifies as
+    recovered, NOT as an orphan. ``None`` is reserved exclusively for the pass-2
+    range-scan orphan (no surviving directory link). This pins the column so it
+    can never silently revert to a hardcoded ``None`` everywhere (which was the
+    original RECOV-02 root-level-deletion bug). A revert FAILS here.
     """
     with open_image(tiny_ext4_image) as handle:
         fs = open_fs(handle.image, 0)
-        deleted = [
+        root_inum = int(fs.info.root_inum)
+        rows = list(walk_fs(fs, 0, 0))
+    assert rows
+    for row in rows:
+        # The ext4 fixture is flat: lost+found and $OrphanFiles are empty, so
+        # every yielded entry is at the root and must carry the root inode (NOT
+        # None — None is now reserved for genuine range-scan orphans).
+        assert row.parent_addr == root_inum, (row.name, row.parent_addr, root_inum)
+
+
+def test_root_level_deletion_is_not_orphan(
+    tiny_ext4_image: Path, tiny_fat32_image: Path
+) -> None:
+    """RECOV-02: a deleted file in the volume ROOT classifies is_orphan=False.
+
+    Regression for the root-level misclassification gap, pinned for BOTH ext4
+    and FAT: ``walk_fs`` now tags root entries with the filesystem root inode, so
+    ``iter_deleted_inodes`` sees an allocated parent for a root-level deletion
+    (ext4 ``deleted.txt`` / the FAT root deletion) and does NOT flag it as an
+    orphan. ``None`` is reserved for genuine range-scan orphans with no surviving
+    dir link. A revert (root entries back to ``parent_addr=None``) would re-flag
+    these as orphans and FAIL this test.
+    """
+    # ext4 root deletion (matched by name + recorded inode).
+    with open_image(tiny_ext4_image) as handle:
+        fs = open_fs(handle.image, 0)
+        ext4_deleted = [
             di
             for di in iter_deleted_inodes(fs, volume_id=0, volume_offset=0)
             if di.name == make_fixtures.EXT4_DELETED_NAME
         ]
-    assert deleted, "root-level deleted.txt was not discovered by iter_deleted_inodes"
-    assert deleted[0].is_orphan is False, (
-        "root-level deletion wrongly classified as orphan — root inode parent "
-        "should be allocated"
-    )
-    assert deleted[0].parent_addr is not None, (
-        "root-level deleted entry must carry the root inode, not None"
+    assert ext4_deleted, "root-level deleted.txt was not discovered (ext4)"
+    di = ext4_deleted[0]
+    assert di.meta_addr == make_fixtures.EXT4_DELETED_META_ADDR
+    assert di.is_orphan is False, "ext4 root deletion wrongly classified orphan"
+    assert di.parent_addr is not None, "ext4 root deletion must carry the root inode"
+
+    # FAT root deletion (FAT loses the first name char, so match by recorded
+    # inode, not exact name).
+    with open_image(tiny_fat32_image) as handle:
+        fs = open_fs(handle.image, 0)
+        fat_deleted = [
+            di
+            for di in iter_deleted_inodes(fs, volume_id=0, volume_offset=0)
+            if di.meta_addr == make_fixtures.FAT_DELETED_META_ADDR
+        ]
+    assert fat_deleted, "root-level FAT deletion was not discovered"
+    fdi = fat_deleted[0]
+    assert fdi.is_orphan is False, "FAT root deletion wrongly classified orphan"
+    assert fdi.parent_addr is not None, "FAT root deletion must carry the root inode"
+
+
+def test_removed_parent_deletion_is_still_orphan(ext4_orphan_image: Path) -> None:
+    """RECOV-02: a deletion whose parent DIR was removed still classifies orphan.
+
+    Pins the OTHER direction so the root-inode fix cannot swallow a genuine
+    orphan (threat T-04-04-UNDERCLAIM): the ext4_orphan fixture's file
+    (``EXT4_ORPHAN_META_ADDR``) had BOTH itself and its parent directory removed,
+    so its surviving ``parent_addr`` is an *unallocated* inode — it must still
+    classify ``is_orphan=True``.
+    """
+    with open_image(ext4_orphan_image) as handle:
+        fs = open_fs(handle.image, 0)
+        orphans = [
+            di
+            for di in iter_deleted_inodes(fs, volume_id=0, volume_offset=0)
+            if di.meta_addr == make_fixtures.EXT4_ORPHAN_META_ADDR
+        ]
+    assert orphans, "orphan inode was not discovered"
+    assert orphans[0].is_orphan is True, (
+        "removed-parent deletion wrongly demoted to non-orphan (genuine orphan "
+        "must be preserved)"
     )
 
 
 def test_parent_addr_threaded_through_recursion() -> None:
-    """WR-03: a child entry's ``parent_addr`` is its parent directory's inode.
+    """WR-03/RECOV-02: a child's ``parent_addr`` is its parent directory's inode.
 
     Uses a fake pytsk3-shaped filesystem (root contains one subdirectory which
     contains one regular file) so the recursion is exercised without a fixture.
-    The file under ``sub/`` must carry ``parent_addr == sub.inode``.
+    Corrected contract: a root-level entry now carries the FakeFS root inode
+    (``fs.info.root_inum``), NOT ``None`` — ``None`` is reserved for genuine
+    range-scan orphans, and a root-level deletion must classify as recovered. The
+    child under ``sub/`` still carries ``parent_addr == sub.inode`` (the threading
+    below the root is unchanged).
     """
     from tests.fixtures.fake_fs import FakeDirEntry, FakeFS
 
     fs = FakeFS(
         {
-            "/": [FakeDirEntry("sub", addr=2, is_dir=True)],
-            "/sub": [FakeDirEntry("file.txt", addr=3, is_dir=False)],
-        }
+            "/": [FakeDirEntry("sub", addr=10, is_dir=True)],
+            "/sub": [FakeDirEntry("file.txt", addr=11, is_dir=False)],
+        },
+        root_inum=2,
     )
     rows = list(walk_fs(fs, volume_id=0, volume_offset=0))
     sub = next(r for r in rows if r.name == "sub")
     child = next(r for r in rows if r.name == "file.txt")
-    assert sub.parent_addr is None  # sub is at the root
-    assert child.parent_addr == sub.meta_addr == 2
+    assert sub.parent_addr == 2  # sub is at the root → tagged with the root inode
+    assert child.parent_addr == sub.meta_addr == 10
 
 
 def test_recover_meta_reader_survives_subsequent_inode_iteration(

@@ -135,6 +135,42 @@ def test_orphan_reported_separately(ext4_orphan_image: Path, case_dir: Path) -> 
     assert make_fixtures.EXT4_ORPHAN_META_ADDR not in recovered_addrs
 
 
+def test_root_deletion_reported_as_recovered_not_orphan(
+    tiny_ext4_image: Path, tiny_fat32_image: Path, case_dir: Path, tmp_path: Path
+) -> None:
+    """RECOV-02: a ROOT-level deletion lands in ``recovered``, NOT ``orphans``.
+
+    The orchestrator counterpart to ``test_orphan_reported_separately`` and the
+    regression for the root-level misclassification gap: a deleted file whose
+    parent (the volume root) survives must appear in ``result.recovered`` and
+    must NOT appear in ``result.orphans`` — for BOTH ext4 and FAT. A revert of
+    the seam fix (root entries back to ``parent_addr=None``) would route these
+    into ``orphans`` and FAIL here.
+    """
+    # ext4 root deletion (deleted.txt, recorded inode).
+    ext4_result, _ = _ingest_then_recover(tiny_ext4_image, case_dir)
+    ext4_recovered = {getattr(r, "meta_addr", None) for r in ext4_result.recovered}
+    ext4_orphans = {getattr(o, "meta_addr", None) for o in ext4_result.orphans}
+    assert make_fixtures.EXT4_DELETED_META_ADDR in ext4_recovered, (
+        "ext4 root deletion was not reported under Recovered"
+    )
+    assert make_fixtures.EXT4_DELETED_META_ADDR not in ext4_orphans, (
+        "ext4 root deletion wrongly reported under Orphan"
+    )
+
+    # FAT root deletion (separate case dir; recorded inode).
+    fat_case = tmp_path / "fat_case"
+    fat_result, _ = _ingest_then_recover(tiny_fat32_image, fat_case)
+    fat_recovered = {getattr(r, "meta_addr", None) for r in fat_result.recovered}
+    fat_orphans = {getattr(o, "meta_addr", None) for o in fat_result.orphans}
+    assert make_fixtures.FAT_DELETED_META_ADDR in fat_recovered, (
+        "FAT root deletion was not reported under Recovered"
+    )
+    assert make_fixtures.FAT_DELETED_META_ADDR not in fat_orphans, (
+        "FAT root deletion wrongly reported under Orphan"
+    )
+
+
 def test_confidence_tiers() -> None:
     """RECOV-03: intact vs partial/overwritten vs ext4-zeroed-pointer caveat.
 

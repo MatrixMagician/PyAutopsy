@@ -101,9 +101,28 @@ FS_FILE_NAME = "file1.txt"
 FS_FILE_CONTENT = b"pyautopsy fixture file one\n"
 
 # ext4 second file that is created then deleted, leaving an UNALLOC entry whose
-# inode/MFT addr the walk must still inventory (META-01 / D-18).
+# inode/MFT addr the walk must still inventory (META-01 / D-18). It lives in the
+# volume ROOT, so it is also the ext4 ground truth for the RECOV-02 root-level
+# *recovered* (non-orphan) direction: its parent (the allocated root inode)
+# survives, so it must classify is_orphan=False.
 EXT4_DELETED_NAME = "deleted.txt"
 EXT4_DELETED_CONTENT = b"this entry is deleted\n"
+# The root-level ext4 deletion's inode (recorded post-build; debugfs assigns it
+# deterministically). Its parent is the allocated root inode, so it classifies
+# is_orphan=False (Recovered) — the RECOV-02 root-deletion ground truth.
+EXT4_DELETED_META_ADDR = 13
+
+# FAT root-level deletion ground truth (RECOV-02). A second known file is written
+# to the FAT *root* via mcopy then deleted via mdel (mtools), so a root-level FAT
+# deletion survives whose parent (the allocated FAT root) is intact — it must
+# classify is_orphan=False (Recovered), NOT Orphan. FAT loses the first character
+# of a deleted name (Pitfall 3), so the surviving entry is matched by its
+# recovered content / non-orphan flag, not by an exact name.
+FAT_DELETED_NAME = "del2.txt"
+FAT_DELETED_CONTENT = b"this FAT root entry is deleted\n"
+# The surviving FAT root deletion's inode (recorded post-build). Its parent is
+# the allocated FAT root inode, so it classifies is_orphan=False (Recovered).
+FAT_DELETED_META_ADDR = 4
 
 # Ground-truth ownership/mode applied to FS_FILE_NAME on ext4 via debugfs
 # (META-03). FAT/NTFS have no real POSIX uid/gid; TSK reports 0 there.
@@ -313,23 +332,53 @@ def build_tiny_ext4_image(dest: Path) -> Path:
 
 
 def build_tiny_fat32_image(dest: Path) -> Path:
-    """Build a tiny FAT32 image with one known file (FAT local-time test, D-16).
+    """Build a tiny FAT32 image with one live file + one ROOT-deleted file.
 
     ``mkfs.fat -F 32`` needs a reasonably large volume (>= ~33 MiB) so we use
-    64 MiB; ``mcopy`` (mtools) writes the known file. ``MTOOLS_SKIP_CHECK=1``
+    64 MiB; ``mcopy`` (mtools) writes the known live file (:data:`FS_FILE_NAME`,
+    the FAT local-time test, D-16) AND a second known file to the FAT *root*
+    (:data:`FAT_DELETED_NAME` / :data:`FAT_DELETED_CONTENT`), which is then
+    removed with ``mdel`` so a ROOT-level FAT deletion survives for the RECOV-02
+    root-deletion regression (the deleted entry's parent — the allocated FAT
+    root — is intact, so it must classify is_orphan=False). ``MTOOLS_SKIP_CHECK=1``
     suppresses mtools' interactive geometry check. FAT stores *local* time with
     no embedded zone — the walk flags these ``local-time-inferred`` (D-16).
+
+    Determinism caveat: ``mkfs.fat`` stamps a volume id from the wall clock and
+    ``mdel`` rewrites a directory entry in place, so a rebuild reproduces the
+    *structure* and the recorded ground truth (one live file + one surviving
+    root-level deletion whose content is :data:`FAT_DELETED_CONTENT`) but is NOT
+    byte-identical (mirrors the NTFS-resident builder's caveat). The image is
+    committed once; the report-body determinism gate (CLI-02) is unaffected
+    because it pins report output, not raw fixture bytes.
     """
     mkfs = _require_tool("mkfs.fat")
     mcopy = _require_tool("mcopy")
+    mdel = _require_tool("mdel")
     _truncate(dest, _FAT32_SIZE)
     subprocess.run([mkfs, "-F", "32", str(dest)], check=True, capture_output=True)
+    env = {**os.environ, "MTOOLS_SKIP_CHECK": "1"}
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / FS_FILE_NAME
         src.write_bytes(FS_FILE_CONTENT)
-        env = {**os.environ, "MTOOLS_SKIP_CHECK": "1"}
         subprocess.run(
             [mcopy, "-i", str(dest), str(src), f"::{FS_FILE_NAME}"],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        # Write a second known file to the ROOT then delete it (mdel) so a
+        # root-level FAT deletion survives for the RECOV-02 regression.
+        deleted = Path(td) / FAT_DELETED_NAME
+        deleted.write_bytes(FAT_DELETED_CONTENT)
+        subprocess.run(
+            [mcopy, "-i", str(dest), str(deleted), f"::{FAT_DELETED_NAME}"],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        subprocess.run(
+            [mdel, "-i", str(dest), f"::{FAT_DELETED_NAME}"],
             check=True,
             capture_output=True,
             env=env,
