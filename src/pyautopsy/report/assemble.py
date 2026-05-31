@@ -155,6 +155,13 @@ def assemble_report_body(
                 "deleted_count": 0,
             },
         )
+        # WR-03: prefer a non-null fs_type over a null one so the report never
+        # shows a blank fs for a volume that clearly has one just because the
+        # first row seen (get_files id order) happened to be a meta-less/orphan
+        # entry. First non-null wins; later differing non-null values do not
+        # silently overwrite (deterministic, order-stable).
+        if bucket["fs_type"] is None and f.fs_type is not None:
+            bucket["fs_type"] = f.fs_type
         bucket["file_count"] += 1
         if _is_deleted(f):
             bucket["deleted_count"] += 1
