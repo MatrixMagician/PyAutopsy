@@ -28,6 +28,7 @@ __all__ = [
     "DEFAULT_CHUNK_SIZE",
     "MAX_REGEX_MATCH_LEN",
     "SearchPatternError",
+    "assert_redos_safe",
     "compile_regex",
     "search_bytes",
     "search_image",
@@ -55,15 +56,79 @@ class SearchPatternError(ValueError):
     """
 
 
+# Structural ReDoS vectors rejected BEFORE any matching runs (CR-01). Python's
+# ``re`` is a backtracking engine with no timeout, so a post-hoc match-length cap
+# cannot stop catastrophic backtracking — the blow-up happens INSIDE the matcher
+# before any match object exists. The only dependency-free, deterministic defence
+# (we add no ``re2`` runtime dep, D-43) is to refuse the patterns that cause
+# super-polynomial backtracking at compile time. The two classic shapes are:
+#
+#   * "nested quantifier" — a quantified group whose body is itself quantified or
+#     a single-char unbounded atom, e.g. ``(a+)+``, ``(.*)+``, ``(a*)*``,
+#     ``(\d+)*`` — exponential on a non-matching tail;
+#   * "quantified alternation overlap" — ``(a|a)*`` / ``(a|ab)*`` style — also
+#     exponential.
+#
+# These reject a hostile examiner regex as a clean operator error
+# (:class:`SearchPatternError`) rather than letting it hang the forensic run
+# (Security V5 / T-05-03-01). A legitimate bounded pattern (``\d{1,4}``,
+# ``[a-z]+@[a-z]+``, literal-ish needles) is unaffected.
+_REDOS_NESTED_QUANTIFIER = re.compile(
+    rb"""
+    \(                      # an opening group ...
+    [^()]*?                 # ... whose body (no nesting handled here) ...
+    (?:                     # ... contains an unbounded-repeat sub-atom:
+        [.\w]\*             #   x*   (single atom, star)
+      | [.\w]\+             #   x+   (single atom, plus)
+      | \*                  #   any star already inside the group
+      | \+                  #   any plus already inside the group
+      | \{\d+,\}            #   {n,} open-ended bound
+    )
+    [^()]*?
+    \)
+    [*+]                    # ... and the WHOLE group is itself unbounded-repeated
+    """,
+    re.VERBOSE,
+)
+_REDOS_QUANTIFIED_ALTERNATION = re.compile(rb"\([^()]*\|[^()]*\)[*+]")
+
+
+def assert_redos_safe(pattern: bytes) -> None:
+    """Reject a regex with a structural catastrophic-backtracking vector (CR-01).
+
+    Raised BEFORE any matching runs because Python's ``re`` cannot be interrupted
+    once :func:`re.Pattern.finditer` begins backtracking — a length cap applied to
+    a produced match is too late. Refuses nested unbounded quantifiers
+    (``(a+)+``, ``(.*a){30}``-class) and quantified overlapping alternations
+    (``(a|a)*``); a normal bounded examiner pattern passes untouched.
+
+    Args:
+        pattern: The regex source as raw ``bytes``.
+
+    Raises:
+        SearchPatternError: If the pattern carries a known ReDoS vector.
+    """
+    if _REDOS_NESTED_QUANTIFIER.search(pattern) or (
+        _REDOS_QUANTIFIED_ALTERNATION.search(pattern)
+    ):
+        raise SearchPatternError(
+            f"search regex rejected (catastrophic-backtracking / ReDoS vector): "
+            f"{pattern!r}; rewrite without a nested unbounded quantifier "
+            f"(e.g. bound the inner repeat: {{0,N}})"
+        )
+
+
 def compile_regex(pattern: bytes) -> re.Pattern[bytes]:
-    """Compile an examiner regex term with a documented complexity bound.
+    """Compile an examiner regex term with a real complexity bound (CR-01).
 
     Compiled against ``bytes`` (the scanner works on raw bytes so a non-UTF-8
-    needle is exact). Compilation failure raises :class:`SearchPatternError` so a
-    bad pattern is a clean operator error, not a crash (T-05-03-01/05). The ReDoS
-    guard is enforced at *scan* time: every match is bounded to
-    :data:`MAX_REGEX_MATCH_LEN` bytes and the stream is read in bounded chunks
-    (PERF-01), so an unbounded ``.*`` can never run over a whole in-memory volume.
+    needle is exact). The ReDoS guard is enforced at COMPILE time by
+    :func:`assert_redos_safe`: a pattern carrying a catastrophic-backtracking
+    vector is refused before it can ever run against evidence bytes (Python's
+    ``re`` has no timeout, so a scan-time match-length cap cannot stop the
+    backtracking — CR-01). Compilation failure (or a rejected ReDoS pattern)
+    raises :class:`SearchPatternError` so a bad pattern is a clean operator error,
+    not a crash (T-05-03-01/05).
 
     Args:
         pattern: The regex source as raw ``bytes``.
@@ -72,8 +137,9 @@ def compile_regex(pattern: bytes) -> re.Pattern[bytes]:
         The compiled :class:`re.Pattern`.
 
     Raises:
-        SearchPatternError: If the pattern is not a valid regex.
+        SearchPatternError: If the pattern is invalid or carries a ReDoS vector.
     """
+    assert_redos_safe(pattern)
     try:
         return re.compile(pattern)
     except re.error as exc:
@@ -116,8 +182,15 @@ def _iter_window_matches(
         for m in rx.finditer(window):
             start, end = m.start(), m.end()
             if end - start > MAX_REGEX_MATCH_LEN:
-                # ReDoS / unbounded-``.*`` guard: ignore an over-long match
-                # (Security V5 / T-05-03-01) rather than emit a giant hit.
+                # A legitimately long match (e.g. a wide ``.*``) is REPORTED, not
+                # silently dropped (CR-01 correctness gap): truncate the recorded
+                # span to the documented bound so the hit row stays bounded
+                # (T-05-03-04) while the match is still surfaced at its correct
+                # offset. The emit/dedup test uses ``end`` only for the carry
+                # boundary, so clamping it keeps a >4 KiB hit visible.
+                end = start + MAX_REGEX_MATCH_LEN
+                if end > carry_len:
+                    yield start, end, m.group(0)[:MAX_REGEX_MATCH_LEN], "regex"
                 continue
             if end > carry_len:
                 yield start, end, m.group(0), "regex"
