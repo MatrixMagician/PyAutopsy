@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -22,7 +22,12 @@ from types import TracebackType
 from typing import Any
 
 import pyautopsy
-from pyautopsy.case.models import Case, EvidenceSource
+from pyautopsy.case.models import (
+    Case,
+    EvidenceSource,
+    FileRow,
+    VolumeLimitation,
+)
 from pyautopsy.util.timeutil import iso_utc
 
 __all__ = ["CaseStore"]
@@ -314,6 +319,254 @@ class CaseStore:
             attributes=_load_attributes(row["attributes"]),
             id=row["id"],
         )
+
+    # -- files (walk inventory) -------------------------------------------
+
+    def insert_file(self, file_row: FileRow) -> int:
+        """Persist a single :class:`FileRow` and return its new id.
+
+        Args:
+            file_row: The inventoried file row to insert.
+
+        Returns:
+            The autoincrement id of the inserted row.
+
+        Raises:
+            sqlite3.IntegrityError: On a foreign-key or constraint violation.
+        """
+        cur = self.connection.execute(_FILES_INSERT_SQL, _file_row_params(file_row))
+        self._commit_unless_in_transaction()
+        if cur.lastrowid is None:
+            raise RuntimeError("INSERT INTO files did not return a row id")
+        return cur.lastrowid
+
+    def insert_files(self, rows: Iterable[FileRow]) -> int:
+        """Bulk-persist many :class:`FileRow` rows in one ``executemany`` (WR-01).
+
+        Like the per-insert methods this still calls
+        :meth:`_commit_unless_in_transaction`, so it composes with an outer
+        :meth:`transaction` block: the orchestrator opens one transaction and
+        every per-volume batch defers its commit to the single outer commit.
+
+        Args:
+            rows: The file rows to insert (any iterable; materialised once).
+
+        Returns:
+            The number of rows inserted.
+        """
+        params = [_file_row_params(row) for row in rows]
+        if params:
+            self.connection.executemany(_FILES_INSERT_SQL, params)
+        self._commit_unless_in_transaction()
+        return len(params)
+
+    def get_file(self, file_id: int) -> FileRow:
+        """Read a file row back by id.
+
+        Args:
+            file_id: The file row id to look up.
+
+        Returns:
+            The reconstructed :class:`FileRow`.
+
+        Raises:
+            LookupError: If no file row has the given id.
+        """
+        row = self.connection.execute(
+            "SELECT * FROM files WHERE id = ?", (file_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"no file with id {file_id}")
+        return FileRow(
+            evidence_source_id=row["evidence_source_id"],
+            volume_id=row["volume_id"],
+            volume_offset=row["volume_offset"],
+            path=row["path"],
+            name=row["name"],
+            parent_addr=row["parent_addr"],
+            meta_addr=row["meta_addr"],
+            fs_type=row["fs_type"],
+            size=row["size"],
+            allocated=None if row["allocated"] is None else bool(row["allocated"]),
+            meta_type=row["meta_type"],
+            uid=row["uid"],
+            gid=row["gid"],
+            mode=row["mode"],
+            md5=row["md5"],
+            sha1=row["sha1"],
+            sha256=row["sha256"],
+            mtime_utc=row["mtime_utc"],
+            atime_utc=row["atime_utc"],
+            ctime_utc=row["ctime_utc"],
+            crtime_utc=row["crtime_utc"],
+            timestamp_source=row["timestamp_source"],
+            file_type=row["file_type"],
+            attributes=_load_attributes(row["attributes"]),
+            id=row["id"],
+        )
+
+    def get_files(self, evidence_source_id: int) -> list[FileRow]:
+        """Read every file row for an evidence source, ordered by id.
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            All matching :class:`FileRow` rows (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT id FROM files WHERE evidence_source_id = ? ORDER BY id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [self.get_file(row["id"]) for row in rows]
+
+    # -- volume limitations (D-20 findings) -------------------------------
+
+    def insert_volume_limitation(self, limitation: VolumeLimitation) -> int:
+        """Persist a :class:`VolumeLimitation` finding and return its new id.
+
+        Args:
+            limitation: The D-20 known-limitation finding to record.
+
+        Returns:
+            The autoincrement id of the inserted row.
+
+        Raises:
+            sqlite3.IntegrityError: On a foreign-key or constraint violation.
+        """
+        cur = self.connection.execute(
+            "INSERT INTO volume_limitations "
+            "(evidence_source_id, volume_id, volume_offset, detected_desc, "
+            "reason, attributes) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                limitation.evidence_source_id,
+                limitation.volume_id,
+                limitation.volume_offset,
+                limitation.detected_desc,
+                limitation.reason,
+                json.dumps(limitation.attributes, sort_keys=True),
+            ),
+        )
+        self._commit_unless_in_transaction()
+        if cur.lastrowid is None:
+            raise RuntimeError(
+                "INSERT INTO volume_limitations did not return a row id"
+            )
+        return cur.lastrowid
+
+    def get_volume_limitation(self, limitation_id: int) -> VolumeLimitation:
+        """Read a volume-limitation finding back by id.
+
+        Args:
+            limitation_id: The finding id to look up.
+
+        Returns:
+            The reconstructed :class:`VolumeLimitation`.
+
+        Raises:
+            LookupError: If no finding has the given id.
+        """
+        row = self.connection.execute(
+            "SELECT * FROM volume_limitations WHERE id = ?", (limitation_id,)
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"no volume limitation with id {limitation_id}")
+        return VolumeLimitation(
+            evidence_source_id=row["evidence_source_id"],
+            volume_id=row["volume_id"],
+            volume_offset=row["volume_offset"],
+            detected_desc=row["detected_desc"],
+            reason=row["reason"],
+            attributes=_load_attributes(row["attributes"]),
+            id=row["id"],
+        )
+
+    def get_volume_limitations(
+        self, evidence_source_id: int
+    ) -> list[VolumeLimitation]:
+        """Read every limitation finding for an evidence source, ordered by id.
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            All matching :class:`VolumeLimitation` rows (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT id FROM volume_limitations "
+            "WHERE evidence_source_id = ? ORDER BY id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [self.get_volume_limitation(row["id"]) for row in rows]
+
+
+# The ``files`` insert column order, used by both insert_file and the bulk
+# insert_files ``executemany`` so the single SQL statement and the parameter
+# tuple stay in lockstep.
+_FILES_COLUMNS: tuple[str, ...] = (
+    "evidence_source_id",
+    "volume_id",
+    "volume_offset",
+    "path",
+    "name",
+    "parent_addr",
+    "meta_addr",
+    "fs_type",
+    "size",
+    "allocated",
+    "meta_type",
+    "uid",
+    "gid",
+    "mode",
+    "md5",
+    "sha1",
+    "sha256",
+    "mtime_utc",
+    "atime_utc",
+    "ctime_utc",
+    "crtime_utc",
+    "timestamp_source",
+    "file_type",
+    "attributes",
+)
+
+_FILES_INSERT_SQL = (
+    "INSERT INTO files ("
+    + ", ".join(_FILES_COLUMNS)
+    + ") VALUES ("
+    + ", ".join("?" for _ in _FILES_COLUMNS)
+    + ")"
+)
+
+
+def _file_row_params(file_row: FileRow) -> tuple[Any, ...]:
+    """Flatten a :class:`FileRow` into the :data:`_FILES_COLUMNS` insert tuple."""
+    return (
+        file_row.evidence_source_id,
+        file_row.volume_id,
+        file_row.volume_offset,
+        file_row.path,
+        file_row.name,
+        file_row.parent_addr,
+        file_row.meta_addr,
+        file_row.fs_type,
+        file_row.size,
+        None if file_row.allocated is None else int(file_row.allocated),
+        file_row.meta_type,
+        file_row.uid,
+        file_row.gid,
+        file_row.mode,
+        file_row.md5,
+        file_row.sha1,
+        file_row.sha256,
+        file_row.mtime_utc,
+        file_row.atime_utc,
+        file_row.ctime_utc,
+        file_row.crtime_utc,
+        file_row.timestamp_source,
+        file_row.file_type,
+        json.dumps(file_row.attributes, sort_keys=True),
+    )
 
 
 def _load_attributes(raw: str | None) -> dict[str, Any]:

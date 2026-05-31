@@ -7,7 +7,20 @@ writer abstraction every later phase plugs into.
 
 from __future__ import annotations
 
-from pyautopsy.case.models import AuditEvent, Case, EvidenceSource
+from pyautopsy.case.models import (
+    AuditEvent,
+    Case,
+    EvidenceSource,
+    FileRow,
+    VolumeLimitation,
+)
 from pyautopsy.case.store import CaseStore
 
-__all__ = ["Case", "EvidenceSource", "AuditEvent", "CaseStore"]
+__all__ = [
+    "Case",
+    "EvidenceSource",
+    "FileRow",
+    "VolumeLimitation",
+    "AuditEvent",
+    "CaseStore",
+]
