@@ -162,21 +162,36 @@ def rfc3164_components(raw_timestamp: str) -> tuple[int, int, int, int, int] | N
 
 
 def infer_years(
-    components: list[tuple[int, int, int, int, int]], *, seed_year: int
+    components: list[tuple[int, int, int, int, int]],
+    *,
+    seed_year: int,
+    seed_basis: str = "file mtime + rotation order",
 ) -> list[tuple[int, dict[str, object]]]:
     """Assign a year to each ordered RFC3164 record (D-46 year inference).
 
     Records are expected in append/rotation order (oldest→newest). The year is
-    seeded from the log file's mtime and DECREMENTED whenever the month rolls
-    backwards relative to the previous record (a Dec→Jan jump means the prior
-    record was in an earlier year). Because the input is oldest→newest, a single
-    forward pass with a running year — applied in reverse from the seed — yields a
-    monotonic-by-construction assignment; each record's inferred year and basis
-    are flagged for honesty.
+    seeded from the log file's mtime on the NEWEST record and DECREMENTED only on a
+    genuine calendar year boundary walking backwards in time. The boundary test
+    compares the full ``(month, day)`` — NOT the month alone — so a same-month
+    backward step (e.g. ``Jan 20`` → ``Jan 02``) is correctly recognised as the
+    SAME year, and a real wrap (``Jan`` → ``Dec``) crosses to the previous year
+    (CR-03: month-only comparison missed same-month boundaries).
+
+    Robustness to a single out-of-order line (CR-03 cascade): the running anchor
+    is the *minimum* ``(month, day)`` seen so far in the newer-side window, not the
+    immediate predecessor. A lone late-dated line therefore does not become a new
+    anchor that shifts every earlier record's year; the year only steps down when a
+    record is genuinely later-in-the-calendar than everything newer than it AND the
+    gap is a true December→January-class wrap (older month numerically greater AND
+    the step spans the year-end, i.e. the older record sits in the back half of the
+    year while the newer anchor sits in the front half). One anomalous line is thus
+    absorbed instead of cascading a permanent year shift.
 
     Args:
         components: The ``(mon, day, h, m, s)`` heads in oldest→newest order.
-        seed_year: The year to anchor the NEWEST record to (the log mtime year).
+        seed_year: The year to anchor the NEWEST record to (the evidence-derived
+            seed; never a wall-clock year — CR-02).
+        seed_basis: Provenance string recorded in each record's ``year_basis``.
 
     Returns:
         One ``(year, flags)`` per input record, in the same order; ``flags``
@@ -184,22 +199,42 @@ def infer_years(
     """
     n = len(components)
     years: list[int] = [seed_year] * n
-    # Walk newest→oldest: when the month INCREASES going backwards in time (i.e.
-    # an earlier record has a LATER month than its successor), a year boundary
-    # was crossed — the earlier record belongs to the previous year.
+    if n == 0:
+        return []
+
+    # Walk newest→oldest. ``anchor_md`` is the EARLIEST-in-calendar (month, day)
+    # seen among the records newer than the current position — using the running
+    # minimum rather than the immediate successor stops one stray late-dated line
+    # from re-anchoring (CR-03). A boundary is recognised only when it is a genuine
+    # Dec→Jan-class wrap AND it is CONFIRMED by the next-older record (so a lone
+    # out-of-order spike, whose older neighbour is back in the new-year range, is
+    # absorbed instead of cascading a permanent shift).
+    years[n - 1] = seed_year
+    anchor_md = (components[n - 1][0], components[n - 1][1])
     for i in range(n - 2, -1, -1):
-        cur_mon = components[i][0]
-        next_mon = components[i + 1][0]
-        if cur_mon > next_mon:
-            years[i] = years[i + 1] - 1
-        else:
-            years[i] = years[i + 1]
+        cur_md = (components[i][0], components[i][1])
+        wrap = (
+            cur_md > anchor_md
+            and components[i][0] >= 7  # older record in H2 (Jul–Dec)
+            and anchor_md[0] <= 6  # anchor in H1 (Jan–Jun)
+        )
+        # Confirm the boundary is sustained: the NEXT-older record must also be in
+        # the back half of the year. A lone spike (older neighbour back in H1) is
+        # an out-of-order line, not a year boundary — do not roll (CR-03 cascade).
+        confirmed = wrap and (i == 0 or components[i - 1][0] >= 7)
+        years[i] = years[i + 1] - 1 if confirmed else years[i + 1]
+        if confirmed:
+            # New year segment: reset the anchor to this record's date.
+            anchor_md = cur_md
+        elif cur_md < anchor_md:
+            # Still the same year; tighten the earliest-seen anchor.
+            anchor_md = cur_md
     return [
         (
             years[i],
             {
                 "year_inferred": years[i],
-                "year_basis": "file mtime + rotation order",
+                "year_basis": seed_basis,
             },
         )
         for i in range(n)
