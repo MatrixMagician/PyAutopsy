@@ -212,13 +212,16 @@ def _latest_evidence_source_id(store: CaseStore) -> int:
 def _build_file_row(
     entry: fs_seam.FileEntry, evidence_source_id: int, walk_tz: ZoneInfo
 ) -> FileRow:
-    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01/02).
+    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01..03).
 
     Populates the META-01 spine (path/name/addr/status + volume tagging +
-    meta-type + fs-type) and the META-02 MACB columns (normalised to tz-aware UTC
+    meta-type + fs-type), the META-02 MACB columns (normalised to tz-aware UTC
     ISO-8601 with FAT local-time handling + zero→None, D-16) plus
-    ``timestamp_source``. Ownership/mode (META-03) and hash/file-type columns stay
-    ``None`` until Task 2 / Plan 02-03 respectively.
+    ``timestamp_source``, and the META-03 ownership/mode columns straight from the
+    seam's plain-int ``uid``/``gid``/``mode`` fields (``None`` is preserved for
+    meta-less entries — never coerced to ``0``; the raw mode integer is stored
+    unformatted, the Phase 3 report layer formats it). Hash/file-type columns stay
+    ``None`` until Plan 02-03.
     """
     macb, timestamp_source, attributes = _macb_fields(entry, walk_tz)
     return FileRow(
@@ -233,6 +236,9 @@ def _build_file_row(
         size=entry.size,
         allocated=entry.allocated,
         meta_type=entry.meta_type,
+        uid=entry.uid,
+        gid=entry.gid,
+        mode=entry.mode,
         mtime_utc=macb["m"],
         atime_utc=macb["a"],
         ctime_utc=macb["c"],
