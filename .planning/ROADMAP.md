@@ -137,7 +137,25 @@ Plans:
   3. Each recovered file is labeled with a confidence tier (metadata-intact vs journal vs signature-carving / partial-overwritten), with per-filesystem caveats and overwrite detection — never asserting "the user deleted this"
   4. Tool filters files against NSRL RDS and user-supplied custom hash sets (allow/block lists), surfacing matches as "known" rather than a good/bad verdict
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 0**
+
+- [ ] 04-00-PLAN.md — Wave 0 scaffold: RED test stubs (test_recover.py, test_knownfiles.py) + deterministic fixtures (orphan/overwritten ext4, resident NTFS, FILE/METADATA NSRL DBs) with ground-truth constants (RECOV-01..03, FILTER-01)
+
+**Wave 1** *(blocked on Wave 0)*
+
+- [ ] 04-01-PLAN.md — Recovery vertical slice: filesystem.py seam helpers (recover_meta/allocated_data_blocks) → additive recovery schema/store methods → core/recover.py orchestrator → `pyautopsy recover` CLI → Recovered/Orphan report sections (RECOV-01/02/03, D-29..D-35)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 04-02-PLAN.md — Known-file filtering vertical slice: filter/nsrl.py (read-only probe, UPPERCASE/variant) + filter/hashsets.py → known_file_matches store methods → core/knownfiles.py post-walk pass → Known-File report section (FILTER-01, D-36..D-39)
+
+**Wave 3** *(blocked on Waves 1+2)*
+
+- [ ] 04-03-PLAN.md — Integration: opt-in recover/filter wiring in `analyze` + --recover/--nsrl/--hash-set flags + reproducibility/read-only/seam-allowlist tests + _MVP_LIMITATIONS honesty update (D-40/D-41/D-42)
+
 
 ### Phase 5: Log Parsing, Super-Timeline & Search
 
