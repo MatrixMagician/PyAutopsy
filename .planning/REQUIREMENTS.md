@@ -17,11 +17,11 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### Metadata Analysis
 
-- [ ] **META-01**: Tool walks the filesystem and inventories every file with path, size, inode/MFT address, and allocated/unallocated status (ext4, NTFS, FAT)
-- [ ] **META-02**: Tool records MACB timestamps per file, normalized to UTC, with original timezone and timestamp source captured
-- [ ] **META-03**: Tool records ownership (UID/GID) and permission/mode bits per file
-- [ ] **META-04**: Tool computes per-file hashes (MD5, SHA-1, SHA-256) during the filesystem walk
-- [ ] **META-05**: Tool identifies file type by content signature (not extension)
+- [x] **META-01**: Tool walks the filesystem and inventories every file with path, size, inode/MFT address, and allocated/unallocated status (ext4, NTFS, FAT)
+- [x] **META-02**: Tool records MACB timestamps per file, normalized to UTC, with original timezone and timestamp source captured
+- [x] **META-03**: Tool records ownership (UID/GID) and permission/mode bits per file
+- [x] **META-04**: Tool computes per-file hashes (MD5, SHA-1, SHA-256) during the filesystem walk
+- [x] **META-05**: Tool identifies file type by content signature (not extension)
 
 ### Deleted File Recovery
 
@@ -115,11 +115,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INGEST-02 | Phase 1 | Complete |
 | INGEST-03 | Phase 1 | Complete |
 | INGEST-04 | Phase 1 | Complete |
-| META-01 | Phase 2 | Pending |
-| META-02 | Phase 2 | Pending |
-| META-03 | Phase 2 | Pending |
-| META-04 | Phase 2 | Pending |
-| META-05 | Phase 2 | Pending |
+| META-01 | Phase 2 | Complete |
+| META-02 | Phase 2 | Complete |
+| META-03 | Phase 2 | Complete |
+| META-04 | Phase 2 | Complete |
+| META-05 | Phase 2 | Complete |
 | RECOV-01 | Phase 4 | Pending |
 | RECOV-02 | Phase 4 | Pending |
 | RECOV-03 | Phase 4 | Pending |
