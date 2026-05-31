@@ -25,7 +25,7 @@ The "UI" for this phase is a **static, self-contained, offline forensic HTML rep
 | Source | Constraint | UI implication |
 |--------|-----------|----------------|
 | D-22 | HTML via Jinja2; PDF deferred | All CSS inline in a single `<style>` block; no external fonts/scripts/CDN. Layout must degrade to print + a later WeasyPrint path. |
-| D-25 | Run metadata segregated from byte-comparable body | Volatile values (generation time, durations, host, run-id) render in a clearly-labeled, comparison-excluded `run_metadata` region (recommended: separate file + a labeled footer). **No `datetime.now()` in the analytical body.** |
+| D-25 | Run metadata segregated from byte-comparable body | **W-1 lock:** volatile values (generation time, durations, host, run-id) render ONLY in the `reports/run_metadata.json` sidecar — NOT in `report.html` or `report.json`. **No `datetime.now()` anywhere in the report bodies.** |
 | D-27 | Bounded HTML timeline + honest truncation note | HTML shows a capped slice with an unmissable "showing N of M — full timeline in report.json" disclosure. Full timeline lives in JSON only. |
 | D-28 | Findings = inventory stats + integrity PASS/FAIL + D-20 limitations | Report sections fixed below; a Limitations section is **mandatory**, stating what the MVP does NOT analyze. |
 | PITFALLS P4/P10 | UTC-everywhere, explicit offsets, no overclaiming | All timestamps render with explicit `+00:00` offset; FAT `local-time-inferred` / `assumed_timezone` provenance flags must survive into the report and be visually marked. |
@@ -134,7 +134,7 @@ The HTML report and the JSON report present the **same sections in the same fixe
 5. **Evidence Hashes** — source `md5` / `sha1` / `sha256`, monospace, full width, break-all.
 6. **Timeline (bounded)** — capped, D-26-ordered slice with the truncation disclosure (D-27).
 7. **Limitations** — explicit: D-20 encrypted/unsupported volumes **and** the standing MVP disclaimer of what is not yet analyzed (no recovery, no log parsing, no search — Phases 4/5). Mandatory; never omitted even when empty of volume limitations.
-8. **Run Metadata (non-analytical)** — clearly labeled, comparison-excluded footer (D-25). Generation timestamp, durations, host, run-id live ONLY here.
+8. **Run Metadata (non-analytical)** — **SUPERSEDED by 03-RESEARCH.md "Open Questions (RESOLVED)" / W-1: run metadata is NOT rendered in `report.html` at all. It lives ONLY in the `reports/run_metadata.json` sidecar, so `report.html` is itself whole-file byte-deterministic (no footer to strip).** Do not add a run-metadata footer to the HTML. (D-25)
 
 **Table conventions (sections 4b, 4c, 6):**
 - Zebra striping (secondary `#f4f4f5` on alternate rows) for dense-row tracking.
@@ -195,7 +195,7 @@ The template must already be print-correct so the deferred PDF path (D-22) is pu
 
 ## Determinism Constraints on Markup (D-25 / CLI-02)
 
-- **No** `datetime.now()`, run-id, host, or duration in the analytical body markup — those go only in the Run Metadata footer region, which the byte-comparison test strips/excludes.
+- **No** `datetime.now()`, run-id, host, or duration anywhere in `report.html` — those go ONLY in the `reports/run_metadata.json` sidecar (W-1 lock), so `report.html` is whole-file byte-identical across runs with no footer to strip.
 - **No** randomly generated DOM ids, nonces, or per-render tokens.
 - Jinja2 environment: `autoescape=select_autoescape(["html","j2"])`, `trim_blocks=True`, `lstrip_blocks=True`, `keep_trailing_newline=True` so whitespace is editor-independent and deterministic.
 - Iterate the timeline over an **already-sorted list** (D-26 total order: `ts → volume_id → volume_offset → path → event_type → meta_addr`); never iterate a dict/set in the template.

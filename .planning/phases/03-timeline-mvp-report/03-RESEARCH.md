@@ -161,9 +161,10 @@ Python  3.14.5  [VERIFIED: `python3 --version`] — within the declared >=3.11 r
               assemble_report_body()        run_metadata block
               (DETERMINISTIC dict:           (volatile: gen ts,
                COC, methodology+versions,     durations, host, run-id)
-               findings(D-28), evidence        — EXCLUDED from the
-               hashes, FULL timeline           byte-comparable body
-               sorted by D-26 order)                  │
+               findings(D-28), evidence        — written ONLY to the
+               hashes, FULL timeline           run_metadata.json sidecar,
+               sorted by D-26 order,           NEVER into the body and
+               timeline_total=M)              NEVER into report.html
                           │                           │
             ┌─────────────┼─────────────┐             │
             ▼             ▼             ▼             │
@@ -173,9 +174,10 @@ Python  3.14.5  [VERIFIED: `python3 --version`] — within the declared >=3.11 r
    False)             trim_blocks)     note, D-27)     │
             │             │                            │
             ▼             ▼                            ▼
-   reports/report.json  reports/report.html   reports/run_metadata.json (or
-   (FULL timeline,      (human, bounded)       a clearly-marked HTML footer block)
-    REPORT-04)
+   reports/report.json  reports/report.html   reports/run_metadata.json
+   (FULL timeline,      (human, bounded,       (the ONLY volatile file;
+    REPORT-04,          ZERO run metadata —     gen ts, durations, host,
+    no run metadata)    fully deterministic)    run-id)
                   all writes confined to case dir C (Phase 1 confinement)
 ```
 
@@ -194,7 +196,7 @@ src/pyautopsy/
 ├── report/                 # NEW reporter package
 │   ├── assemble.py         # assemble_report_body(store, esid) -> deterministic dict (the single source of truth)
 │   ├── jsonreport.py       # write_json(body, path) — json.dumps(sort_keys=True, ensure_ascii=False)
-│   ├── htmlreport.py       # render_html(body, run_metadata, path) — Jinja2, autoescape, bounded timeline
+│   ├── htmlreport.py       # render_html(body, case_dir, *, cap) — Jinja2, autoescape, bounded timeline, NO run metadata
 │   └── templates/
 │       └── report.html.j2  # bundled as package data (importlib.resources)
 ├── core/
@@ -253,10 +255,10 @@ A `None` column produces NO event (D-24; the walk already maps a 0 epoch → `No
 
 ### Pattern 3: One deterministic body dict, two serializers — CLI-02 / D-25
 
-**What:** `assemble_report_body()` returns ONE plain dict containing only analytical content. Both the JSON writer and the HTML renderer consume it. The volatile `run_metadata` (generation timestamp, durations, host, run-id) is assembled separately and never enters the body dict. This guarantees the JSON body and the HTML body are derived from the identical source, and that the byte-comparison target is a single object.
+**What:** `assemble_report_body()` returns ONE plain dict containing only analytical content. Both the JSON writer and the HTML renderer consume it. The volatile `run_metadata` (generation timestamp, durations, host, run-id) is assembled separately and never enters the body dict, never enters `report.html`, and is written ONLY to the `reports/run_metadata.json` sidecar (W-1 lock — see Open Questions RESOLVED). This guarantees the JSON body and the HTML body are derived from the identical source, that `report.html` is itself byte-deterministic across runs, and that the only volatile file is the sidecar.
 
 **Anti-Patterns to Avoid:**
-- **Interpolating `datetime.now()` into the report body** — [VERIFIED: PITFALLS P3] the #1 reproducibility killer. Generation time goes ONLY in `run_metadata`.
+- **Interpolating `datetime.now()` into the report body** — [VERIFIED: PITFALLS P3] the #1 reproducibility killer. Generation time goes ONLY in the `run_metadata.json` sidecar.
 - **Relying on dict insertion order / set iteration for output** — [VERIFIED: PITFALLS P3] always serialize with `sort_keys=True` and sort lists by the explicit D-26 key before emitting.
 - **Each section rendering its own HTML fragment** — [CITED: ARCHITECTURE Anti-Pattern 2] one renderer reads the assembled body; sections are template blocks, not string-stitching producers.
 - **Letting one malformed/huge file abort report rendering** — bound the HTML (D-27) and stream/iterate the timeline rather than building giant intermediate strings.
@@ -282,7 +284,7 @@ A `None` column produces NO event (D-24; the walk already maps a 0 epoch → `No
 **How to avoid:**
 - Make the ordering a **total** order exactly per D-26: `ts_utc → volume_id → volume_offset → path → event_type → meta_addr`. No two distinct events can tie on all of these (meta_addr + event_type disambiguates same-file same-time; path + volume disambiguates across files). Apply it in `ORDER BY` and re-assert with a Python `sorted(key=...)` before serialization so the result never depends on sqlite's tiebreak.
 - Serialize the body with `json.dumps(sort_keys=True, ensure_ascii=False)`. Decide one trailing-newline convention and keep it (the audit log appends `"\n"` per line; for a single JSON document pick "no trailing newline" or "one trailing newline" and lock it in the test).
-- Put generation timestamp / durations / host / run-id in `run_metadata` ONLY (D-25). The existing `IngestResult`/`WalkResult` are already analytical-only — follow that.
+- Put generation timestamp / durations / host / run-id in the `run_metadata.json` sidecar ONLY (D-25); `report.html` carries ZERO run metadata (W-1 lock). The existing `IngestResult`/`WalkResult` are already analytical-only — follow that.
 - For Jinja2: set `trim_blocks=True, lstrip_blocks=True, keep_trailing_newline=True` so template whitespace is deterministic and not editor-dependent; render the timeline by iterating an already-sorted list (never a dict/set).
 **Warning signs:** `datetime.now()` / `utc_now()` reachable from `assemble_report_body`; a timeline `ORDER BY ts_utc` with no further tiebreak; comparing two report files fails only on a timestamp line.
 
@@ -300,13 +302,13 @@ A `None` column produces NO event (D-24; the walk already maps a 0 epoch → `No
 
 ### Pitfall 4: Report files escaping the case directory (Security — path traversal)
 **What goes wrong:** Report output path is derived from a caller-supplied or evidence-derived string and escapes `case_dir`.
-**How to avoid:** Compute report paths ONLY from `case_dir` + fixed names (`reports/report.html`, `reports/report.json`), never from evidence content. Reuse the `audit/log.py` `_is_within` realpath-confinement check. Create `reports/` like Phase 1 creates `logs/`/`exports/`.
+**How to avoid:** Compute report paths ONLY from `case_dir` + fixed names (`reports/report.html`, `reports/report.json`, `reports/run_metadata.json`), never from evidence content. Reuse the `audit/log.py` `_is_within` realpath-confinement check. Create `reports/` like Phase 1 creates `logs/`/`exports/`.
 **Warning signs:** A report filename built from `evidence_id` or a path component without confinement.
 
 ### Pitfall 5: Resource exhaustion on a huge real timeline (Security — DoS / Performance)
 **What goes wrong:** A real image yields millions of events; building a giant in-memory list/string for HTML OOMs or hangs (PITFALLS performance traps: "holding timeline fully in RAM").
-**How to avoid:** D-27's bounded HTML already caps the HTML side. For JSON, stream/iterate from the sqlite cursor rather than materializing the full `get_timeline_events` list when large (consider a generator-based JSON writer, or accept full materialization only for MVP fixtures and document the limit). The HTML must read a bounded slice (`LIMIT`/`sorted[:cap]`), never the full set.
-**Warning signs:** `get_timeline_events` returns a full `list` that HTML then slices after the fact on a multi-GB image.
+**How to avoid:** D-27's bounded HTML already caps the HTML side. For the HTML renderer, slice the body's already-assembled timeline list in-process (`body["timeline"][:cap]`) and render the honest "Showing {cap} of {timeline_total}" disclosure from `body["timeline_total"]` (W-2 lock — render_html takes no store handle). For JSON, stream/iterate from the sqlite cursor rather than materializing the full `get_timeline_events` list when large (consider a generator-based JSON writer, or accept full materialization only for MVP fixtures and document the limit).
+**Warning signs:** `get_timeline_events` returns a full `list` that HTML then slices after the fact on a multi-GB image without a `timeline_total` count carried in the body.
 
 ## Code Examples
 
@@ -337,7 +339,8 @@ env = Environment(
 )
 # No network/CDN: the template must inline all CSS (no <link href="http...">,
 # no external fonts/scripts) so the HTML is self-contained and offline-safe.
-html = env.get_template("report.html.j2").render(body=body, run_metadata=run_meta)
+# report.html carries NO run metadata (W-1) — render only body + the bounded slice.
+html = env.get_template("report.html.j2").render(body=body)
 ```
 Note: to package the template, add to `pyproject.toml`:
 `[tool.hatch.build.targets.wheel] ... ` already lists `packages = ["src/pyautopsy"]`; ensure `report/templates/*.j2` is included (hatchling includes package files by default for listed packages; verify the `.j2` is picked up, or add a `force-include` / `artifacts` entry if needed).
@@ -412,7 +415,7 @@ def run_analyze(image, case_dir, *, examiner, evidence_id,
                            max_hash_size=max_hash_size)
     with CaseStore.open(case_dir) as store:
         n_events = build_timeline(store, ingest_result.evidence_source_id)
-        render_report(store, ingest_result.evidence_source_id)  # writes reports/report.{html,json}
+        render_report(store, ingest_result.evidence_source_id)  # writes reports/report.{html,json} + run_metadata.json
     return AnalyzeResult(...)  # analytical-only (no wall-clock), like IngestResult/WalkResult
 ```
 Idempotency/clobber note (D-21 creates a *fresh* case): `run_ingest` calls `CaseStore.create` which `mkdir(parents=True, exist_ok=True)` then applies schema with `CREATE TABLE IF NOT EXISTS`. Re-running `analyze` against an existing `--case` would therefore APPEND a second `cases`/`evidence_sources` row to the same db (not a clean clobber). **Planner decision needed:** either (a) require `--case` to be a fresh/empty dir and fail loudly if `case.db` exists (cleanest, matches "creates a fresh case"), or (b) document append-and-use-latest. Recommend (a) — fail if `case.db` already exists — for reproducibility clarity. Audit the `analyze.start`/`analyze.end` actions like ingest/walk do (REPORT-02).
@@ -451,16 +454,15 @@ Idempotency/clobber note (D-21 creates a *fresh* case): `run_ingest` calls `Case
 | A4 | `actor` encoded as `"uid=<n>,gid=<n>"` string | Code Examples / explosion | LOW — D-23 leaves the exact `actor` encoding to the planner; any stable encoding preserves determinism. |
 | A5 | Hatchling includes `report/templates/*.j2` in the wheel by default | Code Examples / Jinja2 | MEDIUM — if missed, installed (non-source-checkout) runs fail to find the template; verify with a built wheel or add an explicit include. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Run-metadata placement: sidecar file vs embedded HTML block?**
-   - What we know: D-25 requires run metadata segregated from the byte-comparable body; either a `reports/run_metadata.json` sidecar or a clearly-marked, comparison-excluded HTML footer block satisfies it.
-   - What's unclear: Which the planner prefers for the human report's usability.
-   - Recommendation: Sidecar `reports/run_metadata.json` for the JSON path (keeps `report.json` body pure) + a clearly-labeled "Run Metadata (non-analytical)" HTML footer that the byte-comparison test strips before comparing. The byte-equality test compares `report.json` and the *body* portion of the HTML.
+1. **Run-metadata placement: sidecar file vs embedded HTML block? — RESOLVED**
+   - What we knew: D-25 requires run metadata segregated from the byte-comparable body; either a `reports/run_metadata.json` sidecar or a clearly-marked, comparison-excluded HTML footer block satisfies it.
+   - **RESOLVED (W-1 lock):** **Sidecar-only.** Run metadata (generation timestamp, durations, host, run-id) lives in a **separate `reports/run_metadata.json` file ONLY**. `report.html` carries **ZERO run metadata** — no footer block, no embedded volatile values — so it is itself fully byte-deterministic across runs. `report.json` likewise carries no run metadata in its body. `reports/run_metadata.json` is the **single volatile file**. This is the per-CONTEXT D-25 segregation realized as physical file separation, which removes the need for any "strip the footer before comparing" logic in the CLI-02 test.
 
-2. **What exactly is byte-compared in the CLI-02 test for HTML?**
-   - What we know: The full HTML file includes the run-metadata footer (volatile). Comparing the whole file would always differ.
-   - Recommendation: Either (a) compare only `report.json` for the strict byte-identical guarantee and assert the HTML body section matches after stripping the run-metadata block, or (b) render the run-metadata into a *separate* file so `report.html` itself is fully deterministic. Option (b) is cleanest (whole-file byte-equality on both `report.json` and `report.html`). Planner picks; (b) recommended.
+2. **What exactly is byte-compared in the CLI-02 test? — RESOLVED**
+   - What we knew: If the HTML embedded a run-metadata footer, comparing the whole file would always differ.
+   - **RESOLVED (W-1 lock):** Because of resolution #1, the CLI-02 test asserts **whole-file byte-equality on BOTH `reports/report.json` AND `reports/report.html`** (no footer-stripping; the HTML contains no run metadata). `reports/run_metadata.json` is **excluded** from the byte comparison (it is the only file expected to differ across runs). The test additionally asserts that the segregated `run_metadata.json` generation timestamp IS present and DOES differ between runs (proving segregation is real, not accidental equality). The executor has **no runtime choice** about the comparison strategy — it is locked to sidecar-only / whole-file byte-equality on report.json + report.html.
 
 ## Environment Availability
 
@@ -492,7 +494,7 @@ CLI tests use `typer.testing.CliRunner` (see `tests/test_cli_smoke.py`, `tests/t
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
 | TIME-01 | MACB explosion: each populated `*_utc` → one event; `None` → no event; correct `event_type` mapping | unit | `pytest tests/test_timeline.py -x` | ❌ Wave 0 |
-| TIME-01 | Total order is exactly D-26 (`ts→vol→offset→path→type→meta_addr`); equal-ts events grouped, deterministic | unit | `pytest tests/test_timeline.py::test_total_order -x` | ❌ Wave 0 |
+| TIME-01 | Total order is exactly D-26 (`ts→vol→offset→path→type→meta_addr`); value-level exact ordered sequence on a fixture with events that tie on ts AND vol/offset/path (differing only on event_type + meta_addr) | unit | `pytest tests/test_timeline.py::test_total_order -x` | ❌ Wave 0 |
 | TIME-01 | End-to-end on `tiny_ext4_image`: known file's MACB times appear as events; deleted entry handled | integration | `pytest tests/test_timeline.py::test_ext4_timeline -x` | ❌ Wave 0 |
 | REPORT-04 | JSON report contains COC, methodology+versions, findings(D-28), evidence hashes, FULL timeline | integration | `pytest tests/test_report.py::test_json_report -x` | ❌ Wave 0 |
 | REPORT-03 | HTML renders; autoescape neutralizes a `<script>`-style filename (Security V5) | unit | `pytest tests/test_report.py::test_html_autoescape -x` | ❌ Wave 0 |
@@ -502,7 +504,7 @@ CLI tests use `typer.testing.CliRunner` (see `tests/test_cli_smoke.py`, `tests/t
 | CLI-01 | `pyautopsy analyze <image> --case ...` exits 0 and writes `reports/report.html` + `reports/report.json` | integration (CliRunner) | `pytest tests/test_analyze.py::test_analyze_produces_reports -x` | ❌ Wave 0 |
 | CLI-01 | `analyze` composes ingest+walk: COC rows, files, timeline_events, AND end-of-run re-verify all present | integration | `pytest tests/test_analyze.py::test_analyze_composes_pipeline -x` | ❌ Wave 0 |
 | CLI-01 | `ingest`/`walk` still work standalone (no regression) | regression | `pytest tests/test_cli_smoke.py tests/test_ingest.py tests/test_walk.py -q` | ✅ exists |
-| **CLI-02** | **Two `analyze` runs on the same fixture (separate case dirs) → BYTE-IDENTICAL `report.json` (and `report.html` body); run metadata segregated & excluded** | reproducibility | `pytest tests/test_reproducibility.py::test_two_analyze_runs_byte_identical_report -x` | ⚠️ extend existing file |
+| **CLI-02** | **Two `analyze` runs on the same fixture (separate case dirs) → BYTE-IDENTICAL `report.json` AND `report.html` (whole-file, both); `run_metadata.json` excluded from comparison and differs** | reproducibility | `pytest tests/test_reproducibility.py::test_two_analyze_runs_byte_identical_report -x` | ⚠️ extend existing file |
 | CLI-02 | `tsk_version` + `pyautopsy_version` recorded in the report (versions pinned) | unit | `pytest tests/test_report.py::test_versions_recorded -x` | ❌ Wave 0 |
 
 ### Sampling Rate
@@ -511,12 +513,12 @@ CLI tests use `typer.testing.CliRunner` (see `tests/test_cli_smoke.py`, `tests/t
 - **Phase gate:** Full suite green + ruff + mypy clean before `/gsd-verify-work`; the CLI-02 byte-identical test is the gating reproducibility check.
 
 ### CLI-02 byte-identical test design (the critical one)
-The existing `tests/test_reproducibility.py` already proves DB-field-level reproducibility with `_RUN_METADATA_COLUMNS` excluded. Extend it for the report bytes:
+The existing `tests/test_reproducibility.py` already proves DB-field-level reproducibility with `_RUN_METADATA_COLUMNS` excluded. Extend it for the report bytes (run-metadata placement is LOCKED to sidecar-only — see Open Questions RESOLVED / W-1):
 1. Run `analyze` on `tiny_ext4_image` into `case_a`, then again into `case_b` (separate dirs, like the existing `_ingest` helper but calling `analyze`).
 2. Assert `(case_a/"reports"/"report.json").read_bytes() == (case_b/"reports"/"report.json").read_bytes()` — strict byte equality (this is the heart of CLI-02).
-3. For HTML: either assert whole-file byte-equality (if run metadata is a separate file, Open Question 2 option b) OR strip the marked run-metadata block from both and compare bodies.
+3. Assert `(case_a/"reports"/"report.html").read_bytes() == (case_b/"reports"/"report.html").read_bytes()` — strict whole-file byte equality (report.html carries ZERO run metadata, so no footer-stripping; W-1 lock). `reports/run_metadata.json` is EXCLUDED from the byte comparison.
 4. Sanity-assert the body is non-empty and contains the known fixture file's timeline events (not an empty-dict false pass — mirror the existing test's `assert fields_a["evidence.sha256"]` sanity check).
-5. Negative assert: the segregated run metadata (generation timestamp) IS present somewhere and DOES differ between runs (proving segregation is real, not accidental equality).
+5. Negative assert: the segregated `reports/run_metadata.json` generation timestamp IS present and DOES differ between runs (proving segregation is real, not accidental equality).
 
 ### Wave 0 Gaps
 - [ ] `tests/test_timeline.py` — MACB explosion + D-26 total order + ext4 integration (TIME-01)
@@ -547,9 +549,9 @@ The existing `tests/test_reproducibility.py` already proves DB-field-level repro
 |---------|--------|---------------------|
 | HTML/JS injection via attacker-controlled filename/path | Tampering / Elevation | Jinja2 autoescape ON; no `| safe`; test with `<script>`-bearing name. |
 | Path traversal writing report files outside the case dir | Tampering | Build paths from `case_dir` + fixed names only; reuse `_is_within` confinement; create `reports/` like `logs/`. |
-| Resource exhaustion (multi-million-event timeline) → OOM/hang | Denial of Service | Bounded HTML (D-27); stream/iterate JSON timeline; cap HTML slice via `LIMIT`/`sorted[:cap]`. |
+| Resource exhaustion (multi-million-event timeline) → OOM/hang | Denial of Service | Bounded HTML (D-27); render_html slices `body["timeline"][:cap]` in-process; cap HTML slice. |
 | Overclaiming / dishonest output (soundness, not classic infosec) | Information Disclosure (misleading) | D-28 limitations section; D-27 truncation disclosure; preserve FAT/inferred-time provenance flags; record tool/TSK versions. |
-| Non-reproducible output undermining defensibility | Repudiation | D-25/D-26 determinism: byte-identical body, segregated run metadata, total order, pinned versions (CLI-02 test). |
+| Non-reproducible output undermining defensibility | Repudiation | D-25/D-26 determinism: byte-identical report.json + report.html, run metadata in run_metadata.json sidecar only, total order, pinned versions (CLI-02 test). |
 | No self-audit of the report step | Repudiation | `analyze` writes `analyze.start`/`analyze.end` (and any FAIL) audit events like `ingest`/`walk` (REPORT-02). |
 
 ## Sources
