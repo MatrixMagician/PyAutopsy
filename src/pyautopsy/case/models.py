@@ -118,7 +118,18 @@ class FileRow:
         crtime_utc: Created/born time as UTC ISO-8601 (META-02), or ``None``.
         timestamp_source: Origin of the MACB times (e.g. ``ext4:inode``).
         file_type: Content-signature file type (META-05), when populated.
-        attributes: Heterogeneous JSON-serialisable extra data (D-02).
+        recovered: ``True`` on a recovered deleted/orphan row written by the
+            recovery pass (RECOV-01, D-35); ``None`` for a normal walk row.
+        confidence_tier: Recovery confidence label — current domain
+            {``intact``, ``partial/overwritten``} (RECOV-03, D-30); ``None`` for a
+            normal walk row. Free-form so future journal/carved tiers add no
+            schema churn.
+        recovered_path: The case-relative path the recovered bytes were written
+            to under ``recovered/`` (D-33/D-34); ``None`` for a normal walk row.
+        is_orphan: ``True`` when the recovered entry's parent directory is gone
+            (RECOV-02); ``None`` for a normal walk row.
+        attributes: Heterogeneous JSON-serialisable extra data (D-02), incl. the
+            recovery tier rationale + per-fs caveats.
         id: Surrogate primary key; ``None`` until persisted.
     """
 
@@ -145,6 +156,10 @@ class FileRow:
     crtime_utc: str | None = None
     timestamp_source: str | None = None
     file_type: str | None = None
+    recovered: bool | None = None
+    confidence_tier: str | None = None
+    recovered_path: str | None = None
+    is_orphan: bool | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 

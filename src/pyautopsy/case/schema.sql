@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS files (
     crtime_utc         TEXT,
     timestamp_source   TEXT,
     file_type          TEXT,
+    -- (Plan 04-01, D-35) Additive recovery columns. Recovered deleted/orphan
+    -- entries REUSE this same files table (allocated=0) — these four columns are
+    -- the discriminators the report sorts/groups on; the tier rationale +
+    -- per-fs caveats live in the JSON ``attributes`` blackboard. All DEFAULT NULL
+    -- so a pre-recovery walk row stays valid with no backfill (additive only).
+    -- ``recovered`` is truthy (1) on a recovered row; ``confidence_tier`` is a
+    -- free-form string whose current domain is {intact, partial/overwritten} —
+    -- a future journal/carved tier needs no schema change (D-30).
+    recovered          INTEGER DEFAULT NULL,
+    confidence_tier    TEXT    DEFAULT NULL,
+    recovered_path     TEXT    DEFAULT NULL,
+    is_orphan          INTEGER DEFAULT NULL,
     attributes         TEXT    NOT NULL DEFAULT '{}'
 );
 

@@ -402,6 +402,14 @@ class CaseStore:
             crtime_utc=row["crtime_utc"],
             timestamp_source=row["timestamp_source"],
             file_type=row["file_type"],
+            recovered=(
+                None if row["recovered"] is None else bool(row["recovered"])
+            ),
+            confidence_tier=row["confidence_tier"],
+            recovered_path=row["recovered_path"],
+            is_orphan=(
+                None if row["is_orphan"] is None else bool(row["is_orphan"])
+            ),
             attributes=_load_attributes(row["attributes"]),
             id=row["id"],
         )
@@ -417,6 +425,76 @@ class CaseStore:
         """
         rows = self.connection.execute(
             "SELECT id FROM files WHERE evidence_source_id = ? ORDER BY id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [self.get_file(row["id"]) for row in rows]
+
+    # -- recovered files (RECOV-01/02/03, D-35) ---------------------------
+
+    def insert_recovered_files(self, rows: Iterable[FileRow]) -> int:
+        """Bulk-persist recovered :class:`FileRow` rows (RECOV-01, D-35).
+
+        Identical write path to :meth:`insert_files` (same lockstep insert SQL,
+        the recovery columns just stop being NULL): one ``executemany`` plus
+        :meth:`_commit_unless_in_transaction`, so it composes under the recovery
+        orchestrator's outer :meth:`transaction` block (WR-01). CaseStore stays
+        the sole DB writer (D-08) — recovered rows never bypass this method.
+
+        Args:
+            rows: The recovered file rows to insert (any iterable; materialised
+                once).
+
+        Returns:
+            The number of rows inserted.
+        """
+        params = [_file_row_params(row) for row in rows]
+        if params:
+            self.connection.executemany(_FILES_INSERT_SQL, params)
+        self._commit_unless_in_transaction()
+        return len(params)
+
+    def get_recovered_files(self, evidence_source_id: int) -> list[FileRow]:
+        """Read recovered files for a source in the D-26 total order (RECOV-01).
+
+        Filters to rows the recovery pass wrote (``recovered = 1``) and returns
+        them in the store's deterministic D-26 total order so the report's
+        "Recovered Files" section is byte-stable across runs (D-41) — the report
+        never re-sorts outside the store. Orphan rows are EXCLUDED here so they
+        are reported separately via :meth:`get_orphan_files` (RECOV-02/D-25).
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            The matching recovered :class:`FileRow` rows (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT id FROM files "
+            "WHERE evidence_source_id = ? AND recovered = 1 "
+            "AND (is_orphan IS NULL OR is_orphan = 0) "
+            "ORDER BY mtime_utc, volume_id, volume_offset, path, meta_addr, id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [self.get_file(row["id"]) for row in rows]
+
+    def get_orphan_files(self, evidence_source_id: int) -> list[FileRow]:
+        """Read recovered ORPHAN files for a source in the D-26 total order.
+
+        An orphan (parent directory gone) is a provenance fact independent of the
+        recovery tier (RECOV-02/D-25): orphans are surfaced in their OWN list, not
+        mixed into :meth:`get_recovered_files`. Same deterministic total order so
+        the report's "Orphan Files" section is byte-stable (D-41).
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            The matching orphan :class:`FileRow` rows (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT id FROM files "
+            "WHERE evidence_source_id = ? AND recovered = 1 AND is_orphan = 1 "
+            "ORDER BY mtime_utc, volume_id, volume_offset, path, meta_addr, id",
             (evidence_source_id,),
         ).fetchall()
         return [self.get_file(row["id"]) for row in rows]
@@ -612,6 +690,10 @@ _FILES_COLUMNS: tuple[str, ...] = (
     "crtime_utc",
     "timestamp_source",
     "file_type",
+    "recovered",
+    "confidence_tier",
+    "recovered_path",
+    "is_orphan",
     "attributes",
 )
 
@@ -650,6 +732,10 @@ def _file_row_params(file_row: FileRow) -> tuple[Any, ...]:
         file_row.crtime_utc,
         file_row.timestamp_source,
         file_row.file_type,
+        None if file_row.recovered is None else int(file_row.recovered),
+        file_row.confidence_tier,
+        file_row.recovered_path,
+        None if file_row.is_orphan is None else int(file_row.is_orphan),
         json.dumps(file_row.attributes, sort_keys=True),
     )
 
