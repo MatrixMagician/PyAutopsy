@@ -1,10 +1,12 @@
 """The ``pyautopsy`` Typer CLI (D-12).
 
-Phase 1 ships a single ``ingest`` command with the exact D-12 signature plus a
-``--version`` flag. The ``ingest`` command is a thin shell over
-:func:`pyautopsy.core.ingest.run_ingest`: it parses/validates the operator's
+Phase 1 ships an ``ingest`` command with the exact D-12 signature plus a
+``--version`` flag; Phase 2 adds a ``walk`` command that inventories a
+filesystem image into the case store. Each command is a thin shell over its
+orchestrator (:func:`pyautopsy.core.ingest.run_ingest` /
+:func:`pyautopsy.core.walk.run_walk`): it parses/validates the operator's
 arguments (Typer's type-hint-driven validation), invokes the orchestrator, prints
-a concise success summary, and maps any integrity failure to a non-zero exit
+a concise summary, and maps any integrity/operational failure to a non-zero exit
 *after* the orchestrator has recorded the FAIL audit event (D-08).
 
 The Typer ``app`` is the ``[project.scripts]`` entry point declared in
@@ -15,11 +17,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 
 import pyautopsy
 from pyautopsy.core.ingest import IngestError, run_ingest
+from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.evidence.integrity import IntegrityError, MountedSourceError
 
@@ -127,4 +131,75 @@ def ingest(
         f"  sha256:         {result.sha256}\n"
         f"  md5:            {result.md5}\n"
         f"  acquisition:    {verified}"
+    )
+
+
+@app.command()
+def walk(
+    image: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the evidence image (raw/dd file or first E01 segment).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    case: Annotated[
+        Path,
+        typer.Option(
+            "--case",
+            help="Existing case directory (created by a prior `ingest`).",
+        ),
+    ],
+    timezone: Annotated[
+        str,
+        typer.Option(
+            "--timezone",
+            help="IANA zone for FAT local-time handling (default UTC).",
+        ),
+    ] = "UTC",
+    max_hash_size: Annotated[
+        int | None,
+        typer.Option(
+            "--max-hash-size",
+            help="Skip hashing files larger than this many bytes (Plan 02-02).",
+        ),
+    ] = None,
+) -> None:
+    """Walk a filesystem image into a normalized per-file inventory (META-01).
+
+    Enumerates every volume (D-15), walks each supported filesystem read-only,
+    records every entry — including deleted ones (D-18) — as ``files`` rows with
+    allocated/unallocated status + inode/MFT address + volume tagging, and records
+    any encrypted/unsupported volume as an explicit limitation finding while
+    continuing the walk (D-20). Exits non-zero on an operational/integrity failure
+    after the orchestrator records a FAIL audit event.
+    """
+    # (Security V5) Validate the timezone before any work; reject a bad zone with
+    # a clear usage error rather than passing an attacker-controlled string on.
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        typer.echo(f"walk failed: invalid --timezone {timezone!r}: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    try:
+        result = run_walk(
+            image,
+            case,
+            timezone=timezone,
+            max_hash_size=max_hash_size,
+        )
+    except (WalkError, ImageOpenError, MountedSourceError, IntegrityError) as exc:
+        typer.echo(f"walk failed: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    typer.echo(
+        "walk complete\n"
+        f"  case:                 {case}\n"
+        f"  files inventoried:    {result.files_inventoried}\n"
+        f"  deleted entries:      {result.deleted_count}\n"
+        f"  volumes walked:       {result.volumes_walked}\n"
+        f"  limitations recorded: {result.limitations_recorded}"
     )
