@@ -29,13 +29,33 @@ __all__ = [
     "CompletenessFinding",
     "order_rotated_set",
     "discover_log_sets",
+    "discover_shell_histories",
     "decode_member",
     "DEFAULT_LOG_BASENAMES",
+    "SHELL_HISTORY_BASENAMES",
 ]
 
-# The log base names this slice (Wave 1) discovers. Wave-2 parsers extend this
-# without touching the orchestrator (EXT-01). Order is the declared scan order.
-DEFAULT_LOG_BASENAMES: tuple[str, ...] = ("auth.log", "secure")
+# The /var/log base names the rotated-set discovery collects. These are the
+# RFC3164/RFC5424 system logs (auth + syslog) the auth/syslog parsers handle.
+# Order is the declared scan order. Shell history is NOT here — it lives at
+# per-user dotfile paths (see :data:`SHELL_HISTORY_BASENAMES` /
+# :func:`discover_shell_histories`), not under /var/log, and does not rotate.
+DEFAULT_LOG_BASENAMES: tuple[str, ...] = (
+    "auth.log",
+    "secure",
+    "syslog",
+    "messages",
+)
+
+# Per-user shell-history dotfile leaf names (LOG-03). These are discovered on a
+# SEPARATE path from the rotated /var/log sets: they live at
+# ``/home/<user>/.bash_history`` (and ``/root/.bash_history``), carry no rotation
+# suffix, and must each be parsed as its own standalone "set" so the per-user
+# actor (``/home/<user>``) and the no-chronology tamperability finding (D-44)
+# stay attached. Matches :meth:`ShellHistoryParser.matches`.
+SHELL_HISTORY_BASENAMES: frozenset[str] = frozenset(
+    {".bash_history", ".zsh_history", ".history"}
+)
 
 # A rotated member's trailing index: ``.1`` (numeric) or ``.2.gz`` (numeric+gz)
 # or a ``dateext`` ``-YYYYMMDD`` / ``.YYYYMMDD`` suffix. The live file has no
@@ -230,6 +250,44 @@ def discover_log_sets(
                 finding=_completeness(base, ordered),
             )
         )
+    return sets
+
+
+def discover_shell_histories(
+    rows: Iterable[Any], *, basenames: frozenset[str] = SHELL_HISTORY_BASENAMES
+) -> list[LogSet]:
+    """Find per-user shell-history files as standalone single-member sets (LOG-03).
+
+    Shell history is NOT a rotated /var/log set: each ``/home/<user>/.bash_history``
+    (or ``.zsh_history``/``.history``, plus ``/root/...``) is its own file with no
+    rotation siblings. Each match becomes a one-member :class:`LogSet` whose
+    ``basename`` is the FULL path (so the orchestrator forwards the path to the
+    parser's ``ctx`` for the per-user actor) and whose member carries the row's
+    read closure. Returned in encounter order so the insert order — and therefore
+    the store surrogate-id tiebreak — stays deterministic (Pitfall 3).
+
+    Args:
+        rows: ``FileEntry``-like rows from the FS seam (must expose ``path``).
+        basenames: The shell-history dotfile leaf names to collect.
+
+    Returns:
+        One single-member :class:`LogSet` per discovered shell-history file.
+    """
+    sets: list[LogSet] = []
+    for row in rows:
+        path = row.path if not isinstance(row, str) else row
+        leaf = path.rsplit("/", 1)[-1]
+        if leaf not in basenames:
+            continue
+        member = LogMember(path=path, index=0, is_gz=False, order_key=(0, 1))
+        finding = CompletenessFinding(
+            basename=path,
+            present_indices=(0,),
+            missing_indices=(),
+            member_count=1,
+            note="shell history is a single, non-rotated per-user file",
+        )
+        sets.append(LogSet(basename=path, members=(member,), finding=finding))
     return sets
 
 
