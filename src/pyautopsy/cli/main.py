@@ -24,6 +24,7 @@ import typer
 import pyautopsy
 from pyautopsy.core.analyze import AnalyzeError, run_analyze
 from pyautopsy.core.ingest import IngestError, run_ingest
+from pyautopsy.core.knownfiles import FilterError, run_filter
 from pyautopsy.core.recover import RecoverError, run_recover
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence.image import ImageOpenError
@@ -40,6 +41,23 @@ app = typer.Typer(
 # from Typer's usage-error code (2) so callers can tell a forensic failure from a
 # bad invocation.
 _INTEGRITY_EXIT_CODE = 1
+
+
+def _hash_sets(
+    allow: list[Path] | None, block: list[Path] | None
+) -> list[tuple[Path, str]]:
+    """Pair each ``--hash-set-allow``/``--hash-set-block`` path with its sense.
+
+    Returns the ``(path, sense)`` list :func:`run_filter` / :func:`run_analyze`
+    consume. Order is deterministic (all allow lists in supplied order, then all
+    block lists), so two identical invocations filter in the same order (D-41).
+    """
+    pairs: list[tuple[Path, str]] = []
+    for path in allow or []:
+        pairs.append((path, "allow"))
+    for path in block or []:
+        pairs.append((path, "block"))
+    return pairs
 
 
 def _version_callback(value: bool) -> None:
@@ -232,6 +250,39 @@ def recover(
             help="Skip hashing/writing recovered files larger than this many bytes.",
         ),
     ] = None,
+    nsrl: Annotated[
+        Path | None,
+        typer.Option(
+            "--nsrl",
+            help="Optional NSRL RDS SQLite DB; runs known-file filtering after "
+            "recovery (read-only).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    hash_set_allow: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--hash-set-allow",
+            help="Custom allow-sense hash list (repeatable); runs known-file "
+            "filtering after recovery.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    hash_set_block: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--hash-set-block",
+            help="Custom block-sense hash list (repeatable); runs known-file "
+            "filtering after recovery.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
 ) -> None:
     """Recover deleted/orphan file content into a confined recovered/ tree.
 
@@ -241,9 +292,12 @@ def recover(
     (intact vs partial/overwritten — data survival only, never intent), and
     catalogs recovered ``files`` rows (RECOV-01/02/03). Orphans (deleted entries
     whose parent directory is gone) are reported separately. The evidence source
-    is never written (D-42). Exits non-zero on an operational/integrity failure
-    after the orchestrator records a FAIL audit event.
+    is never written (D-42). When ``--nsrl``/``--hash-set-*`` are supplied, a
+    known-file filtering pass runs after recovery (annotating recovered rows
+    too). Exits non-zero on an operational/integrity failure after the
+    orchestrator records a FAIL audit event.
     """
+    hash_sets = _hash_sets(hash_set_allow, hash_set_block)
     try:
         result = run_recover(image, case, max_hash_size=max_hash_size)
     except (
@@ -255,7 +309,15 @@ def recover(
         typer.echo(f"recover failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
-    typer.echo(
+    filter_result = None
+    if nsrl is not None or hash_sets:
+        try:
+            filter_result = run_filter(case, nsrl_db=nsrl, hash_sets=hash_sets)
+        except (FilterError, OSError) as exc:
+            typer.echo(f"recover filtering failed: {exc}", err=True)
+            raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    summary = (
         "recover complete\n"
         f"  case:                 {case}\n"
         f"  files recovered:      {result.files_recovered}\n"
@@ -263,6 +325,13 @@ def recover(
         f"  partial/overwritten:  {result.overwritten_count}\n"
         f"  orphans (separate):   {result.orphan_count}"
     )
+    if filter_result is not None:
+        summary += (
+            f"\n  known matches:        {filter_result.files_matched}"
+            f" (nsrl {filter_result.nsrl_matches},"
+            f" custom {filter_result.custom_matches})"
+        )
+    typer.echo(summary)
 
 
 @app.command()
@@ -312,6 +381,47 @@ def analyze(
             help="Skip hashing files larger than this many bytes.",
         ),
     ] = None,
+    recover: Annotated[
+        bool,
+        typer.Option(
+            "--recover",
+            help="Also recover deleted/orphan file content (opt-in; the default "
+            "report stays Phase-3 byte-identical).",
+        ),
+    ] = False,
+    nsrl: Annotated[
+        Path | None,
+        typer.Option(
+            "--nsrl",
+            help="Optional NSRL RDS SQLite DB; opts into known-file filtering "
+            "(read-only).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    hash_set_allow: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--hash-set-allow",
+            help="Custom allow-sense hash list (repeatable); opts into "
+            "known-file filtering.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    hash_set_block: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--hash-set-block",
+            help="Custom block-sense hash list (repeatable); opts into "
+            "known-file filtering.",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
 ) -> None:
     """Run the full single-command pipeline: ingest → walk → timeline → report.
 
@@ -320,8 +430,11 @@ def analyze(
     writing ``reports/report.html`` + ``reports/report.json`` (byte-deterministic
     across runs) plus a volatile ``reports/run_metadata.json`` sidecar (W-1). The
     case directory must be fresh — a pre-existing ``case.db`` fails loudly (A2).
-    Exits non-zero on any operational/integrity failure after the orchestrator
-    records a FAIL audit event (D-08/D-14).
+    Deleted-file recovery (``--recover``) and known-file filtering
+    (``--nsrl``/``--hash-set-*``) are OPT-IN (D-40): without them the report is
+    byte-identical to the Phase-3 baseline. Exits non-zero on any
+    operational/integrity failure after the orchestrator records a FAIL audit
+    event (D-08/D-14).
     """
     # (Security V5) Validate the timezone before any work; reject a bad zone with
     # a clear usage error rather than passing an attacker-controlled string on.
@@ -333,6 +446,7 @@ def analyze(
         )
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
+    hash_sets = _hash_sets(hash_set_allow, hash_set_block)
     try:
         result = run_analyze(
             image,
@@ -342,11 +456,16 @@ def analyze(
             acquisition_hash=acquisition_hash,
             timezone=timezone,
             max_hash_size=max_hash_size,
+            recover=recover,
+            nsrl_db=nsrl,
+            hash_sets=hash_sets,
         )
     except (
         AnalyzeError,
         IngestError,
         WalkError,
+        RecoverError,
+        FilterError,
         ImageOpenError,
         MountedSourceError,
         IntegrityError,
@@ -359,6 +478,8 @@ def analyze(
         f"  case:               {case}\n"
         f"  files inventoried:  {result.files_inventoried}\n"
         f"  deleted entries:    {result.deleted_count}\n"
+        f"  files recovered:    {result.files_recovered}\n"
+        f"  known matches:      {result.known_matches}\n"
         f"  timeline events:    {result.event_count}\n"
         f"  report (json):      {result.report_json_path}\n"
         f"  report (html):      {result.report_html_path}"

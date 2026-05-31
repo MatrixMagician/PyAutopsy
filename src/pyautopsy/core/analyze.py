@@ -41,12 +41,15 @@ from __future__ import annotations
 import json
 import socket
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.core.ingest import IngestError, run_ingest
+from pyautopsy.core.knownfiles import FilterError, run_filter
+from pyautopsy.core.recover import RecoverError, run_recover
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence import integrity
 from pyautopsy.evidence.image import ImageOpenError
@@ -90,6 +93,8 @@ _EXPECTED_ANALYZE_ERRORS: tuple[type[BaseException], ...] = (
     AnalyzeError,
     IngestError,
     WalkError,
+    RecoverError,
+    FilterError,
     integrity.MountedSourceError,
     integrity.IntegrityError,
     ImageOpenError,
@@ -115,6 +120,10 @@ class AnalyzeResult:
         files_inventoried: Total ``files`` rows written by the walk.
         deleted_count: How many of those were deleted/unallocated (D-18).
         event_count: How many ``timeline_events`` rows the MACB explosion wrote.
+        files_recovered: How many deleted/orphan entries recovery wrote (0 when
+            recovery was not requested — D-40 opt-in).
+        known_matches: How many neutral known-file annotations filtering wrote
+            (0 when no ``--nsrl``/``--hash-set`` input was supplied — D-40 opt-in).
         report_json_path: Path of the written ``reports/report.json``.
         report_html_path: Path of the written ``reports/report.html``.
     """
@@ -124,6 +133,8 @@ class AnalyzeResult:
     files_inventoried: int
     deleted_count: int
     event_count: int
+    files_recovered: int
+    known_matches: int
     report_json_path: Path
     report_html_path: Path
 
@@ -160,6 +171,9 @@ def run_analyze(
     acquisition_hash: str | None = None,
     timezone: str = "UTC",
     max_hash_size: int | None = None,
+    recover: bool = False,
+    nsrl_db: str | Path | None = None,
+    hash_sets: Sequence[tuple[str | Path, str]] = (),
 ) -> AnalyzeResult:
     """Run the full single-command pipeline: ingest → walk → timeline → report (CLI-01).
 
@@ -182,6 +196,18 @@ def run_analyze(
         timezone: IANA zone for FAT local-time handling in the walk (validated by
             the caller; default UTC).
         max_hash_size: Skip hashing files larger than this many bytes (walk knob).
+        recover: When ``True``, run deleted/orphan-file recovery
+            (:func:`pyautopsy.core.recover.run_recover`) after the walk so the
+            report gains its recovered/orphan sections (D-40 opt-in). When
+            ``False`` (default) recovery is skipped and the report stays
+            byte-identical to the Phase-3 baseline.
+        nsrl_db: Optional path to an examiner-supplied NSRL RDS SQLite DB. When
+            supplied (or ``hash_sets`` is non-empty), the known-file filtering
+            pass (:func:`pyautopsy.core.knownfiles.run_filter`) runs after the
+            walk/recovery (D-40 opt-in); otherwise filtering is skipped entirely.
+        hash_sets: ``(path, sense)`` pairs for custom allow/block hash lists.
+            Supplying any of these (or ``nsrl_db``) opts the pipeline into the
+            filtering pass.
 
     Returns:
         An :class:`AnalyzeResult` with the analytical pipeline outcome (no
@@ -220,6 +246,11 @@ def run_analyze(
 
     # The case dir + logs/ now exist (created by ingest); bind the self-audit.
     audit = AuditLog(case_path)
+    # (D-40) Filtering runs only when the examiner supplied a reference set —
+    # an NSRL DB or at least one custom hash list. Recovery runs only when
+    # explicitly requested. With NEITHER, the pipeline is byte-identical to the
+    # Phase-3 baseline (test_default_analyze_unchanged).
+    filter_requested = nsrl_db is not None or len(tuple(hash_sets)) > 0
     audit.write(
         "analyze.start",
         image=str(image_path),
@@ -228,9 +259,13 @@ def run_analyze(
         evidence_id=evidence_id,
         timezone=timezone,
         max_hash_size=max_hash_size,
+        recover=recover,
+        filter=filter_requested,
     )
 
     store: CaseStore | None = None
+    files_recovered = 0
+    known_matches = 0
     try:
         # (2) Walk the filesystem into the per-file inventory (META-01).
         walk_result = run_walk(
@@ -241,6 +276,30 @@ def run_analyze(
         )
         source_id = ingest_result.evidence_source_id
 
+        # (2a) OPT-IN recovery (D-40): recover deleted/orphan content ONLY when
+        # requested. Runs BEFORE filtering so the filter pass can also annotate
+        # recovered rows (knownfiles reads allocated + recovered alike). Never
+        # writes the source (D-42) — run_recover re-asserts the not-mounted guard.
+        if recover:
+            recover_result = run_recover(
+                image_path,
+                case_path,
+                evidence_source_id=source_id,
+                max_hash_size=max_hash_size,
+            )
+            files_recovered = recover_result.files_recovered
+
+        # (2b) OPT-IN known-file filtering (D-40): only when an NSRL DB or a
+        # custom hash list was supplied. The store owns match ordering (D-41).
+        if filter_requested:
+            filter_result = run_filter(
+                case_path,
+                nsrl_db=nsrl_db,
+                hash_sets=hash_sets,
+                evidence_source_id=source_id,
+            )
+            known_matches = filter_result.nsrl_matches + filter_result.custom_matches
+
         # (3) Build the timeline + assemble/render the report set, reading back
         #     through one open store.
         store = CaseStore.open(case_path)
@@ -249,10 +308,16 @@ def run_analyze(
         # renders an honest integrity state (verified-pass / not-compared / fail)
         # instead of a hardcoded PASS: None = no acquisition hash supplied,
         # True = supplied and matched (a FAIL would have raised in ingest).
+        # (D-40 honesty) Tell the body what ACTUALLY ran so the MVP-limitations
+        # disclaimer neither denies a capability that ran nor claims one that
+        # did not. With both False the body is byte-identical to the Phase-3
+        # baseline (test_default_analyze_unchanged).
         body = assemble_report_body(
             store,
             source_id,
             acquisition_verified=ingest_result.acquisition_verified,
+            recovery_ran=recover,
+            filtering_ran=filter_requested,
         )
         json_path = write_json(body, case_path)
         # (W-1) render_html takes NO run_metadata argument — report.html carries
@@ -278,6 +343,8 @@ def run_analyze(
             files_inventoried=walk_result.files_inventoried,
             deleted_count=walk_result.deleted_count,
             event_count=event_count,
+            files_recovered=files_recovered,
+            known_matches=known_matches,
         )
     except _EXPECTED_ANALYZE_ERRORS as exc:
         # An EXPECTED operational failure: leave a terminal FAIL event before
@@ -312,6 +379,8 @@ def run_analyze(
         files_inventoried=walk_result.files_inventoried,
         deleted_count=walk_result.deleted_count,
         event_count=event_count,
+        files_recovered=files_recovered,
+        known_matches=known_matches,
         report_json_path=json_path,
         report_html_path=html_path,
     )

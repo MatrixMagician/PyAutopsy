@@ -46,14 +46,74 @@ _KNOWN_FILTER_INTRO = (
     "Allow/block is recorded only as the supplied list's sense, not as a verdict."
 )
 
-# Standing MVP-limitations disclaimer, verbatim from 03-UI-SPEC.md:171. Surfaced
-# in both reports so the report never overclaims what this MVP analyzed (D-28).
+# Standing MVP-limitations disclaimer, verbatim from 03-UI-SPEC.md:171. This is
+# the DEFAULT-PATH text: it is rendered VERBATIM whenever neither deleted-file
+# recovery nor known-file filtering ran, so a plain ``analyze`` report stays
+# byte-identical to the Phase-3 baseline (D-40 / test_default_analyze_unchanged).
+# When recovery and/or filtering DID run, :func:`_mvp_limitations` rebuilds this
+# copy honestly so it never denies a capability that ran (D-28/D-32 — neither
+# over- nor under-claim what the report actually covers).
 _MVP_LIMITATIONS = (
     "This is an MVP report. It covers filesystem inventory, MACB timeline, and "
     "integrity verification only. It does NOT include deleted-file recovery, "
     "known-file (NSRL) filtering, log analysis, super-timeline, or content "
     "search. Absence of a finding here does not mean absence of evidence."
 )
+
+
+def _mvp_limitations(*, recovery_ran: bool, filtering_ran: bool) -> str:
+    """Return the honest MVP-limitations disclaimer for what ACTUALLY ran.
+
+    When neither recovery nor filtering ran, returns :data:`_MVP_LIMITATIONS`
+    verbatim — so the default-path report stays byte-identical to the Phase-3
+    baseline (D-40). When recovery and/or filtering ran, the disclaimer is
+    rebuilt so it (a) no longer flatly asserts the report EXCLUDES the feature
+    that ran, and (b) carries that feature's honest caveat — recovery is best-
+    effort data survival with carving deferred (CARVE-01); NSRL/custom filtering
+    is examiner-supplied noise reduction, not an adjudication of any file
+    (D-28/D-32 — no over/under-claim, no good/bad language).
+    """
+    if not recovery_ran and not filtering_ran:
+        return _MVP_LIMITATIONS
+
+    # Build the "covers" clause from what ran, plus the still-excluded set.
+    covered = ["filesystem inventory", "MACB timeline", "integrity verification"]
+    if recovery_ran:
+        covered.append("deleted/orphan-file recovery (data survival only)")
+    if filtering_ran:
+        covered.append("known-file filtering (NSRL/custom noise reduction)")
+
+    excluded = ["log analysis", "super-timeline", "content search"]
+    if not recovery_ran:
+        excluded.insert(0, "deleted-file recovery")
+    if not filtering_ran:
+        excluded.insert(0, "known-file (NSRL) filtering")
+
+    parts = [
+        "This is an MVP report. It covers "
+        + ", ".join(covered[:-1])
+        + ", and "
+        + covered[-1]
+        + ". It does NOT include "
+        + ", ".join(excluded)
+        + "."
+    ]
+    if recovery_ran:
+        parts.append(
+            "Recovered content is best-effort data survival only: ext4 clears "
+            "block pointers on unlink and signature carving is deferred "
+            "(CARVE-01), so a recovered file is not a guarantee the content is "
+            "complete or unmodified, and a confidence tier makes no claim about "
+            "who removed an entry or why."
+        )
+    if filtering_ran:
+        parts.append(
+            "Known-file filtering is examiner-supplied noise reduction, not a "
+            "verdict: a hash match means the file is KNOWN to the supplied "
+            "reference set — it does not assert the file is good or bad."
+        )
+    parts.append("Absence of a finding here does not mean absence of evidence.")
+    return " ".join(parts)
 
 # Integrity copy strings, verbatim from 03-UI-SPEC.md:166-167, plus the honest
 # "not supplied" state (WR-02). The PASS copy is only ever rendered when an
@@ -139,6 +199,8 @@ def assemble_report_body(
     evidence_source_id: int,
     *,
     acquisition_verified: bool | None = None,
+    recovery_ran: bool = False,
+    filtering_ran: bool = False,
 ) -> dict[str, Any]:
     """Assemble the deterministic report body for one evidence source.
 
@@ -159,6 +221,12 @@ def assemble_report_body(
             report renders three honest states and NEVER claims a hash match that
             did not happen (WR-02 / D-28). Defaults to ``None`` (not compared) so
             a caller without the ingest result never overclaims a PASS.
+        recovery_ran: Whether deleted/orphan-file recovery actually ran for this
+            report. Drives the honest MVP-limitations disclaimer (D-40): with
+            both this and ``filtering_ran`` ``False`` (default), the disclaimer
+            is byte-identical to the Phase-3 baseline.
+        filtering_ran: Whether the known-file filtering pass actually ran. Same
+            honesty contract as ``recovery_ran``.
 
     Returns:
         The analytical report body. Notable keys: ``case``, ``evidence``,
@@ -440,10 +508,15 @@ def assemble_report_body(
                 "lists": custom_lists,
             },
         },
-        # 7. Limitations: D-20 volumes + the standing MVP disclaimer (mandatory)
+        # 7. Limitations: D-20 volumes + the honest MVP disclaimer (mandatory).
+        # The disclaimer reflects what ACTUALLY ran (D-40): default-path text is
+        # byte-identical to Phase 3; it is rewritten only when recovery/filtering
+        # ran so it never denies a capability that ran (D-28/D-32).
         "limitations": {
             "volumes": limitation_rows,
-            "mvp_disclaimer": _MVP_LIMITATIONS,
+            "mvp_disclaimer": _mvp_limitations(
+                recovery_ran=recovery_ran, filtering_ran=filtering_ran
+            ),
         },
     }
 
