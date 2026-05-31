@@ -164,6 +164,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
-| 3. Timeline & MVP Report | 4/4 | Complete   | 2026-05-31 |
+| 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
