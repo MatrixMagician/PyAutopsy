@@ -27,6 +27,7 @@ __all__ = [
     "LogMember",
     "LogSet",
     "CompletenessFinding",
+    "MAX_GZ_UNCOMPRESSED",
     "order_rotated_set",
     "discover_log_sets",
     "discover_shell_histories",
@@ -34,6 +35,17 @@ __all__ = [
     "DEFAULT_LOG_BASENAMES",
     "SHELL_HISTORY_BASENAMES",
 ]
+
+# Hard cap on the DECOMPRESSED size of a single rotated ``.gz`` log member
+# (WR-05). A ``.gz`` member's on-disk (compressed) size does NOT bound its
+# inflated size, so a small crafted member can expand to a memory-exhausting
+# blob — exactly the decompression-bomb case ``util.safe_extract``'s caps exist
+# to stop. The log path never routes through ``safe_extract`` (it inflates one
+# in-memory member directly), so we enforce the same class of cap here: the
+# inflate is read in bounded chunks and refused once it crosses this limit. The
+# value mirrors ``safe_extract._DEFAULT_MAX_ENTRY_SIZE`` (256 MiB) — far larger
+# than any real rotated log, small enough to stop a bomb.
+MAX_GZ_UNCOMPRESSED = 256 * 1024 * 1024
 
 # The /var/log base names the rotated-set discovery collects. These are the
 # RFC3164/RFC5424 system logs (auth + syslog) the auth/syslog parsers handle.
@@ -312,7 +324,29 @@ def decode_member(raw: bytes, *, is_gz: bool) -> str:
     if is_gz:
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
-                raw = gz.read()
+                # Bounded inflate (WR-05): read in chunks and stop once the
+                # decompressed size crosses MAX_GZ_UNCOMPRESSED, so a small
+                # crafted gz member cannot expand into a memory-exhausting blob.
+                # ``gz.read(n)`` is the decompression-bomb-safe counterpart of an
+                # unbounded ``gz.read()``. We read one chunk past the cap to
+                # DETECT the breach, then refuse the member (return "") rather
+                # than buffer the whole bomb or silently truncate evidence.
+                chunks: list[bytes] = []
+                total = 0
+                chunk_size = 4 * 1024 * 1024  # 4 MiB
+                while True:
+                    chunk = gz.read(chunk_size)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_GZ_UNCOMPRESSED:
+                        # Decompression-bomb cap breached: refuse this member,
+                        # like safe_extract aborts a bomb mid-stream. The rest of
+                        # the rotated set is unaffected (a single bad member must
+                        # not lose the others).
+                        return ""
+                    chunks.append(chunk)
+                raw = b"".join(chunks)
         except (OSError, EOFError):
             return ""
     return raw.decode("utf-8", "replace")
