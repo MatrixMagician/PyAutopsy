@@ -28,6 +28,8 @@ module imports no ``pytsk3``/``pyewf`` (D-14): it is pure stdlib ``sqlite3``.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+from urllib.request import pathname2url
 
 __all__ = ["NSRL_TABLE_ALLOWLIST", "nsrl_match", "open_nsrl"]
 
@@ -66,7 +68,15 @@ def open_nsrl(path: str) -> tuple[sqlite3.Connection, str]:
             allowlist.
         sqlite3.Error: If the database cannot be opened read-only.
     """
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # WR-02: URL-encode the resolved absolute path into the SQLite URI. Raw
+    # interpolation (f"file:{path}?mode=ro") misparses a path containing '?'
+    # (query delimiter), '#' (fragment), spaces, or '%': the '?mode=ro' could be
+    # lost and the DB silently opened WRITABLE, defeating T-04-02-DBRO. Resolve to
+    # an absolute path, then pathname2url percent-encodes it so '?mode=ro' is
+    # always the only query component. PRAGMA query_only=ON below remains the
+    # backstop.
+    uri = f"file:{pathname2url(str(Path(path).resolve()))}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
     # Defence in depth on top of mode=ro: refuse any write attempt at the engine
     # level. The probe is a strictly read-only consumer of untrusted input.
     conn.execute("PRAGMA query_only=ON;")
