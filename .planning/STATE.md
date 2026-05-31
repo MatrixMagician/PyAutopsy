@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 05-00-PLAN.md
-last_updated: "2026-05-31T18:47:33.359Z"
+last_updated: "2026-05-31T19:01:43.621Z"
 last_activity: 2026-05-31 -- Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 23
-  completed_plans: 21
+  completed_plans: 22
   percent: 80
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 ## Current Position
 
 Phase: 05 (log-parsing-supertimeline-search) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-05-31 -- Phase 05 execution started
 
@@ -71,6 +71,7 @@ Progress: [████████░░] 80%
 | Phase 05 P00 | 7min | 2 tasks | 8 files |
 | Phase 05 P01 | 9min | 2 tasks | 11 files |
 | Phase 05 P02 | 13m | 2 tasks | 2 files |
+| Phase 05 P03 | 25min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,10 @@ Recent decisions affecting current work:
 - [Phase ?]: 04-03: _MVP_LIMITATIONS disclaimer is conditional — verbatim Phase-3 text when nothing ran, rebuilt honestly when recovery/filtering ran (D-28/D-32)
 - [Phase ?]: 04-03: CLI carries hash-list sense via paired --hash-set-allow/--hash-set-block options (deterministic order, D-41)
 - [Phase ?]: 05-02: shell-history/syslog parsers self-register at import time (mirroring auth) so core/logs.py stays unchanged (EXT-01)
+- [Phase ?]: [Phase 05]: 05-03: iter_unallocated_blocks = COMPLEMENT of allocated_data_blocks read raw via the byte seam; block_size(fs) seam helper maps indices to absolute offsets (all pytsk3 in filesystem.py, D-14)
+- [Phase ?]: [Phase 05]: 05-03: search_hits is the only new schema item (additive, D-47 timeline_events untouched); store-owned total order volume_id,volume_offset,byte_offset,term,id (D-41)
+- [Phase ?]: [Phase 05]: 05-03: boundary-spanning dedup emits a match only when it ends past the carried overlap (exactly-once, Pitfall 5); ReDoS-bounded regex; search reuses filter/hashsets verbatim (no new dep, D-43)
+- [Phase ?]: [Phase 05]: 05-03: known-bad-hash hits persisted BOTH as KnownMatch and term_kind=hash SearchHit so they surface by file in unified search results
 
 ### Pending Todos
 
@@ -135,6 +140,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T18:47:29.332Z
+Last session: 2026-05-31T19:01:12.067Z
 Stopped at: Completed 05-00-PLAN.md
 Resume file: None
