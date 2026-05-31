@@ -523,3 +523,65 @@ def test_unallocated_typing_flags_provenance() -> None:
     )
     assert alloc_type == "text/plain"
     assert "file_type_provenance" not in alloc_attrs
+
+
+def _read_audit(case_dir: Path) -> list[dict]:
+    """Return the parsed audit-log events for a completed/aborted walk."""
+    import json
+
+    log = case_dir / "logs" / "audit.jsonl"
+    return [
+        json.loads(line)
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_unexpected_error_audited_as_crashed_and_reraised(
+    tiny_ext4_image: Path, case_dir: Path, monkeypatch
+) -> None:
+    """WR-05: a genuine bug is audited as ``walk.crashed`` (not ``walk.error``).
+
+    An unexpected exception (here a ``KeyError`` injected into row-building) is a
+    programming bug, not an operational failure. The walk must record it under a
+    DISTINCT ``walk.crashed`` event so the audit trail never conflates it with an
+    expected ``walk.error``, and must re-raise it unwrapped (traceback preserved).
+    """
+    from pyautopsy.core import walk as walk_mod
+
+    run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+
+    def boom(*_args, **_kwargs):
+        raise KeyError("simulated programming bug")
+
+    monkeypatch.setattr(walk_mod, "_build_file_row", boom)
+
+    with pytest.raises(KeyError):
+        run_walk(tiny_ext4_image, case_dir)
+
+    actions = [e["action"] for e in _read_audit(case_dir)]
+    assert "walk.crashed" in actions
+    assert "walk.error" not in actions
+
+
+def test_expected_error_audited_as_error_and_reraised(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """WR-05: an EXPECTED operational failure is audited as ``walk.error``.
+
+    Pointing the walk at a case with no evidence source raises ``WalkError`` (an
+    expected operational failure), which must be recorded as ``walk.error`` (not
+    ``walk.crashed``) and re-raised.
+    """
+    from pyautopsy.case import CaseStore
+    from pyautopsy.core.walk import WalkError
+
+    # Build an empty case (no ingest) so _latest_evidence_source_id raises.
+    CaseStore.create(case_dir).close()
+
+    with pytest.raises(WalkError):
+        run_walk(tiny_ext4_image, case_dir)
+
+    actions = [e["action"] for e in _read_audit(case_dir)]
+    assert "walk.error" in actions
+    assert "walk.crashed" not in actions
