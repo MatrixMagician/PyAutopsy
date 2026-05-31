@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
+status: verifying
 stopped_at: Completed 05-00-PLAN.md
-last_updated: "2026-05-31T19:01:43.621Z"
+last_updated: "2026-05-31T19:13:00.378Z"
 last_activity: 2026-05-31 -- Phase 05 execution started
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 23
-  completed_plans: 22
-  percent: 80
+  completed_plans: 23
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 
 Phase: 05 (log-parsing-supertimeline-search) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-31 -- Phase 05 execution started
 
 Progress: [████████░░] 80%
@@ -72,6 +72,7 @@ Progress: [████████░░] 80%
 | Phase 05 P01 | 9min | 2 tasks | 11 files |
 | Phase 05 P02 | 13m | 2 tasks | 2 files |
 | Phase 05 P03 | 25min | 2 tasks | 13 files |
+| Phase 05 P04 | 35min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -116,6 +117,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05]: 05-03: search_hits is the only new schema item (additive, D-47 timeline_events untouched); store-owned total order volume_id,volume_offset,byte_offset,term,id (D-41)
 - [Phase ?]: [Phase 05]: 05-03: boundary-spanning dedup emits a match only when it ends past the carried overlap (exactly-once, Pitfall 5); ReDoS-bounded regex; search reuses filter/hashsets verbatim (no new dep, D-43)
 - [Phase ?]: [Phase 05]: 05-03: known-bad-hash hits persisted BOTH as KnownMatch and term_kind=hash SearchHit so they surface by file in unified search results
+- [Phase ?]: Wave-3 integration: run_analyze --logs/--search opt-in arms run after build_timeline so run_logs fs-event backfill is a no-op; super-timeline total read from get_timeline_events (TIME-02, no new ORDER BY)
+- [Phase ?]: CR-01 locked via a direct store-level NULL-meta tied-log-event tiebreak test (source/actor/id), since run_logs surfaces only auth events on the current fixture
 
 ### Pending Todos
 
@@ -140,6 +143,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T19:01:12.067Z
+Last session: 2026-05-31T19:12:41.428Z
 Stopped at: Completed 05-00-PLAN.md
 Resume file: None

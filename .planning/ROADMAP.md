@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Filesystem Walk & Metadata** - Walk ext4/NTFS/FAT yielding per-file inventory, UTC MACB times, owner/perms, per-file hashes, type-by-signature (completed 2026-05-31)
 - [x] **Phase 3: Timeline & MVP Report** - Chronological timeline + deterministic HTML/JSON report from one command (closes image -> report MVP) (completed 2026-05-31)
 - [x] **Phase 4: Deleted Recovery & Known-File Filtering** - Recover deleted/orphan files with confidence tiers; filter against NSRL + custom hash sets (completed 2026-05-31)
-- [ ] **Phase 5: Log Parsing, Super-Timeline & Search** - Parse Linux logs into a shared event model, merge into a UTC super-timeline, keyword/IOC search
+- [x] **Phase 5: Log Parsing, Super-Timeline & Search** - Parse Linux logs into a shared event model, merge into a UTC super-timeline, keyword/IOC search (completed 2026-05-31)
 
 ## Phase Details
 
@@ -192,7 +192,7 @@ Plans:
 
 **Wave 3** *(blocked on Waves 1+2)*
 
-- [ ] 05-04-PLAN.md — Integration: opt-in `analyze --logs/--search` + report sections + super-timeline (TIME-02) + CLI-02/CR-01 reproducibility tests (D-48)
+- [x] 05-04-PLAN.md — Integration: opt-in `analyze --logs/--search` + report sections + super-timeline (TIME-02) + CLI-02/CR-01 reproducibility tests (D-48)
 
 ## Progress
 
@@ -205,4 +205,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 4/5 | In Progress|  |
+| 5. Log Parsing, Super-Timeline & Search | 5/5 | Complete   | 2026-05-31 |
