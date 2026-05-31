@@ -58,6 +58,17 @@ from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
 
 __all__ = ["LogsError", "LogsResult", "run_logs"]
 
+# Sort-to-END sentinel for events whose year could NOT be anchored to ANY mtime
+# on the image (the epoch-fallback path, CR-02). ``get_timeline_events`` orders by
+# ``ts_utc`` ASC (lexical on the ISO string), so a far-future instant places these
+# undated artifacts at the TAIL of the presented chronology instead of the 1970
+# FRONT, where they would otherwise masquerade as the "earliest activity" in a
+# timeline the report presents as forensic truth. The instant itself is never real
+# — every such event carries an explicit ``ts_basis`` / ``year_basis`` honesty
+# flag in ``attributes`` saying the time is unresolved and the row is sorted out of
+# the chronological view (the disclosure now reaches where the distortion appears).
+_UNDATED_SORT_LAST_ISO = "9999-12-31T23:59:59+00:00"
+
 
 class LogsError(Exception):
     """Raised when log parsing cannot proceed for a non-integrity reason.
@@ -107,16 +118,17 @@ class LogsResult:
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
-    """Return the latest ``evidence_sources`` id, or raise :class:`LogsError`."""
-    row = store.connection.execute(
-        "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+    """Return the latest ``evidence_sources`` id, or raise :class:`LogsError`.
+
+    Reads through the CaseStore (WR-02: no raw SQL outside the store boundary).
+    """
+    source_id = store.get_latest_evidence_source_id()
+    if source_id is None:
         raise LogsError(
             "no evidence source in the case; run `pyautopsy ingest` first so log "
             "parsing has an evidence_sources row to attach events to"
         )
-    return int(row["id"])
+    return source_id
 
 
 def _build_path_index(store: CaseStore, source_id: int) -> dict[str, int]:
@@ -136,13 +148,13 @@ def _build_path_index(store: CaseStore, source_id: int) -> dict[str, int]:
 
 def _seed_year_from_mtime(
     rows_by_path: dict[str, Any], member_path: str
-) -> tuple[int, str]:
+) -> tuple[int, str, bool]:
     """Deterministically seed the RFC3164 year from evidence only (CLI-02).
 
-    Returns ``(year, basis)``. The seed is derived ONLY from data on the image, so
-    two runs of the same image always agree (CLI-02) — it never reads the analysis
-    host's wall clock (the module docstring's "never wall-clock" promise). In
-    precedence order:
+    Returns ``(year, basis, unresolved)``. The seed is derived ONLY from data on
+    the image, so two runs of the same image always agree (CLI-02) — it never reads
+    the analysis host's wall clock (the module docstring's "never wall-clock"
+    promise). In precedence order:
 
     1. the member's own mtime year (the canonical RFC3164 anchor, D-46);
     2. the NEWEST mtime year across the whole walked file set, when the member
@@ -150,14 +162,17 @@ def _seed_year_from_mtime(
     3. the Unix-epoch year (1970) as an explicit, honestly-flagged last resort when
        NOTHING on the image carries an mtime — never an invented current year.
 
-    The returned ``basis`` string is recorded on each event so the inference is
-    never silent (SOUND-02 / the CR-01 honesty lesson).
+    ``unresolved`` is ``True`` ONLY for case 3 (no mtime anywhere). The caller uses
+    it to sort that member's events to the END of the ts_utc-ordered super-timeline
+    instead of the 1970 FRONT, so an unanchored artifact never masquerades as the
+    earliest activity (CR-02). The returned ``basis`` string is recorded on each
+    event so the inference is never silent (SOUND-02 / the CR-01 honesty lesson).
     """
     row = rows_by_path.get(member_path)
     mtime = getattr(row, "mtime", 0) if row is not None else 0
     if mtime:
         year = datetime.fromtimestamp(mtime, tz=timezone.utc).year
-        return year, "file mtime + rotation order"
+        return year, "file mtime + rotation order", False
 
     # No usable member mtime: fall back to the NEWEST mtime anywhere in the walked
     # set (deterministic from the image alone — no wall clock, CLI-02).
@@ -167,12 +182,17 @@ def _seed_year_from_mtime(
     )
     if newest:
         year = datetime.fromtimestamp(newest, tz=timezone.utc).year
-        return year, "newest mtime in log set (member mtime absent)"
+        return year, "newest mtime in log set (member mtime absent)", False
 
     # Genuinely nothing to anchor to: use the Unix epoch year and SAY SO. We never
     # invent the analysis host's current year (that would break CLI-02 across a
-    # New-Year boundary — the CR-02 wall-clock leak).
-    return 1970, "year unresolved (no mtime on image); anchored to epoch, FLAGGED"
+    # New-Year boundary — the CR-02 wall-clock leak). Flag ``unresolved`` so the
+    # caller sorts these events OUT of the chronological front (CR-02).
+    return (
+        1970,
+        "year unresolved (no mtime on image); anchored to epoch, FLAGGED",
+        True,
+    )
 
 
 def _resolve_records_to_events(
@@ -186,6 +206,7 @@ def _resolve_records_to_events(
     tz_basis: str,
     seed_year: int,
     seed_basis: str,
+    seed_unresolved: bool,
     volume_id: int,
     volume_offset: int,
 ) -> list[TimelineEvent]:
@@ -228,16 +249,42 @@ def _resolve_records_to_events(
             naive = timeresolve.naive_from_components(year, comp)
             utc_iso, tz_flags = timeresolve.to_utc(naive, host_tz)
             attrs = {**record.attributes, **tz_flags, **yflags}
+            if seed_unresolved:
+                # The RFC3164 head has a real month/day/time but its YEAR could
+                # not be anchored to any mtime on the image — the absolute instant
+                # is a guess. Sort it OUT of the chronological front so it does not
+                # read as genuine early activity (CR-02); keep the parsed pieces in
+                # attributes for the undated-artifacts view.
+                attrs["ts_resolved"] = utc_iso
+                attrs["ts_basis"] = (
+                    "year unresolved (no mtime on image); sorted to end of "
+                    "timeline, NOT genuine chronology"
+                )
+                utc_iso = _UNDATED_SORT_LAST_ISO
         else:
-            # No per-line timestamp: anchor to the seed year's start, flagged.
-            naive = datetime(seed_year, 1, 1)  # noqa: DTZ001 (naive by design)
-            utc_iso, tz_flags = timeresolve.to_utc(naive, host_tz)
-            attrs = {
-                **record.attributes,
-                **tz_flags,
-                "ts_basis": "file-mtime-fallback; no per-line timestamp",
-                "year_basis": seed_basis,
-            }
+            # No per-line timestamp AND no mtime anywhere → sort to the END of the
+            # timeline rather than to a fabricated 1970-01-01 at the FRONT (CR-02).
+            # With an mtime-derived seed the seed-year Jan 1 anchor is a defensible
+            # bound and stays inline; only the fully-unresolved case is segregated.
+            if seed_unresolved:
+                utc_iso = _UNDATED_SORT_LAST_ISO
+                attrs = {
+                    **record.attributes,
+                    "ts_basis": (
+                        "no per-line timestamp and no mtime on image; sorted to "
+                        "end of timeline, NOT genuine chronology"
+                    ),
+                    "year_basis": seed_basis,
+                }
+            else:
+                naive = datetime(seed_year, 1, 1)  # noqa: DTZ001 (naive by design)
+                utc_iso, tz_flags = timeresolve.to_utc(naive, host_tz)
+                attrs = {
+                    **record.attributes,
+                    **tz_flags,
+                    "ts_basis": "file-mtime-fallback; no per-line timestamp",
+                    "year_basis": seed_basis,
+                }
         attrs["tz_resolution"] = tz_basis
         events.append(
             normalize.to_event(
@@ -286,18 +333,40 @@ def run_logs(
     image_path = Path(image).resolve()
     case_path = Path(case_dir).resolve()
 
+    # Bind the audit log BEFORE the first guard so a pre-open mounted-source
+    # rejection is recorded as a FAIL event (WR-03). ``run_logs`` requires a prior
+    # ingest, so the case dir already exists; AuditLog creates the journal lazily
+    # on first write. The D-08 contract is "record FAIL before non-zero exit" — the
+    # pre-open guard must not be able to raise past the audit trail.
+    audit = AuditLog(case_path)
+
     # (1) Re-assert the read-only / not-mounted guard before any access (D-05/P1).
-    integrity.assert_source_not_mounted(image_path)
+    #     Audited: a mounted source is a FAIL event, not a silent clean exit.
+    try:
+        integrity.assert_source_not_mounted(image_path)
+    except integrity.MountedSourceError as exc:
+        audit.write(
+            "logs.error",
+            outcome="FAIL",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
 
     # (2) Open the existing case store (ingest created it).
     try:
         store = CaseStore.open(case_path)
     except FileNotFoundError as exc:
+        audit.write(
+            "logs.error",
+            outcome="FAIL",
+            error=str(exc),
+            error_type="LogsError",
+        )
         raise LogsError(
             f"no case database under {case_path}; run `pyautopsy ingest` first"
         ) from exc
 
-    audit = AuditLog(case_path)
     audit.write("logs.start", image=str(image_path), case_dir=str(case_path))
 
     events_parsed = 0
@@ -379,8 +448,18 @@ def run_logs(
             # Build them from the walk inventory ONCE (idempotent): only when the
             # source has no timeline events yet, so a prior `analyze`/build does
             # not get double-inserted. No new ordering code is added (D-47).
+            # (WR-06) Gate on the absence of FILESYSTEM-source events, not on the
+            # absence of ANY event. A prior standalone ``logs`` run inserts LOG
+            # events but never runs build_timeline, so an "any event exists" guard
+            # would see those log events and skip the filesystem backfill forever,
+            # leaving a log-only "super-timeline" missing its MACB events. Keying
+            # on ``source LIKE 'filesystem%'`` backfills exactly once even across
+            # repeated standalone ``logs`` runs (still idempotent: once filesystem
+            # events exist, this is False).
             fs_events: list[TimelineEvent] = []
-            if not store.get_timeline_events(source_id, limit=1):
+            if not store.has_timeline_events_with_source_prefix(
+                source_id, "filesystem"
+            ):
                 for file_row in store.get_files(source_id):
                     fs_events.extend(explode(file_row))
 
@@ -469,7 +548,9 @@ def _parse_log_set(
         # kind; the RFC3164 parsers ignore keys they do not need (EXT-01).
         records = list(parser.parse(text, {"path": member.path}))
         file_id = path_index.get(member.path)
-        seed_year, seed_basis = _seed_year_from_mtime(rows_by_path, member.path)
+        seed_year, seed_basis, seed_unresolved = _seed_year_from_mtime(
+            rows_by_path, member.path
+        )
         events.extend(
             _resolve_records_to_events(
                 records,
@@ -481,6 +562,7 @@ def _parse_log_set(
                 tz_basis=tz_basis,
                 seed_year=seed_year,
                 seed_basis=seed_basis,
+                seed_unresolved=seed_unresolved,
                 volume_id=volume_id,
                 volume_offset=volume_offset,
             )
