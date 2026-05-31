@@ -23,12 +23,11 @@ single automated Python workflow.
 - ✓ Ingest a disk image (raw/dd + E01) read-only via The Sleuth Kit / pytsk3 — Validated in Phase 1 (E01-native path is manual-only, tracked in 01-HUMAN-UAT.md)
 - ✓ Preserve evidence integrity (single-pass MD5+SHA-256, acquisition compare, end-of-run re-verify, never-mounted guard, chain-of-custody in SQLite case store, append-only JSONL audit log) — Validated in Phase 1
 - ✓ Run on Linux as a command-line tool (`pyautopsy ingest`, Typer CLI) — Validated in Phase 1
+- ✓ Analyze file metadata: walk ext4/NTFS/FAT yielding a normalized per-file inventory (path, size, inode/MFT addr, allocated/unallocated status), UTC-correct MACB times, ownership/mode, per-file MD5+SHA-1+SHA-256, and content-signature file typing; encrypted/unsupported volumes recorded as known-limitation findings (`pyautopsy walk`) — Validated in Phase 2 (real partitioned-disk-at-scale and sub-second nano MACB are manual-only, tracked in 02-HUMAN-UAT.md)
 
 ### Active
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
-
-- [ ] Analyze file metadata (timestamps, ownership, permissions, sizes, MAC times) — Phase 2
 - [ ] Recover deleted files from supported filesystems — Phase 4
 - [ ] Parse and analyze log files for forensically relevant events — Phase 5
 - [ ] Build a timeline of file/system activity from metadata and logs — Phases 3 & 5
@@ -97,4 +96,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-30 after Phase 1 (Forensic Foundation) completion*
+*Last updated: 2026-05-31 after Phase 2 (Filesystem Walk & Metadata) completion*
