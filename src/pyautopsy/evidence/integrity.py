@@ -34,10 +34,12 @@ from pathlib import Path
 from typing import Protocol
 
 __all__ = [
+    "EMPTY",
     "IntegrityError",
     "MountedSourceError",
     "VerifyResult",
     "assert_source_not_mounted",
+    "hash_file",
     "hash_image",
     "reverify",
     "verify_acquisition",
@@ -46,6 +48,20 @@ __all__ = [
 # Default streaming chunk: 8 MiB — memory-bounded for multi-GB images while
 # keeping read syscall overhead low (D-07, configurable).
 _DEFAULT_CHUNK = 8 * 1024 * 1024
+
+# Per-file streaming chunk: 1 MiB — memory-bounded for the many smaller reads of
+# a filesystem walk while keeping the single-pass shape (D-17, configurable).
+_DEFAULT_FILE_CHUNK = 1 * 1024 * 1024
+
+# The well-known empty-file digests (MD5/SHA-1/SHA-256 of zero bytes). Returned
+# verbatim for a zero-length file so the no-content case is recorded as a
+# defensible, reproducible sentinel rather than skipped (D-17). These are the
+# digests of ``b""`` and are asserted against a live ``hashlib`` pass in tests.
+EMPTY: dict[str, str] = {
+    "md5": "d41d8cd98f00b204e9800998ecf8427e",
+    "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+}
 
 # Map a supplied hex-digest length to the algorithm it identifies.
 _LEN_TO_ALGO: dict[int, str] = {32: "md5", 64: "sha256"}
@@ -85,6 +101,19 @@ class ReadableSource(Protocol):
 
     def get_size(self) -> int:
         """Return the total size in bytes."""
+
+
+class ContentReader(Protocol):
+    """A read-only ``(offset, size) -> bytes`` callable :func:`hash_file` consumes.
+
+    Implemented by the FS seam as a thin closure over the TSK ``File.read_random``
+    so ``hash_file`` never sees a native object and this module stays native-free
+    (D-14) and testable with a plain ``lambda offset, size: b"..."`` (D-06).
+    """
+
+    def __call__(self, offset: int, size: int) -> bytes:  # pragma: no cover - Protocol
+        """Read ``size`` content bytes starting at ``offset`` (read-only)."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +191,80 @@ def hash_image(
             "digest"
         )
     return {"md5": md5.hexdigest(), "sha256": sha256.hexdigest()}
+
+
+def hash_file(
+    read_random: ContentReader,
+    size: int,
+    *,
+    chunk: int = _DEFAULT_FILE_CHUNK,
+    max_size: int | None = None,
+) -> dict[str, str] | None:
+    """Compute MD5 + SHA-1 + SHA-256 over one file in a single streaming pass.
+
+    The per-file analogue of :func:`hash_image` (D-07/D-17): one ``while`` loop
+    updates all three digests, so the file's content is read exactly once. The
+    bytes come from a ``read_random(offset, size) -> bytes`` callable — the FS
+    seam's read-only byte-reader closure over the TSK ``File`` (D-05/P1) — so this
+    module stays native-free (D-14) and unit-testable with a plain ``lambda``.
+
+    SHA-256 is the forensic primary; MD5 and SHA-1 are retained for NSRL / legacy
+    hash-set interop only and are **NOT** relied upon for tamper-evidence
+    (CLAUDE.md, ASVS V6).
+
+    Unlike :func:`hash_image` (which raises on a short read because a partial
+    *image* digest is never acceptable), the per-file path treats a short read as
+    a non-fatal skip — it returns ``None`` so the caller records null hashes plus
+    a reason and continues the walk, rather than aborting the whole inventory over
+    one unreadable/truncated entry. The no-partial-digest principle is preserved
+    either way: a partial digest is never returned.
+
+    Args:
+        read_random: A read-only ``(offset, size) -> bytes`` callable yielding the
+            file's content bytes (the FS seam wraps the TSK ``File.read_random``).
+        size: The file's logical size in bytes (``0`` ⇒ empty-file sentinel).
+        chunk: Streaming chunk size in bytes. Must be positive.
+        max_size: If set and ``size`` exceeds it, the file is skipped (returns
+            ``None``) — the DoS guard for a crafted huge logical size (D-17,
+            threat T-2-03-HOG). ``None`` (default) means no cap.
+
+    Returns:
+        A mapping ``{"md5", "sha1", "sha256"}`` of hex digests; a copy of
+        :data:`EMPTY` for a zero-length file; or ``None`` when the file is skipped
+        for size or short-reads (no partial digest is ever returned).
+
+    Raises:
+        ValueError: If ``chunk`` is not positive.
+    """
+    if chunk <= 0:
+        raise ValueError(f"chunk must be positive, got {chunk}")
+    if size == 0:
+        return dict(EMPTY)
+    if max_size is not None and size > max_size:
+        return None  # skipped: caller records null hashes + an oversize reason.
+
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
+    off = 0
+    while off < size:
+        want = min(chunk, size - off)
+        block = read_random(off, want)
+        if not block:
+            break
+        md5.update(block)
+        sha1.update(block)
+        sha256.update(block)
+        off += len(block)
+    if off != size:
+        # Short/truncated read: do NOT record a partial digest (no-partial-digest
+        # principle). Per-file divergence from hash_image — skip, do not raise.
+        return None
+    return {
+        "md5": md5.hexdigest(),
+        "sha1": sha1.hexdigest(),
+        "sha256": sha256.hexdigest(),
+    }
 
 
 def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
