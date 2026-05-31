@@ -56,6 +56,7 @@ from pyautopsy.report import (
     render_html,
     write_json,
 )
+from pyautopsy.report.jsonreport import _confined_reports_dir
 from pyautopsy.timeline.builder import build_timeline
 from pyautopsy.util.timeutil import iso_utc, utc_now
 
@@ -135,12 +136,15 @@ def _write_run_metadata(case_dir: Path, run_metadata: dict[str, object]) -> Path
     """Write volatile run metadata to the ``reports/run_metadata.json`` sidecar.
 
     Reuses the json-report determinism idiom (``sort_keys`` + ``ensure_ascii``,
-    jsonreport.py:76) and confines the path to ``case_dir/reports/`` exactly like
-    the report writers (the reports dir was already created by ``write_json`` /
-    ``render_html`` before this is called). This sidecar is the single volatile
-    file (W-1) — it is NEVER merged into the body or passed to ``render_html``.
+    jsonreport.py:76) and routes the path through the SAME ``_confined_reports_dir``
+    guard the two report writers use (WR-01), so all three forensic outputs
+    (report.json, report.html, run_metadata.json) share identical case-dir
+    confinement — a symlinked/relative ``case_dir`` cannot redirect the sidecar
+    outside the case while leaving the reports confined (threat T-03-07). This
+    sidecar is the single volatile file (W-1) — it is NEVER merged into the body
+    or passed to ``render_html``.
     """
-    reports_dir = (case_dir / _REPORTS_SUBDIR).resolve()
+    reports_dir = _confined_reports_dir(case_dir)
     path = reports_dir / _RUN_METADATA_NAME
     serialized = json.dumps(run_metadata, sort_keys=True, ensure_ascii=False)
     path.write_text(serialized, encoding="utf-8")
