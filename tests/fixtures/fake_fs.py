@@ -76,16 +76,37 @@ class FakeDirEntry:
 
 
 class _FakeFSInfo:
-    def __init__(self, ftype: int) -> None:
+    def __init__(
+        self,
+        ftype: int,
+        *,
+        root_inum: int = 2,
+        first_inum: int = 1,
+        last_inum: int = 1024,
+    ) -> None:
         self.ftype = ftype
+        # ``walk_fs`` tags root-level entries with ``root_inum`` (the seam's
+        # RECOV-02 fix) and ``iter_deleted_inodes``/``allocated_inodes`` scan
+        # ``[first_inum, last_inum]``; mirror ext4/FAT (root inode 2) by
+        # default, with a range that bounds the fakes' small inode addresses.
+        self.root_inum = root_inum
+        self.first_inum = first_inum
+        self.last_inum = last_inum
 
 
 class FakeFS:
     """A fake ``FS_Info`` driven by a ``{path: [FakeDirEntry, ...]}`` map."""
 
-    def __init__(self, tree: dict[str, list[FakeDirEntry]]) -> None:
+    def __init__(
+        self,
+        tree: dict[str, list[FakeDirEntry]],
+        *,
+        root_inum: int = 2,
+    ) -> None:
         self._tree = tree
-        self.info = _FakeFSInfo(_FTYPE_EXT4)
+        # ``root_inum`` is threadable so a test can place a real root-inode
+        # entry in the tree when it needs the root to be "allocated".
+        self.info = _FakeFSInfo(_FTYPE_EXT4, root_inum=root_inum)
 
     def open_dir(self, path: str) -> list[FakeDirEntry]:
         return self._tree.get(path, [])

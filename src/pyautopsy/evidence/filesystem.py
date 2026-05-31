@@ -694,7 +694,12 @@ def walk_fs(
         parent_path: The directory path currently being walked (recursion state).
         parent_addr: Inode/MFT address of ``parent_path``'s directory, tagged onto
             every entry yielded at this level so parent/child reconstruction is
-            possible downstream (WR-03); ``None`` at the root.
+            possible downstream (WR-03). At the root call (``_depth == 0`` and the
+            incoming ``parent_addr is None``) this is substituted with the
+            filesystem root inode (``fs.info.root_inum``) so root-level deletions
+            classify as *recovered* (their parent — the allocated root — survives),
+            NOT as orphans. ``None`` is therefore reserved exclusively for the
+            range-scan orphan (a deleted inode with no surviving directory link).
         _seen: Inode seen-set guarding recursion (recursion state).
         _depth: Current recursion depth, bounded by :data:`_MAX_WALK_DEPTH`
             against adversarial deep nesting (WR-04, recursion state).
@@ -705,6 +710,19 @@ def walk_fs(
     if _seen is None:
         _seen = set()
     ftype = int(fs.info.ftype)
+
+    # Resolve the effective parent address for THIS level ONCE. The genuine
+    # top-level invocation arrives with ``_depth == 0`` and ``parent_addr is
+    # None``; tag its entries with the real root inode (``fs.info.root_inum``)
+    # so a deleted file in the root carries an *allocated* parent and is
+    # classified as recovered, not an orphan (RECOV-02). The recursive call
+    # below always passes the child directory's own (non-None) ``meta_addr`` as
+    # the next level's ``parent_addr``, so this guard only ever fires for the
+    # root call — keeping ``None`` reserved exclusively for the deliberate
+    # pass-2 range-scan orphan (no surviving directory link).
+    resolved_parent_addr = parent_addr
+    if _depth == 0 and parent_addr is None:
+        resolved_parent_addr = int(fs.info.root_inum)
 
     directory = fs.open_dir(path=parent_path)
     for entry in directory:
@@ -732,7 +750,7 @@ def walk_fs(
         yield FileEntry(
             name=name,
             path=child_path,
-            parent_addr=parent_addr,
+            parent_addr=resolved_parent_addr,
             meta_addr=meta_addr,
             allocated=allocated,
             meta_type=_meta_type_label(meta_type_int, name_type_int),
