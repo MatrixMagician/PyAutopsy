@@ -16,7 +16,9 @@ Provides:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -129,6 +131,36 @@ def nsrl_metadata_db() -> Path:
     db = FIXTURES_DIR / make_fixtures.NSRL_METADATA_NAME
     assert db.is_file(), f"committed fixture missing: {db}"
     return db
+
+
+@pytest.fixture
+def log_search_image() -> Path:
+    """Path to the committed Phase-5 log/search ext4 image (LOG-/SEARCH- corpus).
+
+    Built once with ``mkfs.ext4``/``debugfs`` and committed so CI needs no
+    ``mkfs`` (mirrors the Phase-2/4 fixtures). Carries the rotated/gz ``auth.log``
+    set, ``syslog``, per-user ``.bash_history``/``.zsh_history``, the
+    ``/etc/localtime`` symlink + ``/etc/timezone`` text, planted allocated +
+    unallocated search needles, an IOC term, a known-bad-hash file, and the two
+    CR-01 tied-second syslog lines. Ground truth is in :func:`log_search_groundtruth`.
+    """
+    image = FIXTURES_DIR / make_fixtures.LOG_SEARCH_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def log_search_groundtruth() -> dict[str, Any]:
+    """Return the committed ground-truth constants for :func:`log_search_image`.
+
+    Loads ``log_search_groundtruth.json`` (committed next to the image) so a test
+    can assert exact values — the inferred timezone + year, planted allocated and
+    unallocated needles and their offsets, the IOC term, the known-bad hash hex,
+    and the tied-event count — without importing the mkfs-dependent builder.
+    """
+    sidecar = FIXTURES_DIR / make_fixtures.LOG_SEARCH_GROUNDTRUTH_NAME
+    assert sidecar.is_file(), f"committed ground-truth sidecar missing: {sidecar}"
+    return json.loads(sidecar.read_text(encoding="utf-8"))
 
 
 @pytest.fixture

