@@ -457,18 +457,18 @@ entry.as_directory()              # recurse into a DIR entry — verified
 | A3 | `meta.*_nano` fields are populated for ext4/NTFS; FAT has none. (`mtime_nano` was 0 on the ext4 fixture — debugfs may not set it; real images differ.) | Pattern 4 | Sub-second precision may be absent; MACB still correct at second granularity. |
 | A4 | `$OrphanFiles` (VIRT_DIR) children are deleted-only and should not be tree-reconstructed in Phase 2. | Pattern 2 | If mis-handled, Phase 4's boundary blurs; D-18 explicitly defers this. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Partitioned-image volume offsets (A1)**
+1. **Partitioned-image volume offsets (A1)** — RESOLVED by Wave-0 `build_partitioned_image` fixture + `tests/test_filesystem.py::test_volume_enumeration` (Plans 02-00 / 02-01).
    - What we know: `Volume_Info` enumerates partitions with `.addr/.start/.len/.desc`; bare-FS raises `OSError` (verified).
    - What's unclear: exact byte-offset units on a *real partitioned* image weren't probed this session (only bare-FS ext4/NTFS/FAT32 were built).
    - Recommendation: Wave 0 fixture — build one partitioned disk image (e.g. `parted`/`sfdisk` + a FAT + an ext4 partition) and assert the walk opens both at correct offsets. Treat `part.start * block_size` as the offset.
 
-2. **Path representation for the `files` table (Claude's discretion)**
+2. **Path representation for the `files` table (Claude's discretion)** — RESOLVED: store the full-path string AND `parent_addr` (Plan 02-01 Task 1).
    - What we know: full-path string is simplest for Phase 3 timeline display; parent-inode + name is more normalized.
    - Recommendation: store **full path string** (built during recursion) as a typed column AND `parent_addr` for traceability; cheap and serves both consumers.
 
-3. **`file_type` for empty/non-regular entries**
+3. **`file_type` for empty/non-regular entries** — RESOLVED: `inode/x-empty` for empties + `meta_type`-derived labels for non-REG (Plans 02-00 / 02-03).
    - Recommendation: empties → `"inode/x-empty"` (libmagic convention) or `None`; non-regular → derive a simple type string from `meta.type` (e.g. `"directory"`, `"symlink"`), keep `magic`-derived type for REG only.
 
 ## Environment Availability

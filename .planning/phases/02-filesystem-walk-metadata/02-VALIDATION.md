@@ -72,6 +72,7 @@ created: 2026-05-31
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
 | Real partitioned multi-FS disk image at scale | META-01 (volume offsets) | Session only built bare-FS + a small synthetic partitioned fixture; large real-world partition tables not exercised in CI | On a partitioned E01/dd, run the walk and confirm each volume's rows carry the correct `volume_id`/byte-offset |
+| Sub-second / nano MACB folding | META-02 (D-16) | The committed ext4 fixture has `mtime_nano=0` (debugfs does not set it — Assumption A3), so the `*_nano`→`attributes` fold branch has no green automated target; real images differ | On a real ext4/NTFS image with non-zero `*_nano`, run the walk and confirm `attributes` carries the sub-second values for at least one file |
 
 *All other phase behaviors have automated verification.*
 
