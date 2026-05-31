@@ -468,10 +468,17 @@ def run_recover(
                             sha256 = digests["sha256"]
                         elif max_hash_size is not None and entry.size > max_hash_size:
                             attributes["hash_skipped"] = "exceeds_max_hash_size"
-                        try:
-                            file_type = active_typer(reader, entry.size)
-                        except OSError:
-                            file_type = None
+                        # WR-04: gate content typing behind the SAME size cap as
+                        # hashing. active_typer streams the full content through
+                        # the sniffer, so typing an oversize entry re-opens the
+                        # exact size-bomb surface (T-04-01-BOMB) the cap is meant
+                        # to bound. Only type when within the cap; file_type stays
+                        # None otherwise (deterministic — same input, same skip).
+                        if max_hash_size is None or entry.size <= max_hash_size:
+                            try:
+                                file_type = active_typer(reader, entry.size)
+                            except OSError:
+                                file_type = None
                     else:
                         # Nothing to read (ext4 zeroed pointers / no data): write
                         # an empty placeholder so the recovered/ row has a file.
