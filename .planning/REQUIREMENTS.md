@@ -59,7 +59,7 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### CLI & Pipeline
 
-- [ ] **CLI-01**: User can run the full analysis as a single command (`pyautopsy analyze <image> --case ...`) producing the complete report
+- [x] **CLI-01**: User can run the full analysis as a single command (`pyautopsy analyze <image> --case ...`) producing the complete report
 - [x] **CLI-02**: Tool produces deterministic, reproducible output (stable ordering, pinned tool versions recorded in the report)
 
 ## v2 Requirements
@@ -136,7 +136,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REPORT-02 | Phase 1 | Complete |
 | REPORT-03 | Phase 3 | Complete |
 | REPORT-04 | Phase 3 | Complete |
-| CLI-01 | Phase 3 | Pending |
+| CLI-01 | Phase 3 | Complete |
 | CLI-02 | Phase 3 | Complete |
 
 **Coverage:**
