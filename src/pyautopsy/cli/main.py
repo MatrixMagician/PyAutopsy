@@ -15,6 +15,7 @@ The Typer ``app`` is the ``[project.scripts]`` entry point declared in
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -313,7 +314,12 @@ def recover(
     if nsrl is not None or hash_sets:
         try:
             filter_result = run_filter(case, nsrl_db=nsrl, hash_sets=hash_sets)
-        except (FilterError, OSError) as exc:
+        except (FilterError, OSError, sqlite3.Error) as exc:
+            # BL-02: sqlite3.Error is NOT an OSError, so a corrupt examiner-
+            # supplied --nsrl DB would otherwise escape this handler and crash
+            # with a raw traceback. run_filter lists sqlite3.Error in
+            # _EXPECTED_FILTER_ERRORS and re-raises it; map it here to the clean
+            # non-zero integrity exit + audit FAIL.
             typer.echo(f"recover filtering failed: {exc}", err=True)
             raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
@@ -469,6 +475,10 @@ def analyze(
         ImageOpenError,
         MountedSourceError,
         IntegrityError,
+        # BL-02: sqlite3.Error is not an OSError; run_analyze lists it in
+        # _EXPECTED_ANALYZE_ERRORS and re-raises a corrupt --nsrl DB failure, so
+        # map it to the clean integrity exit instead of crashing with a traceback.
+        sqlite3.Error,
     ) as exc:
         typer.echo(f"analyze failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
