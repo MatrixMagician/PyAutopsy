@@ -1,9 +1,9 @@
 ---
-status: diagnosed
+status: resolved
 phase: 04-deleted-recovery-known-file-filtering
 source: [04-VERIFICATION.md]
 started: 2026-05-31T15:09:30Z
-updated: 2026-05-31T17:55:00Z
+updated: 2026-05-31T18:24:00Z
 ---
 
 ## Current Test
@@ -40,7 +40,8 @@ blocked: 0
 ## Gaps
 
 - truth: "Deleted files whose parent directory still exists (e.g. a volume's root) are reported in the Recovered Files section as non-orphans; only entries whose parent is genuinely gone appear under Orphan Files (RECOV-02)."
-  status: failed
+  status: resolved
+  resolved_by: "04-04 (commits 63123a0..a96cfd5 + WR-01 hardening fac4447): walk_fs tags root-level entries with int(fs.info.root_inum), reserving None for the pass-2 range-scan orphan; allocated_inodes seeds the root inode so classification never depends on the first_inum floor. Regression tests pin both directions (root deletion -> Recovered; removed-parent -> Orphan) for FAT + ext4; verified to fail on revert."
   reason: "Root-level deleted files are mislabelled is_orphan=True, so Recovered Files is empty and they appear under Orphan Files with the false claim 'parent directory is itself gone'. Verified on a host-built FAT+ext4 partitioned disk."
   severity: major
   test: 1
