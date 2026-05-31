@@ -63,8 +63,12 @@ CREATE INDEX IF NOT EXISTS idx_run_log_case_id
 CREATE TABLE IF NOT EXISTS files (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     evidence_source_id INTEGER NOT NULL REFERENCES evidence_sources (id),
-    volume_id          INTEGER,
-    volume_offset      INTEGER,
+    -- (WR-06) The walk ALWAYS tags every row with its source volume id + byte
+    -- offset (D-15), and FileRow types both as non-optional ``int``. Declared
+    -- NOT NULL so the column contract matches the model: a NULL here can never
+    -- silently construct a FileRow with None in an int field.
+    volume_id          INTEGER NOT NULL,
+    volume_offset      INTEGER NOT NULL,
     path               TEXT    NOT NULL,
     name               TEXT    NOT NULL,
     parent_addr        INTEGER,

@@ -228,6 +228,32 @@ def test_insert_files_bulk_executemany(case_dir: Path) -> None:
     assert [r.name for r in loaded] == [f"f{i}" for i in range(5)]
 
 
+def test_files_volume_columns_are_not_null(case_dir: Path) -> None:
+    """WR-06: ``files.volume_id``/``volume_offset`` reject NULL.
+
+    ``FileRow`` types both as non-optional ``int`` and the walk always provides
+    them (D-15). The schema now declares both NOT NULL so a NULL can never
+    silently round-trip into a ``None`` in an ``int`` field; an attempt to insert
+    one is a loud ``sqlite3.IntegrityError`` rather than a contract violation.
+    """
+    for null_field in ("volume_id", "volume_offset"):
+        with CaseStore.create(case_dir / null_field) as store:
+            source_id = _seed_evidence_source(store)
+            bad = FileRow(
+                evidence_source_id=source_id,
+                volume_id=0,
+                volume_offset=0,
+                path="/x",
+                name="x",
+                meta_addr=1,
+                allocated=True,
+            )
+            # Force the NULL the model type forbids to prove the DB rejects it.
+            object.__setattr__(bad, null_field, None)
+            with pytest.raises(sqlite3.IntegrityError):
+                store.insert_file(bad)
+
+
 def test_volume_limitation_round_trips(case_dir: Path) -> None:
     """A D-20 VolumeLimitation finding round-trips equal."""
     with CaseStore.create(case_dir) as store:
