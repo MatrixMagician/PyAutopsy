@@ -44,9 +44,16 @@ def _explode(file_row: FileRow) -> list[TimelineEvent]:
     Returns:
         Zero to four :class:`TimelineEvent` rows — one per populated MACB time.
     """
-    actor: str | None = None
-    if file_row.uid is not None or file_row.gid is not None:
-        actor = f"uid={file_row.uid},gid={file_row.gid}"
+    # Build actor from ONLY the populated uid/gid components (WR-05): emitting a
+    # literal "uid=None"/"gid=None" into an evidence-presentation artifact is
+    # misleading (a reviewer cannot tell "unknown" from a literal value). A
+    # half-populated row yields e.g. "uid=0" alone; both-absent yields None.
+    parts: list[str] = []
+    if file_row.uid is not None:
+        parts.append(f"uid={file_row.uid}")
+    if file_row.gid is not None:
+        parts.append(f"gid={file_row.gid}")
+    actor: str | None = ",".join(parts) if parts else None
 
     source = (
         f"filesystem:{file_row.fs_type}" if file_row.fs_type else "filesystem"
