@@ -269,6 +269,88 @@
   {% endif %}
 </section>
 
+{# 6a. Recovered Files (RECOV-01/03) — data survival only, honest tier copy #}
+<section>
+  <h2>Recovered Files</h2>
+  <p>{{ body.recovered.intro }}</p>
+  {% if body.recovered.count == 0 %}
+  <p class="empty-state">No deleted files were recovered for the analyzed
+    volume(s).</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Meta addr</th><th>Path</th><th>Confidence</th>
+        <th>SHA-256</th><th>Recovered to</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in body.recovered.files %}
+      <tr>
+        <td class="mono">{{ row.meta_addr }}</td>
+        <td class="mono">{{ row.path }}</td>
+        {% if row.confidence_tier == "intact" %}
+        <td>&#x25CF; intact</td>
+        {% else %}
+        <td>&#x25D0; {{ row.confidence_tier }}</td>
+        {% endif %}
+        <td class="mono">{{ row.sha256 }}</td>
+        <td class="mono">{{ row.recovered_path }}</td>
+      </tr>
+      {% if row.tier_reason or row.tier_caveat %}
+      <tr>
+        <td></td>
+        <td colspan="4">{{ row.tier_reason }}{% if row.tier_caveat %}
+          — {{ row.tier_caveat }}{% endif %}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+{# 6b. Orphan Files (RECOV-02) — reported separately from recovered #}
+<section>
+  <h2>Orphan Files</h2>
+  <p>{{ body.orphans.intro }}</p>
+  {% if body.orphans.count == 0 %}
+  <p class="empty-state">No orphan files (deleted entries whose parent directory
+    is gone) were found.</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Meta addr</th><th>Path</th><th>Confidence</th>
+        <th>SHA-256</th><th>Recovered to</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in body.orphans.files %}
+      <tr>
+        <td class="mono">{{ row.meta_addr }}</td>
+        <td class="mono">{{ row.path }}</td>
+        {% if row.confidence_tier == "intact" %}
+        <td>&#x25CF; intact</td>
+        {% else %}
+        <td>&#x25D0; {{ row.confidence_tier }}</td>
+        {% endif %}
+        <td class="mono">{{ row.sha256 }}</td>
+        <td class="mono">{{ row.recovered_path }}</td>
+      </tr>
+      {% if row.tier_reason or row.tier_caveat %}
+      <tr>
+        <td></td>
+        <td colspan="4">{{ row.tier_reason }}{% if row.tier_caveat %}
+          — {{ row.tier_caveat }}{% endif %}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
 {# 7. Limitations (mandatory; D-20 volumes + standing MVP disclaimer) #}
 <section>
   <h2>Limitations</h2>

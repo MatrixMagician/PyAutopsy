@@ -24,6 +24,7 @@ import typer
 import pyautopsy
 from pyautopsy.core.analyze import AnalyzeError, run_analyze
 from pyautopsy.core.ingest import IngestError, run_ingest
+from pyautopsy.core.recover import RecoverError, run_recover
 from pyautopsy.core.walk import WalkError, run_walk
 from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.evidence.integrity import IntegrityError, MountedSourceError
@@ -203,6 +204,64 @@ def walk(
         f"  deleted entries:      {result.deleted_count}\n"
         f"  volumes walked:       {result.volumes_walked}\n"
         f"  limitations recorded: {result.limitations_recorded}"
+    )
+
+
+@app.command()
+def recover(
+    image: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the evidence image (raw/dd file or first E01 segment).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    case: Annotated[
+        Path,
+        typer.Option(
+            "--case",
+            help="Existing case directory (created by a prior `ingest`).",
+        ),
+    ],
+    max_hash_size: Annotated[
+        int | None,
+        typer.Option(
+            "--max-hash-size",
+            help="Skip hashing/writing recovered files larger than this many bytes.",
+        ),
+    ] = None,
+) -> None:
+    """Recover deleted/orphan file content into a confined recovered/ tree.
+
+    Reopens each deleted entry read-only through the native seam, writes its
+    surviving bytes under ``<case>/recovered/`` with a deterministic, confined
+    name (never the raw deleted name), classifies an honest confidence tier
+    (intact vs partial/overwritten — data survival only, never intent), and
+    catalogs recovered ``files`` rows (RECOV-01/02/03). Orphans (deleted entries
+    whose parent directory is gone) are reported separately. The evidence source
+    is never written (D-42). Exits non-zero on an operational/integrity failure
+    after the orchestrator records a FAIL audit event.
+    """
+    try:
+        result = run_recover(image, case, max_hash_size=max_hash_size)
+    except (
+        RecoverError,
+        ImageOpenError,
+        MountedSourceError,
+        IntegrityError,
+    ) as exc:
+        typer.echo(f"recover failed: {exc}", err=True)
+        raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
+
+    typer.echo(
+        "recover complete\n"
+        f"  case:                 {case}\n"
+        f"  files recovered:      {result.files_recovered}\n"
+        f"  intact:               {result.intact_count}\n"
+        f"  partial/overwritten:  {result.overwritten_count}\n"
+        f"  orphans (separate):   {result.orphan_count}"
     )
 
 

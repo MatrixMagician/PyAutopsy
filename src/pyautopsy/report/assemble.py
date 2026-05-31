@@ -77,6 +77,31 @@ def _is_directory(file_row: FileRow) -> bool:
     return file_row.meta_type == "dir"
 
 
+def _recovered_section(file_row: FileRow) -> dict[str, Any]:
+    """Project one recovered :class:`FileRow` to a plain, deterministic dict.
+
+    Surfaces only data-survival facts (RECOV-01/03, D-32): the original path,
+    confidence tier, recovered-bytes path, hashes, and the tier rationale +
+    per-fs caveat lifted verbatim from ``attributes`` — never any intent or
+    good/bad language. Carries no wall-clock (D-41).
+    """
+    attrs = file_row.attributes or {}
+    rationale = attrs.get("recovery_tier_rationale")
+    rationale_dict = rationale if isinstance(rationale, dict) else {}
+    return {
+        "meta_addr": file_row.meta_addr,
+        "path": file_row.path,
+        "confidence_tier": file_row.confidence_tier,
+        "recovered_path": file_row.recovered_path,
+        "md5": file_row.md5,
+        "sha1": file_row.sha1,
+        "sha256": file_row.sha256,
+        "file_type": file_row.file_type,
+        "tier_reason": rationale_dict.get("reason"),
+        "tier_caveat": rationale_dict.get("caveat"),
+    }
+
+
 def _surface_provenance(file_row: FileRow) -> dict[str, str]:
     """Lift the Phase 2 provenance flags out of ``FileRow.attributes``.
 
@@ -130,11 +155,20 @@ def assemble_report_body(
         ``timeline_total`` (M = ``len(timeline)``, W-2) and ``limitations``.
         Carries NO ``run_metadata`` / ``generated_utc`` (D-25).
     """
+    # Local import keeps the honesty-reviewed recovery copy as the single source
+    # of truth in core/recover.py without a module-level report->core dependency.
+    from pyautopsy.core.recover import RECOVERY_REPORT_COPY
+
     evidence = store.get_evidence_source(evidence_source_id)
     case = store.get_case(evidence.case_id)
     files = store.get_files(evidence_source_id)
     limitations = store.get_volume_limitations(evidence_source_id)
     events = store.get_timeline_events(evidence_source_id)
+    # Recovered files + orphans, in the store's D-26 total order (never re-sorted
+    # here — D-41). Orphans are a SEPARATE list (RECOV-02/D-25), never mixed into
+    # the recovered list.
+    recovered_files = store.get_recovered_files(evidence_source_id)
+    orphan_files = store.get_orphan_files(evidence_source_id)
 
     # -- Findings 4a: inventory counts (deterministic; no iteration-order deps) --
     file_count = len(files)
@@ -324,6 +358,25 @@ def assemble_report_body(
         # 6. Timeline (FULL, D-26 order) + total M (W-2)
         "timeline": timeline,
         "timeline_total": timeline_total,
+        # 6a. Recovered files (RECOV-01/03, D-32/D-41) — data survival only, no
+        # intent/good-bad copy; ordered by the store, no wall-clock.
+        "recovered": {
+            "intro": RECOVERY_REPORT_COPY["section_intro"],
+            "tier_copy": {
+                "intact": RECOVERY_REPORT_COPY["tier_intact"],
+                "partial/overwritten": RECOVERY_REPORT_COPY[
+                    "tier_partial_overwritten"
+                ],
+            },
+            "files": [_recovered_section(f) for f in recovered_files],
+            "count": len(recovered_files),
+        },
+        # 6b. Orphan files (RECOV-02/D-25) — reported SEPARATELY from recovered.
+        "orphans": {
+            "intro": RECOVERY_REPORT_COPY["orphan_intro"],
+            "files": [_recovered_section(f) for f in orphan_files],
+            "count": len(orphan_files),
+        },
         # 7. Limitations: D-20 volumes + the standing MVP disclaimer (mandatory)
         "limitations": {
             "volumes": limitation_rows,
