@@ -129,11 +129,11 @@
   <h2>Integrity Verification</h2>
   {% if body.integrity.passed %}
   <div class="card pass">
-    <span class="status-pass">PASS &#x2713;</span> {{ body.integrity.copy }}
+    <span class="status-pass">PASS &#x2713;</span> {{ body.integrity["copy"] }}
   </div>
   {% else %}
   <div class="card fail">
-    <span class="status-fail">FAIL &#x2717;</span> {{ body.integrity.copy }}
+    <span class="status-fail">FAIL &#x2717;</span> {{ body.integrity["copy"] }}
   </div>
   {% endif %}
 </section>

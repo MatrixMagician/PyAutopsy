@@ -196,6 +196,13 @@ def assemble_report_body(
 
     return {
         # 1. Header / identity band
+        # NOTE: ``acquired_utc`` / ``created_utc`` are wall-clock chain-of-custody
+        # timestamps (assigned at ingest time, store.py:207/iso_utc) and are run
+        # metadata, not analytical content. They are deliberately EXCLUDED from
+        # the body so two runs serialize byte-identically (CLI-02 / D-25): they
+        # are surfaced via the ``reports/run_metadata.json`` sidecar instead
+        # (W-1), exactly as test_reproducibility classifies them
+        # (_RUN_METADATA_COLUMNS). Including them here is a determinism leak.
         "header": {
             "title": f"PyAutopsy Forensic Report — Case {case.id}",
             "case_id": case.id,
@@ -204,7 +211,6 @@ def assemble_report_body(
             "evidence_id": evidence.evidence_id,
             "acquisition_source": evidence.path,
             "image_type": evidence.image_type,
-            "acquired_utc": evidence.acquired_utc,
         },
         # Convenience top-level COC handles (also consumed by the JSON readers).
         "case": {
@@ -212,7 +218,6 @@ def assemble_report_body(
             "name": case.name,
             "examiner": case.examiner,
             "notes": case.notes,
-            "created_utc": case.created_utc,
         },
         "evidence": {
             "id": evidence.id,
@@ -220,7 +225,11 @@ def assemble_report_body(
             "path": evidence.path,
             "image_type": evidence.image_type,
             "byte_size": evidence.byte_size,
-            "acquired_utc": evidence.acquired_utc,
+            # Evidence digests are analytical (a pure function of the source
+            # bytes), so they stay in the reproducible body — unlike the
+            # wall-clock acquired_utc above.
+            "md5": evidence.md5,
+            "sha256": evidence.sha256,
         },
         # 2. Integrity verification (prominent; PASS/FAIL booleans + literal copy)
         "integrity": {
