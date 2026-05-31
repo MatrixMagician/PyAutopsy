@@ -76,7 +76,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 0**
 
-- [ ] 02-00-PLAN.md — Wave 0 scaffold: python-magic dep + filetype.py binding guard, ext4/NTFS/FAT32/partitioned fixtures, executable D-14 seam allowlist test, failing META-01..05 + D-20 + read-only stubs (D-14, D-19)
+- [x] 02-00-PLAN.md — Wave 0 scaffold: python-magic dep + filetype.py binding guard, ext4/NTFS/FAT32/partitioned fixtures, executable D-14 seam allowlist test, failing META-01..05 + D-20 + read-only stubs (D-14, D-19)
 
 **Wave 1** *(blocked on Wave 0)*
 
@@ -146,7 +146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
-| 2. Filesystem Walk & Metadata | 0/4 | Planned | - |
+| 2. Filesystem Walk & Metadata | 1/4 | In Progress|  |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
