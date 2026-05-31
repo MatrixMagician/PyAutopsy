@@ -80,7 +80,7 @@ Plans:
 
 **Wave 1** *(blocked on Wave 0)*
 
-- [ ] 02-01-PLAN.md — Walk slice: files + volume_limitations schema, filesystem.py FS seam, walk orchestrator + `pyautopsy walk` CLI — inventory every entry incl. deleted, volume tagging, D-20 limitations, read-only (META-01, D-14/D-15/D-18/D-20)
+- [x] 02-01-PLAN.md — Walk slice: files + volume_limitations schema, filesystem.py FS seam, walk orchestrator + `pyautopsy walk` CLI — inventory every entry incl. deleted, volume tagging, D-20 limitations, read-only (META-01, D-14/D-15/D-18/D-20)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -146,7 +146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
-| 2. Filesystem Walk & Metadata | 1/4 | In Progress|  |
+| 2. Filesystem Walk & Metadata | 2/4 | In Progress|  |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
