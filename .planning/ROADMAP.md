@@ -110,13 +110,16 @@ Plans:
 Plans:
 **Wave 0**
 
-- [ ] 03-00-PLAN.md — Contract surface + RED scaffold: timeline_events table/model + store CRUD (D-23/D-24/D-26), jinja2 dep (D-22), failing tests for all 5 reqs
+- [x] 03-00-PLAN.md — Contract surface + RED scaffold: timeline_events table/model + store CRUD (D-23/D-24/D-26), jinja2 dep (D-22), failing tests for all 5 reqs
+
 **Wave 1** *(blocked on Wave 0)*
 
 - [ ] 03-01-PLAN.md — Timeline producer: MACB explosion FileRow → timeline_events (TIME-01, D-24)
+
 **Wave 2** *(blocked on Wave 1)*
 
 - [ ] 03-02-PLAN.md — Reporter: deterministic body + JSON (full timeline) + Jinja2 HTML (autoescape, bounded D-27, D-28 findings) (REPORT-03/04, D-22/D-25)
+
 **Wave 3** *(blocked on Wave 2)*
 
 - [ ] 03-03-PLAN.md — `analyze` orchestrator + CLI command + byte-identical reproducibility test (CLI-01, CLI-02, D-21)
@@ -161,6 +164,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
-| 3. Timeline & MVP Report | 0/4 | Not started | - |
+| 3. Timeline & MVP Report | 1/4 | In Progress|  |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |

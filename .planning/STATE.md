@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 3 UI-SPEC approved
-last_updated: "2026-05-31T12:32:18.916Z"
-last_activity: 2026-05-31 -- Phase 3 planning complete
+last_updated: "2026-05-31T12:42:48.086Z"
+last_activity: 2026-05-31 -- Phase 3 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 13
-  completed_plans: 9
+  completed_plans: 10
   percent: 40
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-30)
 
 **Core value:** Turn a raw disk image (and associated logs) into a defensible, presentation-ready forensic report — with deleted-file recovery and metadata analysis — through a single automated Python workflow.
-**Current focus:** Phase 2 — Filesystem Walk & Metadata
+**Current focus:** Phase 3 — Timeline & MVP Report
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
+Phase: 3 (Timeline & MVP Report) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-05-31 -- Phase 3 planning complete
+Last activity: 2026-05-31 -- Phase 3 execution started
 
 Progress: [████████░░] 80%
 
@@ -57,6 +57,7 @@ Progress: [████████░░] 80%
 | Phase 01 P01 | 8 | 2 tasks | 8 files |
 | Phase 01 P02 | 9 | 2 tasks | 8 files |
 | Phase 01 P03 | 4 | 2 tasks | 2 files |
+| Phase 03-timeline-mvp-report P00 | 20min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Recent decisions affecting current work:
 - [Phase 1]: 01-03: safe_extract confines on the ORIGINAL stored member name BEFORE the stdlib data filter — data_filter silently relativizes /etc/x to etc/x, masking an absolute-path tampering signal, so we REJECT instead
 - [Phase 1]: 01-03: filter='data' (public tarfile.data_filter) applied per tar member as defense-in-depth; realpath confinement + hand-written bomb caps are the primary controls (filter='data' does NOT stop bombs)
 - [Phase 1]: 01-03: bomb caps via a streamed running uncompressed-byte counter that aborts a total-size bomb mid-write; ExtractionLimits defaults 1GiB/256MiB/100x/10000/depth3, all overridable
+- [Phase ?]: Phase 3 timeline events: actor encoded as uid=<n>,gid=<n>; action/outcome reserved for Phase 5 log producers (D-23)
+- [Phase ?]: D-26 total order defined only in CaseStore.get_timeline_events ORDER BY; builder/reporter never re-sort or write raw SQL
 
 ### Pending Todos
 
@@ -107,6 +110,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T11:59:39.480Z
+Last session: 2026-05-31T12:42:29.110Z
 Stopped at: Phase 3 UI-SPEC approved
 Resume file: .planning/phases/03-timeline-mvp-report/03-UI-SPEC.md
