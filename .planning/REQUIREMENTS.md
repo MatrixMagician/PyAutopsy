@@ -42,7 +42,7 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### Timeline
 
-- [ ] **TIME-01**: Tool builds a chronological timeline from filesystem MACB metadata (bodyfile/mactime style)
+- [x] **TIME-01**: Tool builds a chronological timeline from filesystem MACB metadata (bodyfile/mactime style)
 - [ ] **TIME-02**: Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
 
 ### Search & Matching
@@ -128,7 +128,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LOG-02 | Phase 5 | Pending |
 | LOG-03 | Phase 5 | Pending |
 | LOG-04 | Phase 5 | Pending |
-| TIME-01 | Phase 3 | Pending |
+| TIME-01 | Phase 3 | Complete |
 | TIME-02 | Phase 5 | Pending |
 | SEARCH-01 | Phase 5 | Pending |
 | SEARCH-02 | Phase 5 | Pending |
