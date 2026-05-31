@@ -241,6 +241,137 @@ def test_super_timeline_merge(log_search_image: Path, case_dir: Path) -> None:
     assert all(s.endswith("+00:00") for s in stamps)
 
 
+def test_run_logs_orchestrated_emits_syslog_and_shell_history(
+    log_search_image: Path, case_dir: Path, log_search_groundtruth: dict[str, Any]
+) -> None:
+    """CR-01 regression: the ORCHESTRATED run_logs surfaces syslog + shell-history.
+
+    This drives the real :func:`pyautopsy.core.logs.run_logs` end-to-end over the
+    committed fixture — it does NOT import the syslog/shell_history modules by hand
+    (that hand-import is exactly what masked CR-01: parser registration is an
+    import-time side effect, so the Wave-2 tests passed while the orchestrated CLI
+    path saw only the auth parser). It asserts that:
+
+    * the registry the orchestrator iterates contains all three in-scope parsers,
+    * syslog/messages events actually appear in the merged super-timeline,
+    * per-user shell-history events appear (and carry the /home/<user> actor),
+    * the fixture's two tied-second syslog lines BOTH land (the CR-01 tied-pair the
+      05-04-SUMMARY noted run_logs did not yet merge), and
+    * the merged timeline stays one UTC total order.
+
+    If CR-01 is reverted (only auth registered/discovered), the syslog and
+    shell-history assertions FAIL — this is the test whose absence let CR-01 ship.
+    """
+    from pyautopsy.case import CaseStore  # noqa: PLC0415
+    from pyautopsy.core.ingest import run_ingest  # noqa: PLC0415
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415
+    from pyautopsy.core.walk import run_walk  # noqa: PLC0415
+    from pyautopsy.log.registry import iter_parsers  # noqa: PLC0415
+
+    # The orchestrated registry must carry the full declared-order set, NOT just
+    # auth — without importing the parser modules here (that is the masking bug).
+    names = {p.name for p in iter_parsers()}
+    assert {"auth", "syslog", "shell-history"} <= names, (
+        f"orchestrated registry missing parsers: {names}"
+    )
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir, timezone="UTC")
+    result = run_logs(
+        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
+    )
+
+    with CaseStore.open(case_dir) as store:
+        events = store.get_timeline_events(ingested.evidence_source_id)
+
+    by_source: dict[str, list[Any]] = {}
+    for e in events:
+        by_source.setdefault(e.source, []).append(e)
+
+    # CR-01 core: syslog AND shell-history events are present on the REAL path.
+    assert by_source.get("syslog"), "orchestrated run_logs produced no syslog events"
+    assert by_source.get(
+        "shell-history"
+    ), "orchestrated run_logs produced no shell-history events"
+    assert by_source.get("auth"), "orchestrated run_logs produced no auth events"
+
+    # The fixture's tied-second syslog pair must BOTH be merged (05-04 gap closed).
+    tied = [
+        e
+        for e in by_source["syslog"]
+        if log_search_groundtruth["tied_second"] in (e.attributes.get("raw") or "")
+    ]
+    assert len(tied) == log_search_groundtruth["tied_event_count"], (
+        f"expected {log_search_groundtruth['tied_event_count']} tied syslog lines, "
+        f"got {len(tied)}"
+    )
+    assert {e.ts_utc for e in tied} == {tied[0].ts_utc}, "tied lines must share ts_utc"
+
+    # Shell history carries the per-user actor derived from /home/<user>.
+    assert any(
+        e.actor == "user=alice" for e in by_source["shell-history"]
+    ), "shell-history events missing the per-user actor"
+
+    # log_sets counts auth + syslog rotated sets PLUS the two shell-history files.
+    assert result.log_sets >= 4, (
+        f"expected >=4 log sets discovered, got {result.log_sets}"
+    )
+
+    # One UTC total order across the merged super-timeline (TIME-02 / D-47).
+    stamps = [e.ts_utc for e in events]
+    assert stamps == sorted(stamps), "merged super-timeline is not UTC-ordered"
+    assert all(s.endswith("+00:00") for s in stamps)
+
+
+def test_infer_years_same_month_year_boundary() -> None:
+    """CR-03: a same-month year boundary is recognised (month-only compare missed it).
+
+    Two records one calendar year apart but in the SAME month (Dec 31 of the prior
+    year → Jan/Dec wrap) must be assigned different years. The old month-only test
+    (``cur_mon > next_mon``) returned ``Dec > Dec == False`` and wrongly collapsed
+    the boundary; comparing full ``(month, day)`` across a Dec→Jan wrap fixes it.
+    """
+    from pyautopsy.log import timeresolve  # noqa: PLC0415
+
+    # oldest→newest: Dec 20 (prev year), Jan 05 (seed year). A real year wrap.
+    comps = [(12, 20, 0, 0, 0), (1, 5, 0, 0, 0)]
+    years = [y for y, _ in timeresolve.infer_years(comps, seed_year=2026)]
+    assert years == [2025, 2026], f"same-(year-)boundary mis-inferred: {years}"
+
+    # Same month, ascending day, SAME year (Jan 02 → Jan 20) must NOT roll a year.
+    comps_same = [(1, 2, 0, 0, 0), (1, 20, 0, 0, 0)]
+    years_same = [y for y, _ in timeresolve.infer_years(comps_same, seed_year=2026)]
+    assert years_same == [2026, 2026], f"same-month same-year mis-rolled: {years_same}"
+
+
+def test_infer_years_single_out_of_order_no_cascade() -> None:
+    """CR-03: one out-of-order line must NOT shift every earlier record's year.
+
+    A lone anomalous late-dated line in an otherwise monotonic Jan run previously
+    re-anchored the walk and cascaded a wholesale year shift onto all earlier
+    records. With the running-minimum anchor + true-wrap guard, the anomaly is
+    absorbed: the surrounding January records all stay in the seed year.
+    """
+    from pyautopsy.log import timeresolve  # noqa: PLC0415
+
+    # oldest→newest, all January seed-year, with ONE stray Du (Jul) line in the
+    # middle — a single out-of-order entry, not a genuine year boundary.
+    comps = [
+        (1, 2, 0, 0, 0),
+        (1, 5, 0, 0, 0),
+        (7, 9, 0, 0, 0),  # the lone anomaly
+        (1, 8, 0, 0, 0),
+        (1, 10, 0, 0, 0),
+    ]
+    years = [y for y, _ in timeresolve.infer_years(comps, seed_year=2026)]
+    # The earlier January records must NOT be shifted back a year by the anomaly:
+    # at most the single stray line may differ, never the whole prefix.
+    assert years[0] == 2026 and years[1] == 2026, (
+        f"single out-of-order line cascaded a year shift onto earlier records: {years}"
+    )
+    assert years[-1] == 2026 and years[-2] == 2026
+
+
 # ---------------------------------------------------------------------------
 # Local helpers + fixture text mirrors (kept inline so the file is self-contained
 # and the stubs reference real, eventual symbols rather than magic strings).
