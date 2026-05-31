@@ -156,6 +156,10 @@ Plans:
 
 - [x] 04-03-PLAN.md — Integration: opt-in recover/filter wiring in `analyze` + --recover/--nsrl/--hash-set flags + reproducibility/read-only/seam-allowlist tests + _MVP_LIMITATIONS honesty update (D-40/D-41/D-42)
 
+**Gap closure** *(post-UAT fix)*
+
+- [ ] 04-04-PLAN.md — Fix root-level deleted-file misclassification: walk_fs tags root entries with fs.info.root_inum so root deletions classify as Recovered (not falsely Orphan); reserve None for genuine no-dir-link orphans; root-deletion regression fixture + test (FAT + ext4) (RECOV-02 gap)
+
 ### Phase 5: Log Parsing, Super-Timeline & Search
 
 **Goal**: An examiner sees filesystem and log evidence merged into one UTC-ordered super-timeline and can search across allocated, unallocated, and file content — completing the full "image + logs -> defensible report" pipeline.
