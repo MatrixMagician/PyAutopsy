@@ -41,6 +41,15 @@ def _confined_reports_dir(case_dir: Path) -> Path:
     the realpath ``_is_within`` guard so a symlinked/relative ``case_dir`` cannot
     redirect report output outside the case (threat T-03-07). Creates the dir.
 
+    Scope of the guarantee (WR-04): confinement covers the resolved *directory*,
+    not a re-resolved final file path. That is sufficient because every report
+    file written under it uses a FIXED constant name (``report.json`` /
+    ``report.html`` / ``run_metadata.json``) — never an evidence-derived name —
+    so traversal via the filename is impossible. The realpath check runs against
+    the resolved dir BEFORE ``mkdir``, so this does not close a TOCTOU window on
+    the directory itself; it defends against a statically symlinked/relative
+    ``case_dir``, which is the threat model (T-03-07).
+
     Raises:
         ValueError: If the resolved reports dir escapes the case directory.
     """

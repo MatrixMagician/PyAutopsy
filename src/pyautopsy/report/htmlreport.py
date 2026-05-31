@@ -18,7 +18,9 @@ offline ``report.html`` via Jinja2:
   ``report.html`` is itself whole-file byte-deterministic across runs (D-25).
 
 The output path is built only from ``case_dir`` + the fixed name ``report.html``
-and is confined to ``case_dir/reports/`` (threat T-03-07).
+under the realpath-confined ``case_dir/reports/`` directory (the confinement
+covers that resolved directory, not a re-resolved final file path — the fixed
+constant filename makes filename traversal impossible; WR-04, threat T-03-07).
 """
 
 from __future__ import annotations
