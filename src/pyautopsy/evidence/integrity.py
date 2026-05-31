@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -103,17 +104,13 @@ class ReadableSource(Protocol):
         """Return the total size in bytes."""
 
 
-class ContentReader(Protocol):
-    """A read-only ``(offset, size) -> bytes`` callable :func:`hash_file` consumes.
-
-    Implemented by the FS seam as a thin closure over the TSK ``File.read_random``
-    so ``hash_file`` never sees a native object and this module stays native-free
-    (D-14) and testable with a plain ``lambda offset, size: b"..."`` (D-06).
-    """
-
-    def __call__(self, offset: int, size: int) -> bytes:  # pragma: no cover - Protocol
-        """Read ``size`` content bytes starting at ``offset`` (read-only)."""
-        ...
+# A read-only ``(offset, size) -> bytes`` callable :func:`hash_file` consumes.
+# Implemented by the FS seam as a thin closure over the TSK ``File.read_random``
+# so ``hash_file`` never sees a native object and this module stays native-free
+# (D-14) and testable with a plain ``lambda offset, size: b"..."`` (D-06). Kept a
+# plain ``Callable`` alias (not a Protocol) so a positional-only closure from the
+# seam matches structurally.
+ContentReader = Callable[[int, int], bytes]
 
 
 @dataclass(frozen=True, slots=True)

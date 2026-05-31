@@ -23,7 +23,7 @@ actionable :class:`ImportError` (mirroring the ``pyewf`` install-hint guard in
 
 from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Callable
 
 import magic
 
@@ -45,16 +45,12 @@ HEAD_BYTES = 4096
 EMPTY_TYPE = "inode/x-empty"
 
 
-class HeadReader(Protocol):
-    """A read-only callable yielding the leading bytes of a file.
-
-    Implemented by the FS seam as a thin closure over the TSK
-    ``File.read_random`` call so ``magic`` never sees a native object and this
-    module stays testable with a plain ``lambda offset, size: b"..."``.
-    """
-
-    def __call__(self, offset: int, size: int) -> bytes:  # pragma: no cover - Protocol
-        ...
+# A read-only callable yielding the leading bytes of a file. Implemented by the
+# FS seam as a thin closure over the TSK ``File.read_random`` call so ``magic``
+# never sees a native object and this module stays testable with a plain
+# ``lambda offset, size: b"..."``. Kept a plain ``Callable`` alias (not a
+# Protocol) so a positional-only seam closure matches structurally.
+HeadReader = Callable[[int, int], bytes]
 
 
 def file_type(read_head: HeadReader, size: int) -> str | None:
