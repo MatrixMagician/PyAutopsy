@@ -54,13 +54,13 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 - [x] **REPORT-01**: Tool records case / chain-of-custody metadata (case ID, examiner, evidence ID, acquisition source, tool + versions, timestamps)
 - [x] **REPORT-02**: Tool writes an append-only audit log of its actions (inputs, hashes, parameters, tool versions, start/end times, errors)
-- [ ] **REPORT-03**: Tool generates a human-readable report (HTML/Markdown) with case/COC, methodology + tool versions, findings, evidence hashes, timeline, and exhibits
-- [ ] **REPORT-04**: Tool emits a structured machine-readable JSON report alongside the human-readable report
+- [x] **REPORT-03**: Tool generates a human-readable report (HTML/Markdown) with case/COC, methodology + tool versions, findings, evidence hashes, timeline, and exhibits
+- [x] **REPORT-04**: Tool emits a structured machine-readable JSON report alongside the human-readable report
 
 ### CLI & Pipeline
 
 - [ ] **CLI-01**: User can run the full analysis as a single command (`pyautopsy analyze <image> --case ...`) producing the complete report
-- [ ] **CLI-02**: Tool produces deterministic, reproducible output (stable ordering, pinned tool versions recorded in the report)
+- [x] **CLI-02**: Tool produces deterministic, reproducible output (stable ordering, pinned tool versions recorded in the report)
 
 ## v2 Requirements
 
@@ -134,10 +134,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SEARCH-02 | Phase 5 | Pending |
 | REPORT-01 | Phase 1 | Complete |
 | REPORT-02 | Phase 1 | Complete |
-| REPORT-03 | Phase 3 | Pending |
-| REPORT-04 | Phase 3 | Pending |
+| REPORT-03 | Phase 3 | Complete |
+| REPORT-04 | Phase 3 | Complete |
 | CLI-01 | Phase 3 | Pending |
-| CLI-02 | Phase 3 | Pending |
+| CLI-02 | Phase 3 | Complete |
 
 **Coverage:**
 

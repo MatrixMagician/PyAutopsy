@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 3 UI-SPEC approved
-last_updated: "2026-05-31T12:46:51.342Z"
+last_updated: "2026-05-31T12:54:53.588Z"
 last_activity: 2026-05-31 -- Phase 3 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 40
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 ## Current Position
 
 Phase: 3 (Timeline & MVP Report) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-05-31 -- Phase 3 execution started
 
@@ -59,6 +59,7 @@ Progress: [████████░░] 80%
 | Phase 01 P03 | 4 | 2 tasks | 2 files |
 | Phase 03-timeline-mvp-report P00 | 20min | 2 tasks | 10 files |
 | Phase 03 P01 | ~10min | 1 tasks | 2 files |
+| Phase 03-timeline-mvp-report P02 | 5min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -88,6 +89,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 3 timeline events: actor encoded as uid=<n>,gid=<n>; action/outcome reserved for Phase 5 log producers (D-23)
 - [Phase ?]: D-26 total order defined only in CaseStore.get_timeline_events ORDER BY; builder/reporter never re-sort or write raw SQL
 - [Phase ?]: Timeline builder uses canonical _explode transform + exported explode alias; ts_utc copied verbatim (no re-derivation), writes via store transaction, no native imports/raw SQL (TIME-01)
+- [Phase ?]: Reporter: one deterministic assemble_report_body dict (no wall-clock) feeds both JSON (full timeline) and HTML (in-process body[:cap] slice + honest Showing N of M); run metadata segregated to build_run_metadata (D-25/W-1/W-2)
+- [Phase ?]: report.html + report.json carry zero run metadata (whole-file byte-deterministic); jinja2 autoescape neutralizes evidence strings; outputs confined to case_dir/reports/ via _is_within
 
 ### Pending Todos
 
@@ -112,6 +115,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T12:46:36.241Z
+Last session: 2026-05-31T12:54:32.488Z
 Stopped at: Phase 3 UI-SPEC approved
 Resume file: .planning/phases/03-timeline-mvp-report/03-UI-SPEC.md

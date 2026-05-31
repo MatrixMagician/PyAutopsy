@@ -118,7 +118,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 03-02-PLAN.md — Reporter: deterministic body + JSON (full timeline) + Jinja2 HTML (autoescape, bounded D-27, D-28 findings) (REPORT-03/04, D-22/D-25)
+- [x] 03-02-PLAN.md — Reporter: deterministic body + JSON (full timeline) + Jinja2 HTML (autoescape, bounded D-27, D-28 findings) (REPORT-03/04, D-22/D-25)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -164,6 +164,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
-| 3. Timeline & MVP Report | 2/4 | In Progress|  |
+| 3. Timeline & MVP Report | 3/4 | In Progress|  |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
