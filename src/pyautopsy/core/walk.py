@@ -127,27 +127,35 @@ def _macb_to_utc_iso(
         walk_tz: The IANA zone used to rebase FAT local times.
 
     Returns:
-        An ISO-8601 string ending in ``+00:00``, or ``None`` for a ``0`` epoch.
+        An ISO-8601 string ending in ``+00:00``, or ``None`` for a ``0`` epoch
+        or an epoch outside the representable ``datetime`` range (IN-04).
     """
     if not secs:
         return None
     micro = (nano // 1000) if nano else 0
-    if is_fat:
-        # FAT stores LOCAL wall-clock time with no embedded zone. TSK reports
-        # those wall-clock fields encoded AS-IF they were a UTC epoch — so the
-        # integer's UTC rendering reproduces the stored wall-clock components.
-        # We recover those naive wall-clock components, then RE-INTERPRET them as
-        # being in ``walk_tz`` and convert that instant to true UTC (D-16, threat
-        # T-2-02-FAT). ``datetime.fromtimestamp(secs, tz=walk_tz)`` would NOT do
-        # this — it treats ``secs`` as a UTC epoch and merely renders it in
-        # ``walk_tz``, leaving the absolute instant unchanged (CR-01).
-        naive_wall = datetime.fromtimestamp(secs, tz=timezone.utc).replace(
-            tzinfo=None
-        )
-        dt = naive_wall.replace(tzinfo=walk_tz)
-    else:
-        # ext4/NTFS epochs are already UTC.
-        dt = from_epoch_utc(secs)
+    # (IN-04) A crafted/garbage epoch (very large, or platform-dependent
+    # negative) makes ``datetime.fromtimestamp`` raise OverflowError/OSError/
+    # ValueError. Map that to ``None`` ("not representable") rather than letting
+    # it abort the whole walk — the timestamp is untrustworthy anyway.
+    try:
+        if is_fat:
+            # FAT stores LOCAL wall-clock time with no embedded zone. TSK reports
+            # those wall-clock fields encoded AS-IF they were a UTC epoch — so the
+            # integer's UTC rendering reproduces the stored wall-clock components.
+            # We recover those naive wall-clock components, then RE-INTERPRET them
+            # as being in ``walk_tz`` and convert that instant to true UTC (D-16,
+            # threat T-2-02-FAT). ``datetime.fromtimestamp(secs, tz=walk_tz)``
+            # would NOT do this — it treats ``secs`` as a UTC epoch and merely
+            # renders it in ``walk_tz``, leaving the instant unchanged (CR-01).
+            naive_wall = datetime.fromtimestamp(secs, tz=timezone.utc).replace(
+                tzinfo=None
+            )
+            dt = naive_wall.replace(tzinfo=walk_tz)
+        else:
+            # ext4/NTFS epochs are already UTC.
+            dt = from_epoch_utc(secs)
+    except (OverflowError, OSError, ValueError):
+        return None
     if micro:
         dt = dt.replace(microsecond=micro)
     return iso_utc(dt)

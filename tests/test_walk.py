@@ -235,6 +235,12 @@ def test_macb_to_utc_iso_fat_reinterprets_local() -> None:
     # A zero epoch is "not recorded" -> None, never a fake 1970 (Pitfall 3).
     assert _macb_to_utc_iso(0, 0, is_fat=True, walk_tz=ny) is None
 
+    # IN-04: an out-of-range epoch maps to None rather than raising and aborting
+    # the walk (OverflowError/OSError/ValueError are absorbed).
+    huge = 10**30
+    assert _macb_to_utc_iso(huge, 0, is_fat=False, walk_tz=ny) is None
+    assert _macb_to_utc_iso(huge, 0, is_fat=True, walk_tz=ny) is None
+
 
 def test_fs_type_label_ext2_ext3_ext4() -> None:
     """CR-02 unit: ext2/ext3/ext4 enum values all label ``ext`` (not unknown).

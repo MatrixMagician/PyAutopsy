@@ -1,8 +1,10 @@
 """Integrity layer — single-pass hashing, acquisition compare, re-verify, guards.
 
-This module is pure Python (no native imports): it streams **MD5 + SHA-256 in a
-single pass** over any object exposing ``read(offset, size)`` / ``get_size()``
-(D-07), so it works identically over a raw ``pytsk3.Img_Info`` and the
+This module is pure Python (no native imports): it streams digests in a
+**single pass** over any object exposing ``read(offset, size)`` / ``get_size()``
+(D-07) — :func:`hash_image` computes MD5 + SHA-256, and the per-file
+:func:`hash_file` additionally computes SHA-1 (NSRL / legacy hash-set interop).
+It works identically over a raw ``pytsk3.Img_Info`` and the
 :class:`~pyautopsy.evidence.image.EWFImgInfo` adapter and is unit-testable with
 an in-memory fake (D-06).
 
@@ -354,9 +356,12 @@ def _unescape_mount_field(field: str) -> str:
     The kernel escapes only space/tab/newline/backslash as three-digit octal
     sequences (e.g. ``\\040`` → space); all other bytes — including multi-byte
     UTF-8 — are emitted verbatim. We therefore unescape ONLY those octal
-    sequences on the raw bytes, then decode the result as UTF-8. This is the
-    fix for the ``unicode_escape`` mis-decode that corrupted every non-ASCII
-    mountpoint and let a mounted evidence path bypass the P1 guard.
+    sequences on the raw bytes, then decode the result as UTF-8 with
+    ``errors="surrogateescape"`` so any non-UTF-8 byte in a mountpoint is
+    preserved (round-trippable) rather than lost — the path is only ever
+    compared, never written. This is the fix for the ``unicode_escape``
+    mis-decode that corrupted every non-ASCII mountpoint and let a mounted
+    evidence path bypass the P1 guard.
 
     Args:
         field: The raw mountpoint field as split from a ``/proc/mounts`` line.
