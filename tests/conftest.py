@@ -88,6 +88,50 @@ def tiny_partitioned_image() -> Path:
 
 
 @pytest.fixture
+def ext4_orphan_image() -> Path:
+    """Path to the committed ext4 image with an ORPHAN file (RECOV-02).
+
+    A regular file whose parent directory was deleted, so its inode (recorded as
+    ``make_fixtures.EXT4_ORPHAN_META_ADDR``) survives with no path back to root.
+    """
+    image = FIXTURES_DIR / make_fixtures.EXT4_ORPHAN_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def ext4_overwritten_image() -> Path:
+    """Path to the committed ext4 image with an OVERWRITTEN deleted entry (RECOV-03)."""
+    image = FIXTURES_DIR / make_fixtures.EXT4_OVERWRITTEN_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def ntfs_resident_deleted_image() -> Path:
+    """Path to the committed NTFS image with a RESIDENT deleted file (RECOV-01)."""
+    image = FIXTURES_DIR / make_fixtures.NTFS_RESIDENT_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def nsrl_minimal_db() -> Path:
+    """Path to the committed NSRL ``FILE``-table fixture DB (FILTER-01, Pitfall 4)."""
+    db = FIXTURES_DIR / make_fixtures.NSRL_MINIMAL_NAME
+    assert db.is_file(), f"committed fixture missing: {db}"
+    return db
+
+
+@pytest.fixture
+def nsrl_metadata_db() -> Path:
+    """Path to the committed NSRL ``METADATA``-table variant fixture DB (FILTER-01)."""
+    db = FIXTURES_DIR / make_fixtures.NSRL_METADATA_NAME
+    assert db.is_file(), f"committed fixture missing: {db}"
+    return db
+
+
+@pytest.fixture
 def zip_slip_tar(tmp_path: Path) -> Path:
     """Build a Zip-Slip tar (``../../escape.txt``) into tmp_path."""
     return make_fixtures.build_zip_slip_tar(tmp_path / "zip_slip.tar")

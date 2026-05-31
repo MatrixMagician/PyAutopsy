@@ -1,0 +1,151 @@
+"""RED Wave-0 scaffold for known-file filtering (FILTER-01).
+
+These stubs pin the exact pytest node IDs from 04-VALIDATION.md for the NSRL +
+custom-hash-set matching slice. They reference the (not-yet-existing) ``filter``
+package — ``filter.nsrl`` (read-only NSRL membership) and ``filter.hashsets``
+(custom allow/block parsing + match) — so each test FAILS until Wave 2 builds
+them. The not-yet-existing modules are imported INSIDE each test body so the file
+COLLECTS cleanly (an in-body ``ImportError`` is a test failure = RED, not a
+collection error).
+
+The committed NSRL fixtures (``nsrl_minimal.db`` FILE table, ``nsrl_metadata.db``
+METADATA table) store hashes UPPERCASE while the project's own ``files`` rows are
+lowercase — the #1 silent-zero-match trap (Pitfall 4) these tests lock in.
+
+No ``import pytsk3`` here: filtering is stdlib ``sqlite3`` + text parsing, NOT a
+native seam (D-14 unaffected).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from tests.fixtures import make_fixtures
+
+
+def test_nsrl_membership(nsrl_minimal_db: Path) -> None:
+    """FILTER-01: a known md5 (UPPERCASE in DB, lowercase in row) -> neutral known.
+
+    The fixture stores ``NSRL_KNOWN_MD5`` UPPERCASE; the probe value is the
+    project's lowercase hex. The matcher must normalize before comparing (D-37
+    md5->sha1->sha256 order, Pitfall 4) and surface a NEUTRAL ``known`` annotation
+    carrying ``source: nsrl`` and never a good/bad verdict (D-38). A non-member
+    yields no match.
+    """
+    from pyautopsy.filter import nsrl  # noqa: PLC0415 (RED stub)
+
+    conn, table = nsrl.open_nsrl(str(nsrl_minimal_db))
+    try:
+        hit = nsrl.nsrl_match(
+            conn,
+            table,
+            md5=make_fixtures.NSRL_KNOWN_MD5,  # lowercase, as our rows store it
+            sha1=make_fixtures.NSRL_KNOWN_SHA1,
+            sha256=make_fixtures.NSRL_KNOWN_SHA256,
+        )
+        assert hit is not None, "known NSRL member did not match (uppercase trap?)"
+        assert hit.get("source") == "nsrl"
+        # Neutral annotation only — never a good/bad/malicious verdict (D-38).
+        assert not (set(hit) & {"good", "bad", "malicious", "verdict"})
+
+        miss = nsrl.nsrl_match(
+            conn,
+            table,
+            md5=make_fixtures.NSRL_NONMEMBER_MD5,
+            sha1=make_fixtures.NSRL_NONMEMBER_SHA1,
+            sha256=make_fixtures.NSRL_NONMEMBER_SHA256,
+        )
+        assert miss is None, "a non-member hash must not match"
+    finally:
+        conn.close()
+
+
+def test_custom_hash_sets() -> None:
+    """FILTER-01: allow + block lists parse and match md5->sha1->sha256.
+
+    The parser tolerates comment (``#``), blank, and mixed-case lines and infers
+    the algorithm by hex length (32/40/64). A match carries ``source``, ``list``
+    and ``sense`` (allow|block) — and never a good/bad key (D-38).
+    """
+    from pyautopsy.filter import hashsets  # noqa: PLC0415 (RED stub)
+
+    # Mixed case + comments + blanks; the known md5 is given UPPERCASE on purpose.
+    list_text = (
+        "# a custom allow list\n"
+        "\n"
+        f"{make_fixtures.NSRL_KNOWN_MD5.upper()}   known_good.bin\n"
+        f"   {make_fixtures.NSRL_KNOWN2_SHA256}\n"
+        "# trailing comment\n"
+    )
+    parsed = hashsets.parse_hash_set(list_text)
+
+    # md5 match (case-normalized).
+    hit = hashsets.custom_match(
+        parsed,
+        "allow",
+        "my-allow-list",
+        md5=make_fixtures.NSRL_KNOWN_MD5,
+        sha1=None,
+        sha256=None,
+    )
+    assert hit is not None
+    assert hit.get("source") == "custom"
+    assert hit.get("list") == "my-allow-list"
+    assert hit.get("sense") == "allow"
+    assert not (set(hit) & {"good", "bad", "malicious", "verdict"})
+
+    # sha256 fall-through match (md5/sha1 absent in the list for this entry).
+    hit2 = hashsets.custom_match(
+        parsed,
+        "block",
+        "my-block-list",
+        md5=make_fixtures.NSRL_NONMEMBER_MD5,
+        sha1=None,
+        sha256=make_fixtures.NSRL_KNOWN2_SHA256,
+    )
+    assert hit2 is not None
+    assert hit2.get("sense") == "block"
+    assert hit2.get("matched_on") == "sha256"
+
+    # A hash in neither list does not match.
+    miss = hashsets.custom_match(
+        parsed,
+        "allow",
+        "my-allow-list",
+        md5=make_fixtures.NSRL_NONMEMBER_MD5,
+        sha1=make_fixtures.NSRL_NONMEMBER_SHA1,
+        sha256=make_fixtures.NSRL_NONMEMBER_SHA256,
+    )
+    assert miss is None
+
+
+def test_variant_table_discovery(nsrl_minimal_db: Path, nsrl_metadata_db: Path) -> None:
+    """FILTER-01: both ``FILE`` and ``METADATA`` variants are discovered + queried.
+
+    ``open_nsrl`` discovers the hash table from ``sqlite_master`` (minimal=FILE,
+    modern=METADATA) and chooses it from a fixed allowlist — never interpolating
+    user input. Both fixture variants must resolve to their table and match the
+    same known member.
+    """
+    from pyautopsy.filter import nsrl  # noqa: PLC0415 (RED stub)
+
+    minimal_conn, minimal_table = nsrl.open_nsrl(str(nsrl_minimal_db))
+    metadata_conn, metadata_table = nsrl.open_nsrl(str(nsrl_metadata_db))
+    try:
+        assert minimal_table == "FILE"
+        assert metadata_table == "METADATA"
+        for conn, table in (
+            (minimal_conn, minimal_table),
+            (metadata_conn, metadata_table),
+        ):
+            hit = nsrl.nsrl_match(
+                conn,
+                table,
+                md5=make_fixtures.NSRL_KNOWN_MD5,
+                sha1=make_fixtures.NSRL_KNOWN_SHA1,
+                sha256=make_fixtures.NSRL_KNOWN_SHA256,
+            )
+            assert hit is not None, f"known member not found in {table} variant"
+    finally:
+        minimal_conn.close()
+        metadata_conn.close()
