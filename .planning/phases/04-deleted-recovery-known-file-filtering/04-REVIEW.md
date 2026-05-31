@@ -20,7 +20,8 @@ findings:
   warning: 5
   info: 3
   total: 10
-status: issues_found
+status: resolved
+resolved_note: "All 2 blockers (BL-01 inventory double-count, BL-02 uncaught sqlite3.Error) and all 5 warnings (WR-01..05) fixed in commits ada0f8a..ae3ae01; 185 tests pass, ruff+mypy clean. WR-05 structural pin intentionally not applied (would violate D-14 native-seam contract) — regression test used instead. Info items IN-01..03 left as-is."
 ---
 
 # Phase 4: Code Review Report
