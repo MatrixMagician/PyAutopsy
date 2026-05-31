@@ -4,6 +4,9 @@ Provides:
 
 * ``case_dir`` — a fresh, empty case directory under ``tmp_path`` for each test.
 * ``tiny_raw_image`` — the path to the committed, deterministic tiny raw image.
+* ``tiny_ext4_image`` / ``tiny_ntfs_image`` / ``tiny_fat32_image`` /
+  ``tiny_partitioned_image`` — committed tiny filesystem images for the Phase 2
+  walk (built once with the host mkfs tools; CI needs no ``mkfs``).
 * per-archive fixtures (``zip_slip_tar``, ``symlink_escape_tar``,
   ``device_file_tar``, ``ratio_bomb_zip``, ``count_bomb_tar``) that build each
   malicious archive into ``tmp_path`` on demand for the safe-extract plan
@@ -43,6 +46,43 @@ def tiny_raw_image() -> Path:
     dependency (01-RESEARCH.md A3).
     """
     image = FIXTURES_DIR / make_fixtures.TINY_RAW_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def tiny_ext4_image() -> Path:
+    """Path to the committed tiny ext4 image (one known file + a deleted entry).
+
+    Built once with ``mkfs.ext4``/``debugfs`` and committed so CI needs no
+    ``mkfs`` (02-RESEARCH); carries the known uid/gid/mode and the UNALLOC
+    ``deleted.txt`` entry the META-01/03 walk tests assert against.
+    """
+    image = FIXTURES_DIR / make_fixtures.TINY_EXT4_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def tiny_ntfs_image() -> Path:
+    """Path to the committed tiny NTFS image (UTC times, system files present)."""
+    image = FIXTURES_DIR / make_fixtures.TINY_NTFS_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def tiny_fat32_image() -> Path:
+    """Path to the committed tiny FAT32 image (FAT local-time test, D-16)."""
+    image = FIXTURES_DIR / make_fixtures.TINY_FAT32_NAME
+    assert image.is_file(), f"committed fixture missing: {image}"
+    return image
+
+
+@pytest.fixture
+def tiny_partitioned_image() -> Path:
+    """Path to the committed partitioned image (FAT + ext4 — volume-offset, D-15)."""
+    image = FIXTURES_DIR / make_fixtures.TINY_PARTITIONED_NAME
     assert image.is_file(), f"committed fixture missing: {image}"
     return image
 
