@@ -1,7 +1,8 @@
 ---
 phase: 3
 slug: timeline-mvp-report
-status: draft
+status: approved
+reviewed_at: 2026-05-31
 shadcn_initialized: false
 preset: none
 created: 2026-05-31
