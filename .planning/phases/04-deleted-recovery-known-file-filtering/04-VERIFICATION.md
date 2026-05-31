@@ -1,135 +1,134 @@
 ---
 phase: 04-deleted-recovery-known-file-filtering
-verified: 2026-05-31T00:00:00Z
-status: human_needed
+verified: 2026-05-31T19:30:00Z
+status: passed
 score: 16/16 must-haves verified
 overrides_applied: 0
 mode: mvp
-human_verification:
-  - test: "Open the rendered reports/report.html (or report.json) from an `analyze --recover --nsrl <db> --hash-set-allow <list>` run and confirm the Recovered Files, Orphan Files, and Known-File Filtering sections render as three distinct, readable sections."
-    expected: "Three separate sections appear; orphans are listed apart from normal recovered files; the Known-File section frames matches as neutral 'known' (noise reduction), not good/bad."
-    why_human: "Visual report layout/legibility and section separation in the rendered HTML cannot be confirmed by grep/test; mirrors the Phase-3 HUMAN-UAT precedent."
-  - test: "In the rendered Recovered Files section, confirm each confidence tier uses a glyph/text indicator (not color-only) and the per-fs caveats (ext4 pointer-zeroing, NTFS resident, FAT first-char-lost) are visible and human-readable."
-    expected: "Tier is distinguishable without relying on color; caveats read as honest data-survival statements with no 'the user deleted this' / good-bad language."
-    why_human: "Accessibility (color-only vs glyph) and copy legibility are visual-UX judgements; the no-overclaiming substring scan is automated but reader comprehension is not."
+re_verification:
+  previous_status: human_needed
+  previous_score: 16/16
+  gaps_closed:
+    - "RECOV-02: root-level deleted files were mislabelled is_orphan=True (empty Recovered Files; root deletions dumped under Orphan Files with a false 'parent directory is itself gone' provenance claim). Fixed by 04-04 (walk_fs tags root entries with int(fs.info.root_inum); None reserved for the pass-2 range-scan orphan) + WR-01 hardening (root seeded into allocated_inodes scan)."
+  gaps_remaining: []
+  regressions: []
 ---
 
-# Phase 4: Deleted Recovery & Known-File Filtering — Verification Report
+# Phase 4: Deleted Recovery & Known-File Filtering — Verification Report (Re-verification)
 
 **Phase Goal:** An examiner can recover deleted and orphaned files with honest, filesystem-aware confidence labeling, and cut noise by filtering files against NSRL and custom hash sets — the headline forensic capability layered onto the proven spine. (MVP mode.)
 **Verified:** 2026-05-31
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Status:** passed
+**Re-verification:** Yes — after RECOV-02 gap closure (plan 04-04, commits a84844f/a15c464/fac4447/a96cfd5). Prior cycle was `human_needed`; the human UAT then found ONE major gap (RECOV-02 root-level misclassification) now fixed and regression-pinned.
+
+## Re-verification Focus
+
+The prior verification scored 16/16 and routed to `human_needed` for two visual-UX checks (report section rendering, tier-glyph/caveat legibility). Human UAT (04-HUMAN-UAT.md) executed both:
+- **Test 2 (tiers/caveats/print honesty):** PASS — confirmed text+glyph tiers (`● intact`), honest data-survival caveat copy, no intent language, clean A4 PDF.
+- **Test 1 (three sections + classification):** ISSUE (major) — sections rendered and known-file framing was neutral, BUT root-level deletions were mislabelled `is_orphan=True`, emptying Recovered Files and overclaiming orphan provenance (against D-32/RECOV-03).
+
+Plan 04-04 closed Test 1's gap. This re-verification:
+1. Full-3-level verification of the RECOV-02 fix (the failed item).
+2. Regression check that the genuine-orphan path (RECOV-01/RECOV-03) did NOT break.
+3. Regression check that RECOV-01/RECOV-03/FILTER-01 and all locked invariants remain satisfied.
 
 ## Goal Achievement (MVP User Flow Coverage)
 
-User story (from 04-00-PLAN): *As a forensic examiner, I want to recover deleted and orphaned files with honest, filesystem-aware confidence labeling and filter the inventory against NSRL and custom hash sets, so that I can produce a defensible report that surfaces recoverable evidence and cuts known-file noise without overclaiming.*
-
 | Step | Expected | Evidence in codebase | Status |
 |------|----------|----------------------|--------|
-| Examiner runs `pyautopsy recover <image> --case <dir>` (or `analyze --recover`) | Deleted files recovered, hashed, cataloged as `files` rows | `core/recover.py::run_recover` enumerates deleted inodes via seam, writes bytes to confined `recovered/`, hashes via `integrity.hash_file`, inserts `FileRow(allocated=False, recovered=True)` via `store.insert_recovered_files`; CLI `recover` command present (cli/main.py:230). `test_recovers_deleted_ext4_content` + `test_recovers_ntfs_resident` pass. | ✓ VERIFIED |
-| Orphans surfaced separately | Orphan entries in a distinct list/section, never mixed | `run_recover` splits `recovered_list` vs `orphan_list` by `is_orphan`; `RecoverResult.recovered`/`.orphans` distinct; store `get_orphan_files`/`get_recovered_files`; assemble.py renders separate sections. `test_orphan_reported_separately` passes. | ✓ VERIFIED |
-| Honest confidence labeling | Per-file tier (intact vs partial/overwritten) with per-fs caveats, no intent/good-bad | `classify_tier` (recover.py:144) derives tier from allocated-block intersection + resident + zeroed-pointer paths; `RECOVERY_REPORT_COPY` survival-only. `test_confidence_tiers` + `test_no_overclaiming_copy` pass. | ✓ VERIFIED |
-| Filter against NSRL + custom hash sets | Read-only NSRL probe + allow/block lists, surfaced as neutral "known" | `filter/nsrl.py` (mode=ro + query_only, UPPERCASE, parameterized, allowlisted table), `filter/hashsets.py` (allow/block parse + match), `core/knownfiles.py::run_filter` persists `KnownMatch` via store. `test_nsrl_membership`/`test_custom_hash_sets`/`test_variant_table_discovery` pass. | ✓ VERIFIED |
-| Defensible, deterministic report | Two identical runs → byte-identical report.json + recovered/ names; default analyze unchanged from Phase 3 | `test_recover_filter_reproducible` + `test_default_analyze_unchanged` pass; deterministic vol/off/meta_addr naming; store total-order readers. | ✓ VERIFIED |
-| Read-only soundness preserved | Source never written; Phase-1 re-verify runs | `run_recover` re-asserts `assert_source_not_mounted` twice; `test_recover_does_not_write_source` passes. | ✓ VERIFIED |
+| Examiner runs `recover`/`analyze --recover` | Deleted files recovered, hashed, cataloged as `files` rows | `core/recover.py::run_recover` enumerates deleted inodes via seam, writes confined bytes, hashes, inserts `FileRow(recovered=True)`. `test_recovers_deleted_ext4_content` + `test_recovers_ntfs_resident` pass. | ✓ VERIFIED |
+| Orphans surfaced separately, NOT mixed into Recovered | Root-level deletions (parent survives) → Recovered; only genuine no-parent entries → Orphan | `recover.py:519-522` routes on `is_orphan = di.is_orphan or entry.is_orphan`; seam `iter_deleted_inodes` now classifies a root deletion non-orphan (root inode allocated, tagged as parent_addr). `test_root_deletion_reported_as_recovered_not_orphan`, `test_orphan_reported_separately` pass. **Gap from UAT Test 1 closed.** | ✓ VERIFIED |
+| Honest confidence labeling | Per-file tier + per-fs caveats, no intent/good-bad | `classify_tier` (recover.py:144); `RECOVERY_REPORT_COPY` survival-only. `test_confidence_tiers` + `test_no_overclaiming_copy` pass; UAT Test 2 PASS. | ✓ VERIFIED |
+| Filter vs NSRL + custom hash sets | Read-only NSRL probe + allow/block, neutral "known" | `filter/nsrl.py` (mode=ro + query_only, UPPERCASE, parameterized, table allowlist), `filter/hashsets.py`, `core/knownfiles.py::run_filter`. 3 knownfiles tests pass. | ✓ VERIFIED |
+| Defensible, deterministic report | Identical runs → byte-identical output; default analyze unchanged | `test_recover_filter_reproducible` + `test_default_analyze_unchanged` pass; `parent_addr` now a stable `int` (determinism preserved). | ✓ VERIFIED |
+| Read-only soundness preserved | Source never written | double `assert_source_not_mounted`; the 04-04 fix mutates only an in-memory `parent_addr`. `test_recover_does_not_write_source` passes. | ✓ VERIFIED |
 
-### Observable Truths (ROADMAP Success Criteria + locked invariants)
+### Observable Truths
 
 | #  | Truth | Status | Evidence |
 |----|-------|--------|----------|
-| 1  | SC-1: recovers deleted files (metadata/data intact) as `files` rows w/ offset/inode + per-file hashes (RECOV-01) | ✓ VERIFIED | recover.py builds FileRow with volume_offset/meta_addr/md5/sha1/sha256, recovered=True; test_recovers_deleted_ext4_content + test_recovers_ntfs_resident pass |
-| 2  | SC-2: orphan files reported separately (RECOV-02) | ✓ VERIFIED | distinct orphan_list/get_orphan_files; test_orphan_reported_separately pass |
-| 3  | SC-3: confidence tier (intact vs partial/overwritten) + per-fs caveats + overwrite detection, never asserting user intent (RECOV-03) | ✓ VERIFIED | classify_tier block-overlap + now_allocated + resident + zeroed-pointer paths; honesty copy; test_confidence_tiers + test_no_overclaiming_copy pass |
-| 4  | SC-4: filters vs NSRL RDS + custom hash sets (allow/block), neutral "known" not good/bad (FILTER-01) | ✓ VERIFIED | filter/nsrl.py + filter/hashsets.py neutral match dicts; knownfiles.py persists; 3 knownfiles tests pass |
-| 5  | D-14: only evidence/filesystem.py (+image.py) import pytsk3 | ✓ VERIFIED | grep src: only image.py + filesystem.py; test_seam_allowlist.py 2 passed |
-| 6  | D-08: CaseStore sole writer (no write SQL outside store.py) | ✓ VERIFIED | no INSERT/UPDATE/DELETE/CREATE outside store.py; lockstep triples for recovered + known matches |
-| 7  | D-41/CLI-02: two identical recover/analyze runs byte-identical report.json + recovered/ names | ✓ VERIFIED | test_recover_filter_reproducible pass; deterministic vol/off/meta_addr naming |
-| 8  | D-40: default analyze (no recover/filter inputs) byte-identical to Phase-3 baseline | ✓ VERIFIED | analyze.py opt-in gating (if recover / if filter_requested); test_default_analyze_unchanged pass |
-| 9  | D-42: source never written; Phase-1 re-verify runs | ✓ VERIFIED | double assert_source_not_mounted in run_recover; test_recover_does_not_write_source pass |
-| 10 | D-32/D-38: no intent / good-bad language in tiers or known annotations | ✓ VERIFIED | RECOVERY_REPORT_COPY + match dicts neutral; test_no_overclaiming_copy pass; no good/bad/malicious key in filter/ |
-| 11 | _MVP_LIMITATIONS disclaimer honest + conditional | ✓ VERIFIED | _mvp_limitations(recovery_ran, filtering_ran): verbatim default when neither ran, rebuilt honestly when ran (CARVE-01 deferral surfaced) |
-| 12 | NSRL UPPERCASE-hash normalization + parameterized SQL + read-only open | ✓ VERIFIED | nsrl.py: `.upper()` fold, `?` placeholder, mode=ro + PRAGMA query_only=ON, fixed {FILE,METADATA} allowlist |
-| 13 | BL-01 fix: inventory aggregation excludes recovered rows | ✓ VERIFIED | assemble.py:269 `inventory_files = [f for f in files if f.recovered is not True]`; file_count/deleted_count/per_volume/file_type_distribution all over inventory_files |
-| 14 | BL-02 fix: sqlite3.Error mapped in CLI recover + analyze handlers | ✓ VERIFIED | cli/main.py imports sqlite3; sqlite3.Error in both except tuples (lines 320, 481) |
-| 15 | Recovered bytes written to confined recovered/ tree (no path traversal) | ✓ VERIFIED | _recovered_target routes through _sanitize_name + _confined_target, deterministic vol/off/meta_addr key, never raw deleted name |
-| 16 | All 4 requirement IDs accounted for in REQUIREMENTS.md | ✓ VERIFIED | RECOV-01/02/03 + FILTER-01 all `[x]` Complete + traceability table rows; CARVE-01 explicitly deferred |
+| 1  | SC-1 / RECOV-01: recovers deleted files as `files` rows w/ offset/inode + per-file hashes | ✓ VERIFIED | recover.py builds FileRow with volume_offset/meta_addr/md5/sha1/sha256, recovered=True; test_recovers_deleted_ext4_content + test_recovers_ntfs_resident pass |
+| 2  | **SC-2 / RECOV-02: orphan files reported separately — root-level deletions are NOT mislabelled orphan** | ✓ VERIFIED (gap closed) | walk_fs:728-730 tags root entries with `int(fs.info.root_inum)`; iter_deleted_inodes:479-481 orphan check; recover.py:519-522 split. `test_root_level_deletion_is_not_orphan`, `test_root_deletion_reported_as_recovered_not_orphan`, `test_removed_parent_deletion_is_still_orphan` all pass. Independent revert simulation: 4 tests FAIL on revert (gate is real). |
+| 3  | SC-3 / RECOV-03: confidence tier + per-fs caveats, never asserting user intent | ✓ VERIFIED | classify_tier + honesty copy; test_confidence_tiers + test_no_overclaiming_copy pass; UAT Test 2 PASS. The false "parent directory is itself gone" overclaim for root deletions (a RECOV-03/D-32 violation) is gone. |
+| 4  | SC-4 / FILTER-01: NSRL RDS + custom hash sets, neutral "known" | ✓ VERIFIED | filter/nsrl.py + filter/hashsets.py + knownfiles.py; 3 tests pass; UAT Test 1 confirmed neutral framing |
+| 5  | D-14: only evidence/filesystem.py (+image.py) import pytsk3 | ✓ VERIFIED | test_seam_allowlist.py passes; the 04-04 fix added no new pytsk3 importer |
+| 6  | D-08: CaseStore sole writer | ✓ VERIFIED | no write SQL outside store.py; recover writes via store.insert_recovered_files in transaction() |
+| 7  | D-41/CLI-02: identical runs byte-identical | ✓ VERIFIED | test_reproducibility passes; parent_addr now deterministic int |
+| 8  | D-40: default analyze byte-identical to Phase-3 baseline | ✓ VERIFIED | test_default_analyze_unchanged pass |
+| 9  | D-42: source never written | ✓ VERIFIED | double assert_source_not_mounted; 04-04 fix is in-memory only; test_recover_does_not_write_source pass |
+| 10 | D-32/D-38: no intent / good-bad language; no false orphan provenance | ✓ VERIFIED | neutral copy; root deletions no longer carry false "parent gone" claim |
+| 11 | _MVP_LIMITATIONS disclaimer honest + conditional | ✓ VERIFIED | _mvp_limitations(recovery_ran, filtering_ran) |
+| 12 | NSRL UPPERCASE + parameterized SQL + read-only open | ✓ VERIFIED | nsrl.py .upper() + ? placeholder + mode=ro + PRAGMA query_only |
+| 13 | BL-01 fix: inventory aggregation excludes recovered rows | ✓ VERIFIED | assemble.py inventory_files filter |
+| 14 | BL-02 fix: sqlite3.Error mapped in CLI recover + analyze | ✓ VERIFIED | sqlite3.Error in both except tuples |
+| 15 | Recovered bytes written to confined recovered/ tree (no traversal) | ✓ VERIFIED | _recovered_target via _sanitize_name + _confined_target |
+| 16 | All 4 requirement IDs accounted for in REQUIREMENTS.md | ✓ VERIFIED | RECOV-01/02/03 + FILTER-01 all `[x]` Complete + traceability rows; CARVE-01 explicitly deferred to v2 |
 
 **Score:** 16/16 truths verified
 
-### Required Artifacts
+### RECOV-02 Fix — Three-Level Verification (the previously failed item)
 
-| Artifact | Expected | Status | Details |
-|----------|----------|--------|---------|
-| `src/pyautopsy/evidence/filesystem.py` | recover_meta, allocated_data_blocks, iter_deleted_inodes, RecoveredEntry — seam-confined | ✓ VERIFIED | all present; pytsk3 only here |
-| `src/pyautopsy/core/recover.py` | run_recover orchestrator (no pytsk3) | ✓ VERIFIED | substantive 571 lines; classify_tier + confined write + hash + catalog |
-| `src/pyautopsy/filter/nsrl.py` | read-only NSRL probe, UPPERCASE, parameterized | ✓ VERIFIED | open_nsrl + nsrl_match; mode=ro + query_only |
-| `src/pyautopsy/filter/hashsets.py` | allow/block parser + neutral match | ✓ VERIFIED | parse_hash_set + custom_match present |
-| `src/pyautopsy/core/knownfiles.py` | run_filter orchestrator writing neutral known annotations | ✓ VERIFIED | run_filter present; FilterError; two-arm audit |
-| `src/pyautopsy/case/store.py` | insert_recovered_files/get_recovered_files/get_orphan_files/insert_known_matches/get_known_matches | ✓ VERIFIED | all present w/ lockstep triples + deterministic ORDER BY |
-| `src/pyautopsy/case/schema.sql` | additive recovery columns + known_file_matches table | ✓ VERIFIED | (confirmed via store triples + models) |
-| `src/pyautopsy/core/analyze.py` | opt-in recover + filter wiring | ✓ VERIFIED | gated on `if recover:` / `if filter_requested:` |
-| `src/pyautopsy/cli/main.py` | recover command + analyze flags | ✓ VERIFIED | recover/analyze commands; CliRunner confirms --nsrl/--hash-set-allow/-block/--recover |
-| `src/pyautopsy/report/assemble.py` | Recovered/Orphan/Known sections + conditional disclaimer | ✓ VERIFIED | _recovered_section, _mvp_limitations, inventory_files BL-01 fix |
-| tests (recover/knownfiles/reproducibility/readonly) | 8 RED→GREEN + reproducibility + read-only | ✓ VERIFIED | all named tests pass |
+| Level | Check | Result |
+|-------|-------|--------|
+| 1 Exists | `root_inum` substitution in walk_fs | ✓ filesystem.py:728-730 (`if _depth == 0 and parent_addr is None: resolved_parent_addr = int(fs.info.root_inum)`) |
+| 1 Exists | WR-01 hardening (root seeded into scan) | ✓ filesystem.py:424,429 (`root = int(fs.info.root_inum)`; `for inum in {root, *range(first, last + 1)}`) — confirmed in COMMITTED tree (git show HEAD) |
+| 2 Substantive | Guard fires only at genuine root call | ✓ recursive call passes child `meta_addr` (non-None), so None stays reserved for pass-2 orphan (filesystem.py:529, parent_addr=None unchanged) |
+| 3 Wired | Seam → orchestrator split | ✓ recover.py:443 `is_orphan = di.is_orphan or entry.is_orphan`; :519-522 routes orphan_list vs recovered_list |
+| 4 Data-flow / behavior | Both directions pinned, fails on revert | ✓ revert simulation broke 4 tests (test_root_level_deletion_is_not_orphan, test_root_entries_carry_root_inode_parent_addr, test_parent_addr_threaded_through_recursion, test_root_deletion_reported_as_recovered_not_orphan); restored cleanly |
 
 ### Key Link Verification
 
 | From | To | Via | Status |
 |------|----|----|--------|
-| core/recover.py | evidence/filesystem.py | `from pyautopsy.evidence import filesystem as fs_seam` (recover_meta/allocated_data_blocks) | ✓ WIRED |
-| core/recover.py | util/safe_extract.py | _confined_target + _sanitize_name | ✓ WIRED |
-| core/recover.py | case/store.py | store.insert_recovered_files in transaction() | ✓ WIRED |
-| core/knownfiles.py | filter/nsrl.py | open_nsrl + nsrl_match | ✓ WIRED |
-| core/knownfiles.py | case/store.py | insert_known_matches in transaction() | ✓ WIRED |
-| core/analyze.py | core/recover.py | run_recover when recover flag set | ✓ WIRED |
-| core/analyze.py | core/knownfiles.py | run_filter when --nsrl/--hash-set supplied | ✓ WIRED |
+| walk_fs (root call) | iter_deleted_inodes | parent_addr = root_inum (allocated) → parent_known_orphan False for root deletions | ✓ WIRED |
+| iter_deleted_inodes | core/recover.py split | DeletedInode.is_orphan drives orphan_list vs recovered_list | ✓ WIRED |
+| core/recover.py | case/store.py | insert_recovered_files in transaction() | ✓ WIRED |
+| core/knownfiles.py | filter/nsrl.py + hashsets.py | open_nsrl + nsrl_match + custom_match | ✓ WIRED |
 | report/assemble.py | case/store.py | get_recovered_files/get_orphan_files/get_known_matches | ✓ WIRED |
 
-### Behavioral Spot-Checks
+### Behavioral Spot-Checks / Probe Execution
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| Full suite | `python -m pytest -q` | 185 passed | ✓ PASS |
-| Lint | `ruff check src/` | No issues found | ✓ PASS |
-| Types | `python -m mypy src/` | No issues found | ✓ PASS |
-| D-14 seam | `test_seam_allowlist.py` | 2 passed | ✓ PASS |
-| Named invariant tests | recover + knownfiles + reproducibility::* + readonly::test_recover_does_not_write_source | 11 passed | ✓ PASS |
-| CLI flags | Typer CliRunner `recover --help` / `analyze --help` | recover: --nsrl,--hash-set-allow,--hash-set-block,--case; analyze: + --recover | ✓ PASS |
+| RECOV-02 regression + seam + reproducibility | `pytest test_filesystem test_recover test_seam_allowlist test_reproducibility` | 26 passed | ✓ PASS |
+| Full suite | `pytest -q` | 188 passed | ✓ PASS |
+| Revert-detection (independent) | restore buggy `parent_addr=None` at root | 4 RECOV-02 tests FAIL (gate catches revert) | ✓ PASS |
+| Committed FAT root-deletion fixture | `git ls-files tests/fixtures/tiny_fat32.img` | tracked; FAT_DELETED_META_ADDR=4 | ✓ PASS |
+| Debt markers in changed source | grep TODO/FIXME/XXX/TBD/HACK in filesystem.py + recover.py | none | ✓ PASS |
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|------------|-------------|--------|----------|
-| RECOV-01 | 04-00/01/03 | Recover deleted files (metadata/data intact) | ✓ SATISFIED | run_recover + tests; SC-1 |
-| RECOV-02 | 04-00/01/03 | Orphan files reported separately | ✓ SATISFIED | distinct orphan list/section; SC-2 |
-| RECOV-03 | 04-00/01/03 | Confidence tier intact vs partial/overwritten | ✓ SATISFIED | classify_tier + honesty; SC-3 |
-| FILTER-01 | 04-00/02/03 | NSRL + custom hash-set filtering, neutral known | ✓ SATISFIED | filter/* + knownfiles; SC-4 |
+| RECOV-01 | 04-00/01/03 | Recover deleted files (metadata/data intact) | ✓ SATISFIED | run_recover + tests; not regressed by 04-04 |
+| RECOV-02 | 04-00/01/03/**04** | Orphan files reported separately | ✓ SATISFIED | gap closed — root deletions Recovered, genuine orphans Orphan; both directions pinned |
+| RECOV-03 | 04-00/01/03 | Confidence tier intact vs partial/overwritten, no overclaim | ✓ SATISFIED | classify_tier + honesty; false root-orphan overclaim removed |
+| FILTER-01 | 04-00/02/03 | NSRL + custom hash-set filtering, neutral known | ✓ SATISFIED | filter/* + knownfiles |
 
-No orphaned requirements: REQUIREMENTS.md maps exactly RECOV-01/02/03 + FILTER-01 to Phase 4, all claimed by plans. CARVE-01 (file carving) is explicitly out-of-scope/deferred and honestly surfaced in the _MVP_LIMITATIONS copy.
+All four Phase-4 requirement IDs (RECOV-01/02/03, FILTER-01) are claimed by plans and verified. No orphaned requirements: REQUIREMENTS.md maps exactly these four to Phase 4. CARVE-01 / RECOV-04 are explicitly v2/out-of-scope.
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| core/recover.py | 275 | raw read-only `SELECT id FROM evidence_sources` via store.connection.execute | ℹ️ Info | Read-only SELECT, not a write — D-08 "sole writer" (writes) holds. Pre-existing pattern shared with walk.py:260 (Phase 2) and knownfiles.py:82; not a Phase-4 regression and not flagged by the deep review. No data-integrity or determinism impact. |
+| core/recover.py | ~275 | read-only `SELECT id FROM evidence_sources` via store.connection | ℹ️ Info | Read-only SELECT (not a write); D-08 sole-WRITER invariant holds. Pre-existing, not a 04-04 regression. |
 
-No debt markers (TODO/FIXME/XXX/TBD/HACK) in any Phase-4 source file.
+No debt markers (TODO/FIXME/XXX/TBD/HACK) in any Phase-4 source file. No new dependency added by 04-04.
 
-### Human Verification Required
+### Advisory Warnings (from 04-04-REVIEW.md — non-blocking, NOT gaps)
 
-1. **Report section rendering** — Open the rendered report from an `analyze --recover --nsrl <db> --hash-set-allow <list>` run and confirm three distinct sections (Recovered Files, Orphan Files, Known-File Filtering) render legibly with orphans separated and neutral "known" framing.
-2. **Tier glyph + caveat legibility** — Confirm confidence tiers use a glyph/text indicator (not color-only) and the per-fs caveats read as honest data-survival statements.
-
-These mirror the Phase-3 HUMAN-UAT precedent: the automated honesty substring scan (`test_no_overclaiming_copy`) and section-presence assertions pass, but visual layout, color-vs-glyph accessibility, and reader comprehension of the rendered HTML are not programmatically confirmable.
+- **WR-01** (root-inode tagging breaks if `first_inum > root_inum`): ADDRESSED in committed code — `allocated_inodes` now seeds `{root, *range(first, last+1)}` (filesystem.py:424,429, commit fac4447), decoupling the orphan check from the scan floor.
+- **WR-02** (hard-coded fixture inode addresses are unverified ground-truth): test-quality robustness only; does not affect production behavior or the RECOV-02 guarantee. Tracked as advisory.
+- **IN-02** (stale non-editable site-packages install can mask the fix in an ad-hoc REPL): environment hygiene, not a code defect. The test harness is insulated via `pyproject.toml pythonpath=["src"]`; verified by running tests under that config (188 passed).
 
 ### Gaps Summary
 
-No gaps. All four ROADMAP success criteria are genuinely implemented (not stubbed): recovery, orphan separation, honest confidence tiers with overwrite detection, and NSRL/custom filtering are all backed by substantive orchestrators wired through the native seam, persisted via the sole-writer CaseStore, and proven by passing named tests. All locked cross-cutting invariants (D-08, D-14, D-32, D-38, D-40, D-41, D-42, NSRL uppercase/parameterized/read-only) hold in the shipped code. The two resolved-review blockers are confirmed fixed: BL-01 inventory aggregation now excludes recovered rows (assemble.py:269), and BL-02 maps sqlite3.Error in both CLI handlers. Full suite 185 passed; ruff + mypy clean.
+No gaps. The single RECOV-02 gap raised by human UAT (Test 1) is genuinely closed in the codebase: `walk_fs` tags root-level entries with the allocated root inode and reserves `None` exclusively for the pass-2 no-dir-link orphan; `allocated_inodes` seeds the root inode so classification never depends on the `first_inum` floor (WR-01). The fix is wired through `iter_deleted_inodes` → `core/recover.py`'s orphan/recovered split, and is regression-pinned in BOTH directions for BOTH FAT and ext4 — independently confirmed to fail on a simulated revert. The genuine-orphan path (RECOV-01/RECOV-03) is preserved (`test_orphan_reported_separately`, `test_removed_parent_deletion_is_still_orphan` pass). RECOV-01, RECOV-03, FILTER-01 and all locked invariants (D-08/D-14/D-32/D-38/D-40/D-41/D-42, NSRL uppercase/parameterized/read-only) remain satisfied. Full suite 188 passed.
 
-Status is `human_needed` (not `passed`) solely because two end-to-end behaviors — visual report-section rendering and tier-glyph/caveat legibility — are confirmable only by a human, consistent with how Phase 3 handled human UAT.
+**Status is `passed`:** the human-testing dimension was already exercised by the prior UAT cycle (Test 2 PASS; Test 1's sole gap now fixed and regression-pinned), the deep review returned 0 blockers, and codebase evidence confirms the fix. No remaining items require human testing.
 
 ---
 
 _Verified: 2026-05-31_
 _Verifier: Claude (gsd-verifier)_
+_Mode: re-verification after gap closure (RECOV-02)_
