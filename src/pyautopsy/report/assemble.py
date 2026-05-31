@@ -254,14 +254,28 @@ def assemble_report_body(
     # here — D-41); aggregated below into deterministic per-source/per-list counts.
     known_matches = store.get_known_matches(evidence_source_id)
 
+    # -- Inventory aggregation set (BL-01): exclude recovered rows ---------------
+    # The walk records every deleted inode as a ``files`` row (allocated=False,
+    # recovered=NULL). When ``--recover`` runs, run_recover inserts a SECOND row
+    # for the same inode (allocated=False, recovered=1). Since ``_is_deleted``
+    # only tests ``allocated is False``, both rows would be counted — inflating
+    # file_count/deleted_count/per_volume/file_type_distribution by exactly the
+    # number of recovered inodes. Recovered/orphan inodes are surfaced in their
+    # OWN report sections (``recovered``/``orphans`` below), so they must NOT also
+    # be aggregated into the inventory. Filter them out once here; the recovered/
+    # orphan/known sections read their own store queries and are unaffected. This
+    # stays deterministic (filter preserves the store's D-26 order) and keeps the
+    # default analyze path (no recovered rows) byte-identical to Phase 3 (D-40).
+    inventory_files = [f for f in files if f.recovered is not True]
+
     # -- Findings 4a: inventory counts (deterministic; no iteration-order deps) --
-    file_count = len(files)
-    directory_count = sum(1 for f in files if _is_directory(f))
-    deleted_count = sum(1 for f in files if _is_deleted(f))
+    file_count = len(inventory_files)
+    directory_count = sum(1 for f in inventory_files if _is_directory(f))
+    deleted_count = sum(1 for f in inventory_files if _is_deleted(f))
 
     # -- Findings 4b: per-volume breakdown, sorted by (volume_id, volume_offset) --
     volume_acc: dict[tuple[int, int], dict[str, Any]] = {}
-    for f in files:
+    for f in inventory_files:
         key = (f.volume_id, f.volume_offset)
         bucket = volume_acc.setdefault(
             key,
@@ -287,7 +301,7 @@ def assemble_report_body(
 
     # -- Findings 4c: file-type distribution, ranked by (-count, type) -----------
     type_counter: Counter[str] = Counter(
-        f.file_type for f in files if f.file_type is not None
+        f.file_type for f in inventory_files if f.file_type is not None
     )
     file_type_distribution = [
         {"file_type": file_type, "count": count}
