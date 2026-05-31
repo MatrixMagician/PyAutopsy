@@ -28,6 +28,10 @@ dependencies = [
     "python-magic==0.4.27",
     "typer>=0.12,<1",
     "rich>=13",
+    # HTML report templating (REPORT-03/D-22). Pure-Python (MarkupSafe is its
+    # only dep, also pure-Python) — no native seam, D-14 unaffected. The
+    # deferred WeasyPrint PDF path reuses the same template.
+    "jinja2>=3.1,<4",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +69,13 @@ select = ["E", "F", "I", "UP", "B"]
 # explicit `timezone.utc` form: it is the documented forensic-soundness idiom
 # (D-10 / PITFALLS P4) and the convention every later module follows.
 ignore = ["UP017"]
+
+[tool.ruff.lint.isort]
+# Group all in-repo imports together so RED test scaffolds that import
+# not-yet-created first-party packages (e.g. ``pyautopsy.timeline`` /
+# ``pyautopsy.report``) sort with the rest of the ``pyautopsy``/``tests``
+# imports instead of being misclassified as third-party.
+known-first-party = ["pyautopsy", "tests"]
 
 [tool.mypy]
 python_version = "3.11"
