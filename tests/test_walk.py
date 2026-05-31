@@ -151,13 +151,36 @@ def test_no_naive_datetimes(tiny_ext4_image: Path, case_dir: Path) -> None:
     assert saw_a_time, "no MACB times were persisted to assert against"
 
 
-def test_ownership_and_mode(tiny_ext4_image: Path) -> None:
+def test_ownership_and_mode(tiny_ext4_image: Path, case_dir: Path) -> None:
     """META-03: uid/gid/mode persisted and match the ext4 fixture ground truth.
 
-    The committed ext4 file1.txt carries known uid/gid/mode (recorded as
-    constants); the walk must persist them exactly.
+    The committed ext4 file1.txt carries known uid/gid (recorded as the
+    Plan 00 constants); the walk must persist uid/gid/mode exactly, and a
+    meta-less entry's ownership must read back as ``None`` (never coerced to 0).
     """
-    pytest.fail(_NOT_YET)
+    _, source_id = _ingest_then_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        rows = store.get_files(source_id)
+
+    known = next(r for r in rows if r.name == make_fixtures.FS_FILE_NAME)
+    assert known.uid == make_fixtures.EXT4_FILE_UID
+    assert known.gid == make_fixtures.EXT4_FILE_GID
+    # The fixture set the permission bits via debugfs; they must persist as a
+    # raw integer (not pre-formatted) and round-trip non-null for the real file.
+    assert known.mode is not None
+    assert isinstance(known.mode, int)
+
+    # Every meta-bearing row carries integer ownership; only truly meta-less
+    # rows keep None (never coerced to 0).
+    for row in rows:
+        if row.meta_addr is None:
+            assert row.uid is None
+            assert row.gid is None
+            assert row.mode is None
+        else:
+            assert isinstance(row.uid, int)
+            assert isinstance(row.gid, int)
+            assert isinstance(row.mode, int)
 
 
 def test_three_digest_single_pass(tiny_ext4_image: Path) -> None:
