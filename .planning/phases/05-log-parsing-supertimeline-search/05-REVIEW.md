@@ -2,329 +2,339 @@
 phase: 05-log-parsing-supertimeline-search
 reviewed: 2026-05-31T00:00:00Z
 depth: deep
-files_reviewed: 22
+files_reviewed: 19
 files_reviewed_list:
-  - src/pyautopsy/case/models.py
-  - src/pyautopsy/case/schema.sql
-  - src/pyautopsy/case/store.py
-  - src/pyautopsy/cli/main.py
   - src/pyautopsy/core/analyze.py
   - src/pyautopsy/core/logs.py
-  - src/pyautopsy/core/search.py
-  - src/pyautopsy/evidence/filesystem.py
-  - src/pyautopsy/log/auth.py
-  - src/pyautopsy/log/discover.py
-  - src/pyautopsy/log/_grammar.py
   - src/pyautopsy/log/__init__.py
+  - src/pyautopsy/log/auth.py
+  - src/pyautopsy/log/_grammar.py
+  - src/pyautopsy/log/discover.py
   - src/pyautopsy/log/normalize.py
   - src/pyautopsy/log/registry.py
-  - src/pyautopsy/log/shell_history.py
   - src/pyautopsy/log/syslog.py
+  - src/pyautopsy/log/shell_history.py
   - src/pyautopsy/log/timeresolve.py
-  - src/pyautopsy/report/assemble.py
-  - src/pyautopsy/report/templates/report.html.j2
+  - src/pyautopsy/search/__init__.py
   - src/pyautopsy/search/content.py
   - src/pyautopsy/search/ioc.py
+  - src/pyautopsy/case/store.py
+  - src/pyautopsy/util/safe_extract.py
+  - src/pyautopsy/cli/main.py
+  - tests/conftest.py
+  - tests/test_logs_orchestrated.py
 findings:
-  critical: 3
-  warning: 7
-  info: 4
-  total: 14
+  critical: 2
+  warning: 6
+  info: 3
+  total: 11
 status: issues_found
 ---
 
-# Phase 5: Code Review Report
+# Phase 5: Code Review Report (Re-Review)
 
 **Reviewed:** 2026-05-31
 **Depth:** deep
-**Files Reviewed:** 22
+**Files Reviewed:** 19 (16 source + test cross-reference)
 **Status:** issues_found
 
-## Summary
+## Scope-correction note
 
-Phase 5 adds log parsing (auth/syslog/shell-history), super-timeline merge, and
-content/IOC/hash search. The architecture is broadly sound on the hard
-invariants this project cares about: the native seam (`evidence/filesystem.py`)
-remains the only pytsk3 importer, no log/search module imports a native binding,
-CaseStore stays the sole DB writer, read-only guards are re-asserted around image
-opens, and the HTML renderer keeps autoescape on. Determinism is mostly preserved
-via store-owned ordering.
+The config `files:` list named several paths that do not exist in the current
+tree (`src/pyautopsy/cli.py`, `log/base.py`, `search/engine.py`, `search/hits.py`,
+`evidence/blocks.py`). The real equivalents were located and reviewed instead:
+the CLI is `src/pyautopsy/cli/main.py`; the shared syslog grammar is
+`log/_grammar.py`; the streaming search engine is `search/content.py` +
+`search/ioc.py`; the unallocated-block iterator lives in
+`evidence/filesystem.py` (not separately reviewed — out of changed-file scope).
+All four re-review focus areas were reachable and are covered below.
 
-However, the review found **three Critical defects** that defeat the phase's own
-stated goals:
+## Verification of the three prior Critical fixes
 
-1. The Wave-2 syslog and shell-history parsers **never register at runtime** —
-   `run_logs` imports only `auth`, and `pyautopsy.log.__init__` imports none of
-   the three parsers. LOG-02 and LOG-03 are dead on the real code path.
-2. A **wall-clock leak** (`datetime.now()`) flows into the persisted timeline
-   events and thus into the byte-deterministic report body, breaking CLI-02 for
-   any log with no usable mtime.
-3. The RFC3164 year-inference produces **incorrect years for same-month rollovers
-   and intra-day backward jumps**, silently mis-dating events the tool presents
-   as a forensic super-timeline.
+- **CR-01 (orchestrated parser registry) — HOLDS.** `log/__init__.py:33-37`
+  imports `auth`, `shell_history`, `syslog` for their import-time `register(...)`
+  side effect; `core/logs.py:54` imports `pyautopsy.log`, populating the full
+  declared-order registry. `discover.DEFAULT_LOG_BASENAMES`
+  (`discover.py:43-48`) now lists `auth.log`/`secure`/`syslog`/`messages`, and
+  `run_logs` discovers shell histories via `discover_shell_histories`
+  (`logs.py:350-353`). `registry.register` is idempotent on identity
+  (`registry.py:123`), so the re-import cannot double-register. The orchestrated
+  regression test `tests/test_logs_orchestrated.py` drives the REAL `run_logs` and
+  asserts `{"auth","syslog","shell-history"} <= names` without hand-importing the
+  parser modules — exactly the gate whose absence let the original CR-01 ship. Fix
+  is real and guarded.
+- **CR-02 (wall-clock determinism) — HOLDS.** `_seed_year_from_mtime`
+  (`logs.py:137-175`) no longer calls `datetime.now()`. Precedence is member-mtime
+  year → newest mtime across the walked set → epoch year 1970 with an explicit
+  FLAGGED basis — all pure functions of evidence bytes. Repo scan confirms the only
+  `datetime.now()` is the sanctioned `util/timeutil.py:27` helper, which the log
+  path does not call.
+- **CR-03 (RFC3164 year-inference cascade) — HOLDS, with a residual edge (WR-01).**
+  `infer_years` (`timeresolve.py:164-241`) compares full `(month, day)`, walks
+  newest→oldest with a running-minimum anchor, and rolls only on a CONFIRMED
+  Dec→Jan-class wrap. The two regressions pin the same-month boundary and the
+  single-anomaly no-cascade. The cascade is fixed; one heuristic edge remains.
 
-Plus seven warnings (a dead `ioc_terms` path, non-deterministic hash-arm ordering
-fallbacks, an unreachable `MountedSourceError` handler in `run_logs`, a fragile
-RFC3164 grammar boundary, etc.) and four info items.
+---
+
+## Narrative Findings (AI reviewer)
 
 ## Critical Issues
 
-### CR-01: Syslog (LOG-02) and shell-history (LOG-03) parsers never register — dead at runtime
+### CR-01: Search regex ReDoS guard is applied AFTER the match completes — it cannot prevent catastrophic backtracking; an examiner regex over crafted evidence bytes hangs the run
 
-**File:** `src/pyautopsy/core/logs.py:49`, `src/pyautopsy/log/__init__.py:25-26`
-**Issue:** Parser registration is an *import-time side effect*: `auth.py`,
-`syslog.py`, and `shell_history.py` each call `register(...)` only when the module
-is imported (`auth.py:136`, `syslog.py:139`, `shell_history.py:207`). But:
+**File:** `src/pyautopsy/search/content.py:58-80` (`compile_regex`),
+`:115-123` (`_iter_window_matches` regex loop)
 
-- `core/logs.py:49` imports **only** `auth`:
-  `from pyautopsy.log import auth as _auth  # noqa: F401 (registers AuthParser)`.
-- `pyautopsy/log/__init__.py` imports `registry` and `timeresolve` but **none** of
-  `auth` / `syslog` / `shell_history` (lines 25-26).
-
-So when `run_logs` calls `iter_parsers()` (via `_parse_log_set`,
-`logs.py:388-390`), the registry contains exactly one parser: `AuthParser`.
-`SyslogParser` and `ShellHistoryParser` are never appended, so `syslog`/`messages`
-and `.bash_history`/`.zsh_history` files are silently never parsed even though
-`discover.py` discovers `secure`/`auth.log` only — and shell-history/syslog
-basenames are not even in `DEFAULT_LOG_BASENAMES` (`discover.py:38`). The Phase-5
-LOG-02/LOG-03 deliverables are effectively non-functional on the orchestrated
-path; the modules are reachable only from tests that import them directly.
-
-**Fix:** Register all Wave-1/Wave-2 parsers at package import and discover their
-basenames. Minimal version:
-
+**Issue:**
+The module docstring (lines 14-15, 40-43, 63-66) repeatedly claims a "ReDoS /
+unbounded-`.*` guard". The actual implementation is:
 ```python
-# pyautopsy/log/__init__.py
-from pyautopsy.log import auth, shell_history, syslog  # noqa: F401  (EXT-01 register)
+def compile_regex(pattern): return re.compile(pattern)   # no complexity check
+...
+for m in rx.finditer(window):
+    start, end = m.start(), m.end()
+    if end - start > MAX_REGEX_MATCH_LEN:   # checked AFTER the match exists
+        continue
 ```
+The length check at line 118 runs only once `finditer` has already PRODUCED a
+match object. Catastrophic backtracking happens *inside* `finditer`/the matcher,
+before any match is yielded, so the `MAX_REGEX_MATCH_LEN` test can never short-
+circuit it. Python's `re` has no timeout. The two adversarial inputs are both
+present: (a) the regex is examiner-supplied via `pyautopsy search --term --regex`
+(`cli/main.py:607-613,649,664-670`), and (b) the haystack is untrusted evidence
+bytes from the image under investigation. A pattern like `(a+)+$` or `(.*a){30}`
+against a 1 MiB chunk of crafted bytes (the default `DEFAULT_CHUNK_SIZE`,
+`content.py:38`) backtracks super-polynomially and hangs the forensic run on a
+single chunk — a DoS that also breaks the bounded/reproducible-run invariant. The
+1 MiB chunk bound does NOT save it: `(a+)+` over 1 MiB of `a` is already
+effectively unbounded. "The operator wrote the regex" is not a mitigation — the
+operator does not control the bytes that trigger the blowup.
 
-and extend `discover.DEFAULT_LOG_BASENAMES` to include `"syslog"`, `"messages"`,
-and handle the home-dir shell-history discovery, OR have `run_logs` import the
-parsers explicitly and pass the full basename set to `discover_log_sets`. Add a
-test asserting `len(list(iter_parsers())) == 3` after importing `pyautopsy.log`.
+Separately, this same post-hoc check SILENTLY DROPS any legitimate match longer
+than 4096 bytes (`content.py:118-121` `continue`), so a real `.*`-style hit that
+spans >4 KiB is never reported at all — a correctness gap distinct from the DoS.
+
+**Fix:**
+- Make the guard actually bounding: either compile with a linear-time engine
+  (`re2`/`google-re2`) — but that adds a runtime dep (D-43), so prefer — run each
+  `finditer` under a hard wall-clock budget in a killable worker, OR reject
+  patterns containing nested unbounded quantifiers at compile time, OR default to
+  literal-only and gate true regex behind an explicitly-bounded backend.
+- For the >4096 silent-drop: anchor the match length with a bounded quantifier at
+  compile time (rewrite `.*`→`.{0,MAX}`) or report a truncated hit with a
+  `truncated=True` flag rather than dropping it.
+- Add a test that a known catastrophic pattern over a crafted buffer returns
+  within a fixed time budget, and a test that a >4096 match is reported (not lost).
 
 ---
 
-### CR-02: Wall-clock `datetime.now()` leaks into the deterministic report body (CLI-02 violation)
+### CR-02: `_seed_year_from_mtime` epoch-1970 fallback materializes whole members at 1970-01-01, which sorts to the FRONT of the forensic super-timeline and misrepresents "earliest activity"
 
-**File:** `src/pyautopsy/core/logs.py:132-139`
-**Issue:** `_seed_year_from_mtime` falls back to the analysis host's current year
-when a log member has no usable mtime:
+**File:** `src/pyautopsy/core/logs.py:164-175` (1970 fallback) +
+`logs.py:232-240` (`datetime(seed_year, 1, 1)` anchor for no-timestamp lines)
 
-```python
-if mtime:
-    return datetime.fromtimestamp(mtime, tz=timezone.utc).year
-return datetime.now(timezone.utc).year   # <-- wall-clock
-```
+**Issue:**
+When neither the member nor any walked file carries an mtime, the seed year is
+1970 and every no-per-line-timestamp record (the common bare `.bash_history`
+case, which the module explicitly claims to support) resolves to
+`datetime(1970, 1, 1)`. This is deterministic (CR-02-prior preserved) and flagged
+in `attributes`, which is good — but `get_timeline_events`
+(`store.py:637-641`) orders by `ts_utc` FIRST, and the report's timeline section
+reads that order. So an entire member's commands land at the very top of the
+UTC-sorted super-timeline that the report presents as forensic chronology, where
+a reviewer reading "earliest activity" sees a 1970 cluster that is a pure artifact
+of missing metadata, not real timing. The honesty flag lives in `attributes`,
+which the ORDER never consults, so the disclosure does not reach the place the
+distortion appears. For an evidence-presentation tool this is a defensibility
+defect: the timeline's leading rows are fabricated-looking dates presented inline
+with genuine ones.
 
-That seed year is fed to `infer_years` (`logs.py:167`) and into
-`naive_from_components` → `to_utc`, producing the event's `ts_utc` **and** the
-`year_inferred` attribute (`timeresolve.py:199-201`). Both are persisted into
-`timeline_events` and surfaced in the report body: `ts_utc` is a timeline row
-(`assemble.py:407`) and `year_inferred` drives `inferred_year_count`
-(`assemble.py:445-449`). The module docstring explicitly promises "never
-wall-clock (CLI-02)" (`logs.py:30`, `logs.py:85-89`), but this path makes
-`report.json`/`report.html` differ between two runs of the same fixture whenever a
-log member's mtime is 0 — which is exactly the standalone-`logs` case the code
-claims to support. This is the same class of bug the FAT/zero-epoch work was
-designed to avoid, re-introduced on the log seam.
+This is the same class as the original CR-02 (mis-anchored log times polluting the
+presented timeline), narrowed to the no-mtime-anywhere path the fix introduced
+rather than fully closed.
 
-**Fix:** Do not call `datetime.now()`. Anchor the fallback to a deterministic,
-content-derived value (e.g. the evidence source's `acquired_utc` year if you must
-have one, or — better — leave the year explicitly unresolved and flag it
-`year_basis="undeterminable; no mtime and no per-line year"` while anchoring the
-naive instant to a fixed sentinel that is clearly flagged, never `now()`). Any
-choice must be a pure function of the evidence, not the clock.
-
----
-
-### CR-03: RFC3164 year inference is wrong for same-month and intra-month backward rolls
-
-**File:** `src/pyautopsy/log/timeresolve.py:190-195`
-**Issue:** `infer_years` decrements the year only on a strict month *decrease*
-going backward in time (`if cur_mon > next_mon`). It compares **month only**, so:
-
-- A backward jump *within the same month* across a year boundary (e.g. records
-  spanning `Dec 31 2024` → `Dec 01 2025`, or any set where two adjacent records
-  share a month but the earlier one is a year older) is never detected — both get
-  the same year. Day/time are ignored entirely.
-- More importantly, the logic assumes a single monotonic non-decreasing month
-  sequence. Real rotated auth logs commonly contain out-of-order or repeated
-  months (e.g. syslog interleaving, a `Jan` line followed by a stray `Dec`
-  continuation), and any `cur_mon > next_mon` flips the year for *all* preceding
-  records, cascading a one-off anomaly into a wholesale year shift for the rest of
-  the file.
-
-The result is events mis-dated by a full year in a timeline the report presents
-as forensic truth. The honesty flagging (`year_inferred`) records the *wrong*
-inferred year as if it were the method's considered output.
-
-**Fix:** Compare the full `(month, day, hour, minute, second)` tuple, not just the
-month, when deciding a backward roll, and bound the year adjustment so a single
-anomalous record cannot cascade (e.g. detect a roll only on a genuine
-descending-then-ascending wrap, and clamp). Add fixtures covering: same-month
-year boundary, an out-of-order single line, and a clean Dec→Jan rotation. At
-minimum, document and test the exact month-only assumption if it is intentional —
-but month-only is demonstrably incorrect for the same-month boundary case.
+**Fix:**
+- Do not inject 1970-front events into the ordered timeline. Either (a) give
+  undated/fallback events a `ts_utc` of `NULL` and surface them in a SEPARATE
+  "undated artifacts" report section (sorted out of the chronological view), or
+  (b) sort flagged-fallback events to the END rather than the 1970 front, or
+  (c) carry an explicit `ts_precision`/`year_inferred` column the timeline ORDER
+  and the report renderer both honor so a guessed instant is never rendered
+  identically to a parsed one.
+- Add a test asserting that fallback (no-mtime) events are visibly segregated from
+  genuinely-timestamped events in the merged read, not interleaved at 1970.
 
 ---
 
 ## Warnings
 
-### WR-01: `run_search` `ioc_terms` parameter is dead from the CLI; `--ioc` works but direct IOC terms cannot be passed
+### WR-01: `infer_years` "confirmed-wrap" heuristic can refuse a genuine year boundary, leaving a real prior-year segment mis-dated
 
-**File:** `src/pyautopsy/core/search.py:119`, `src/pyautopsy/cli/main.py:663-671`
-**Issue:** `run_search` accepts `ioc_terms: Sequence[bytes] = ()` and merges it
-into `ioc_all` (`search.py:160`). The CLI `search` command never passes
-`ioc_terms` (only `ioc_file`), and `analyze` calls `run_search` with only
-`terms=[...]` (`analyze.py:360-365`). So `ioc_terms` is reachable only from tests.
-Not a correctness bug on its own, but it is an untested, unwired public parameter
-that suggests an intended capability (direct IOC literals) that no command
-exposes. Confirm whether this is intentional dead surface or a missing CLI wiring.
-**Fix:** Either wire a `--ioc-term` repeatable option through to `ioc_terms`, or
-drop the parameter to keep the surface honest.
+**File:** `src/pyautopsy/log/timeresolve.py:216-228`
 
-### WR-02: Hash-arm SearchHit uses `volume_id=0`/`volume_offset=0` fallback when the file row is missing — non-deterministic/ambiguous ordering
+**Issue:**
+The anti-cascade guard requires the boundary to be confirmed by the next-older
+record also being in H2:
+```python
+wrap = cur_md > anchor_md and components[i][0] >= 7 and anchor_md[0] <= 6
+confirmed = wrap and (i == 0 or components[i - 1][0] >= 7)
+```
+Two real shapes are mishandled:
+1. A legitimate Dec→Jan boundary whose oldest pre-boundary neighbour happens to be
+   in H1 is treated as an anomaly and NOT rolled (the `components[i-1][0] >= 7`
+   confirmation fails), so that record keeps the seed year — wrong by one year.
+2. A purely-Q4 multi-year rotated set (e.g. `Oct..Dec` year N-1 then `Oct..Dec`
+   year N) never lets the anchor enter H1 (`anchor_md[0] <= 6` is never true), so
+   NO record rolls and two distinct years collapse into one.
+The honesty flag records the wrong year as considered output, in a timeline
+presented as forensic truth. The existing regressions cover only Jan-side
+boundaries and a lone spike, so these shapes pass CI while mis-dating.
 
-**File:** `src/pyautopsy/core/search.py:229-247`
-**Issue:** For each known-bad-hash `KnownMatch`, the code looks up
-`file_by_id.get(m.file_id)` and, when `fr is None`, emits a `SearchHit` with
-`volume_id=0, volume_offset=0, path=None`. `match_bad_hashes` only produces
-matches for rows whose `id` is non-None and present in `files`, so `fr` should
-never be `None` in practice — but if it ever is, the hit collapses to volume
-`(0,0)` and sorts ambiguously against real volume-0 hits in
-`get_search_hits` (ordered by `volume_id, volume_offset, byte_offset, term, id`,
-`store.py:778`). With `byte_offset=None` for all hash hits, ties break only on
-`term` then `id`; the `(0,0)` fallback can interleave hash hits with genuine
-volume-0 content hits unpredictably.
-**Fix:** Since `m.file_id` always maps to a known row here, assert it
-(`assert fr is not None`) or skip emitting a hit when the row is missing rather
-than fabricating a `(0,0)` provenance that misrepresents where the match lives.
+**Fix:** Anchor each rotated member's year to ITS OWN mtime
+(`_seed_year_from_mtime` already derives a per-member seed) and use the month-walk
+only to disambiguate WITHIN a member — removing the dependency on the anchor
+crossing the H1/H2 line. Add fixtures for both shapes above.
 
-### WR-03: `_latest_evidence_source_id` runs raw SQL in the orchestrator tier
+### WR-02: Orchestrator tier issues raw read-only SQL against `store.connection`, violating the documented "no raw SQL outside the store" boundary
 
-**File:** `src/pyautopsy/core/logs.py:104-114`, `src/pyautopsy/core/search.py:86-96`
-**Issue:** Both `run_logs` and `run_search` execute
-`store.connection.execute("SELECT id FROM evidence_sources ORDER BY id DESC ...")`
-directly against the connection. CLAUDE.md / the store docstring state CaseStore
-is the sole DB access point and "no raw SQL is permitted elsewhere"
-(`store.py:1-8`). This is read-only SQL so it is not a soundness hazard, but it
-violates the stated boundary and duplicates a query that belongs behind a store
-method (the same SELECT is copy-pasted in both orchestrators).
-**Fix:** Add `CaseStore.get_latest_evidence_source_id()` (or `latest_source()`)
-and call it from both orchestrators; remove the inline SQL.
+**File:** `src/pyautopsy/core/logs.py:111` (`_latest_evidence_source_id`); same
+copy-pasted `SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1` in
+`core/search.py:88`, `core/walk.py:260`, `core/knownfiles.py:82`,
+`core/recover.py:275`
 
-### WR-04: `run_logs` lists `MountedSourceError` in expected errors but never imports it into the union correctly vs. asserts after open only
+**Issue:**
+`store.py:1-8` declares CaseStore "the ONLY sanctioned way to read or write
+case.db (no raw SQL is permitted elsewhere)". Five orchestrators bypass it with an
+inline read. The sole-WRITER guarantee (D-08) is intact — these are reads, no
+INSERT/executemany leaks outside `store.py` — but the documented boundary is
+violated and an `evidence_sources` schema change silently breaks five call sites a
+grep of `store.py` would miss.
 
-**File:** `src/pyautopsy/core/logs.py:234-263`
-**Issue:** `assert_source_not_mounted` is called before open (line 235) and again
-after open (line 263). The post-open call happens *inside* the `try` whose
-handler is `_EXPECTED_LOGS_ERRORS`, but the pre-open call at line 235 is **outside
-the try/except and outside the audit scope** — if it raises `MountedSourceError`,
-no `logs.error` FAIL audit event is written (the audit log is constructed at line
-245, after the guard). The module docstring (step 5) and `analyze` rely on a FAIL
-audit event being recorded before re-raise (D-08). `run_search` has the same shape
-(`search.py:149` pre-open guard before `audit` is built at `search.py:166`).
-**Fix:** Either construct the audit log before the first guard and wrap the
-pre-open assertion so a mounted-source rejection is audited, or document that the
-pre-open guard is intentionally pre-audit and ensure the CLI still maps it (it
-does map `MountedSourceError` to a clean exit, but with no audit trail — which
-contradicts the D-08 "record FAIL before non-zero exit" claim in the CLI
-docstring, `cli/main.py:8-10`).
+**Fix:** Add `CaseStore.get_latest_evidence_source_id()` and call it from all
+five; delete the inline SQL. Add an architectural test confining `.execute(` /
+`import sqlite3` write usage to `case/store.py`.
 
-### WR-05: RFC3164 grammar requires a host token, dropping headerless/relay lines into the unmatched bucket
+### WR-03: Pre-open `assert_source_not_mounted` in `run_logs` is outside the audit scope — a mounted-source rejection writes NO `logs.error` FAIL event
 
-**File:** `src/pyautopsy/log/_grammar.py:22-27`
-**Issue:** The `RFC3164` regex mandates `\s+(?P<host>\S+)\s+` between the
-timestamp and the program. Many real auth.log lines (especially from local
-journald-to-text or certain sshd configs) omit the host, or the "program" token
-contains characters excluded by `[^\s:\[]+`. Such lines fall through to
-`parse_line` returning `None`, and the auth parser emits them as raw unmatched
-records with `raw_timestamp=None` — which then take the seed-year-Jan-1 fallback
-(`logs.py:179`), mis-dating a line that actually carried a parseable timestamp.
-This is a coverage/correctness gap that silently degrades timeline accuracy rather
-than crashing.
-**Fix:** Make the host token optional or add a hostless RFC3164 variant, and add
-fixtures for hostless/relay-prefixed lines. At minimum, attempt to salvage the
-timestamp head even when the rest of the line does not match.
+**File:** `src/pyautopsy/core/logs.py:289-301` (guard at 290, `AuditLog` bound at
+300); post-open re-assert at `:318` IS audited
 
-### WR-06: `_DATEEXT_SUFFIX` maps dates to negative indices that collide with the numeric scheme and corrupt completeness findings
+**Issue:**
+`integrity.assert_source_not_mounted(image_path)` runs at line 290, BEFORE the
+audit log is constructed (line 300) and before the `try` whose handler emits
+`logs.error`. A mounted source therefore raises `MountedSourceError` with NO FAIL
+audit event, contradicting the D-08 "record FAIL before non-zero exit" contract
+the module docstring (step 5) and the CLI rely on. The CLI maps the exception to a
+clean exit code (`cli/main.py:378-385`) but the audit trail has no record.
+`run_search` reportedly has the same shape.
 
-**File:** `src/pyautopsy/log/discover.py:113-117`, `:175-186`
-**Issue:** A dateext member (`auth.log-20250131`) is mapped to
-`index = -int("20250131")` (a large negative number). `_completeness`
-(`discover.py:175`) then computes `numeric = sorted({m.index for m if m.index >= 0})`,
-which **excludes all dateext members** from the present/missing computation, so a
-purely dateext-rotated set reports `present_indices=()` / `missing` derived only
-from index 0. The completeness finding (D-45 honesty) is therefore wrong for
-dateext rotation, and `order_rotated_set`'s `order_key = (-index, ...)` makes the
-negative indices sort as enormous positive keys, placing dateext members
-*newest-first* rather than oldest-first relative to numeric members in a mixed
-set. Note also this finding is computed but **never persisted or surfaced** in the
-report (see WR-07).
-**Fix:** Use a separate, sign-consistent ordering domain for dateext (e.g. order
-by parsed date ascending) and include dateext members in the completeness count,
-or explicitly document dateext as out-of-scope and reject it from the set.
+**Fix:** Bind the audit log before the first guard (the case dir exists — `run_logs`
+requires a prior ingest) and wrap the pre-open assertion so a mounted-source
+rejection is audited before re-raise.
 
-### WR-07: Log completeness finding (D-45) is computed but never recorded or reported
+### WR-04: Hash-arm search reuses `custom_match` with sense `"block"` but emits a `KnownMatch`, not a `SearchHit` — provenance/order of hash hits depends on a join that can tie ambiguously
 
-**File:** `src/pyautopsy/log/discover.py:173-193`, `src/pyautopsy/core/logs.py:292-305`
-**Issue:** `discover_log_sets` builds a `CompletenessFinding` per set
-(`LogSet.finding`), and the module docstring frames it as the D-45 honesty signal
-("which indices are present/absent"). But `run_logs` iterates
-`discover.discover_log_sets(rows)` and uses only `log_set.members` /
-`log_set.basename` (`logs.py:292`, `_parse_log_set` at `logs.py:376`); it never
-reads `log_set.finding`, never writes it to `attributes`, and the report's
-`log_findings` section derives provenance solely from per-event `year_inferred`/
-`assumed_timezone` (`assemble.py:445-454`). So a "log set may be incomplete:
-rotation indices [...] absent" finding is silently dropped — the report cannot
-disclose a gap in the rotation chain, defeating the stated D-45 honesty goal.
-**Fix:** Thread the completeness finding into the events' `attributes` (or a
-dedicated findings list) so it reaches `assemble_report_body` and is surfaced in
-the Log Findings section.
+**File:** `src/pyautopsy/search/ioc.py:80-126` (`match_bad_hashes`)
 
----
+**Issue:**
+`match_bad_hashes` returns `KnownMatch` rows (persisted via
+`insert_known_matches`), while content/IOC hits are `SearchHit` rows. The
+`search` summary line reports `known-bad hits` (`cli/main.py:690`) but those rows
+are read back through `get_known_matches` (`store.py:691-731`), a DIFFERENT
+ordering domain than `get_search_hits`. A reviewer reading "search hits" in the
+report must reconcile two tables with two orderings for one logical search. Not a
+correctness bug per se, but a split provenance model that complicates the
+deterministic-ordering guarantee (D-41) and the report's honesty. Confirm the
+report renders both arms coherently and that hash-arm ordering is fully
+deterministic (it relies on the `get_known_matches` join order, which ties on
+`f.volume_id, f.volume_offset, f.path, f.id, k.*` — verify no NULL-path collision
+across recovered/orphan rows can reorder between runs).
+
+**Fix:** Document the two-table model explicitly in the search orchestrator and
+add a test asserting hash-arm hit order is byte-stable across two runs of the same
+fixture.
+
+### WR-05: `safe_extract` (the hardened jail built "for Phase 5") has NO caller in the Phase-5 log path; rotated `.gz` is inflated directly via `gzip` instead
+
+**File:** `src/pyautopsy/util/safe_extract.py:31-33` (docstring: consumers "arrive
+in Phase 5"); `src/pyautopsy/log/discover.py:294-318` (`decode_member` →
+`gzip.GzipFile`), `core/logs.py:462-464`
+
+**Issue:**
+`safe_extract`'s docstring states its consumers arrive in Phase 5 (this phase),
+but `core/logs.py` decompresses rotated `.gz` members directly through
+`discover.decode_member` and never routes anything through `safe_extract`. The gz
+path is a single in-memory inflate of one member already size-bounded by the
+recorded file `size` (`logs.py:462-464`), and `decode_member` swallows corrupt-gz
+errors (`discover.py:316-317`), so there is no Zip-Slip surface here and no
+decompression-bomb surface beyond the member size. BUT: a `.gz` member's
+DECOMPRESSED size is not bounded by the on-disk member size — `gz.read()`
+(`discover.py:315`) reads the full inflate into memory with no cap, so a small
+crafted `.gz` log member can still expand to a memory-exhausting blob. That is
+exactly the decompression-bomb case `safe_extract`'s caps exist to stop, and the
+log path bypasses them.
+
+**Fix:** Route gz inflation through a bounded reader (cap `gz.read(n)` to a sane
+max-uncompressed limit, mirroring `safe_extract`'s `max_entry_size`), or reuse
+`safe_extract`'s bomb-cap helper. Add a test with a small gz that inflates past
+the cap, asserting it is refused/truncated rather than fully buffered.
+
+### WR-06: `run_logs` fs-event idempotency backfill keys on "any timeline event exists" — a prior log-only run leaves filesystem MACB events permanently absent
+
+**File:** `src/pyautopsy/core/logs.py:382-390`
+
+**Issue:**
+The backfill that ensures the super-timeline contains filesystem MACB events runs
+only when `not store.get_timeline_events(source_id, limit=1)` (line 383) — i.e.
+only when the source has ZERO timeline events. If `run_logs` is invoked
+standalone (the `pyautopsy logs` CLI command, which never calls `build_timeline`
+first) on a case where a prior `run_logs` already inserted LOG events but no walk
+ever ran `build_timeline`, the guard sees existing events and skips the fs
+backfill forever. The result is a "super-timeline" that is log-only with the
+filesystem events silently missing, despite the docstring's TIME-02 merge promise.
+The `analyze` path is safe (it calls `build_timeline` before `run_logs`,
+`analyze.py:339-348`), but the standalone `logs` command is not.
+
+**Fix:** Gate the fs backfill on "no FILESYSTEM-source events exist" (e.g.
+`source LIKE 'filesystem%'`) rather than "no events at all", or have the standalone
+`logs` command run `build_timeline` first like `analyze` does. Add a test running
+`logs` twice standalone and asserting fs events are present.
 
 ## Info
 
-### IN-01: Unused import `RecoveredEntry`/`DeletedInode` re-export churn vs. actual seam use
+### IN-01: `auth_events` count couples to the literal string `"auth"`
 
-**File:** `src/pyautopsy/evidence/filesystem.py:31-50`
-**Issue:** The `__all__` exports `DeletedInode`, `RecoveredEntry`, `recover_meta`,
-etc., which are recovery-phase APIs unrelated to Phase 5; not a defect, but the
-Phase-5 additions (`iter_unallocated_blocks`, `block_size`) sit alongside them
-with no grouping. Cosmetic.
-**Fix:** None required; consider a `# --- search seam (Phase 5) ---` comment band
-for navigability.
+**File:** `src/pyautopsy/core/logs.py:367`
 
-### IN-02: `_read_text` decodes with `errors="replace"` then `/etc/timezone` parse takes only first line — silent truncation of multi-zone files
+**Issue:** `sum(1 for e in set_events if e.source == "auth")` silently returns 0
+if `AuthParser.name` changes. Magic-string coupling, low risk.
 
-**File:** `src/pyautopsy/log/timeresolve.py:98-105`
-**Issue:** `text.strip().splitlines()[0]` takes the first line of `/etc/timezone`.
-A malformed multi-line file is silently reduced to its first line. Acceptable
-(Debian `/etc/timezone` is single-line), but worth a one-line comment that
-multi-line content is intentionally ignored.
-**Fix:** Add a clarifying comment; no behavior change needed.
+**Fix:** Reference `AuthParser.name`.
 
-### IN-03: `auth_events` count depends on `source == "auth"` literal coupling
+### IN-02: D-45 `CompletenessFinding` is computed per log set but never threaded into events/report
 
-**File:** `src/pyautopsy/core/logs.py:305`
-**Issue:** `auth_events += sum(1 for e in set_events if e.source == "auth")` couples
-the count to the literal parser name string. If `AuthParser.name` changes, the
-count silently goes to zero with no error. Low risk (the name is stable) but a
-magic-string coupling.
-**Fix:** Reference `auth.AuthParser.name` rather than the literal `"auth"`.
+**File:** `src/pyautopsy/log/discover.py:193-213`; consumed only as
+`.members`/`.basename` in `core/logs.py:354-366`
 
-### IN-04: `search_bytes` `region` defaults to `"unallocated"` with `block_size=0`, so `block_index` is never set on blob scans
+**Issue:** Each `LogSet.finding` describes missing rotation indices (the D-45
+honesty signal) but `run_logs` never reads it, so a "rotation index N absent" gap
+is never disclosed. (Carried from the prior review's WR-07; still unaddressed.)
 
-**File:** `src/pyautopsy/search/content.py:217-270`
-**Issue:** `search_bytes` defaults `region="unallocated"` but always calls `_emit`
-with `block_size=0`, so `_emit`'s `block_index` computation is skipped
-(`content.py:199-200`). A caller using `search_bytes` directly for an unallocated
-blob gets `block_index=None`. Harmless for the orchestrated path (which uses
-`search_image`), but the default is misleading.
-**Fix:** Default `region="allocated"` for the generic blob scanner, or document
-that `block_index` is only populated via `search_image`.
+**Fix:** Thread the finding into event `attributes` or a dedicated findings list
+so the report can surface it.
+
+### IN-03: `_DATEEXT_SUFFIX` members get negative synthetic indices excluded from `_completeness` and mis-ordered
+
+**File:** `src/pyautopsy/log/discover.py:135-137`, `:195`
+
+**Issue:** Dateext members map to `-int(YYYYMMDD)`; `_completeness` filters to
+`index >= 0` (excluding them) and `order_key = (-index, …)` turns the negative
+index into a huge positive sort key, mis-placing dateext members relative to
+numeric ones in a mixed set. (Carried from the prior review's WR-06.)
+
+**Fix:** Order dateext by parsed date in a sign-consistent domain and include them
+in the completeness count, or reject dateext explicitly.
 
 ---
 
