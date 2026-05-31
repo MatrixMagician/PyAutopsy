@@ -804,7 +804,9 @@ LOG_SEARCH_BASH_EPOCH = 1736899200  # a `#<epoch>` HISTTIMEFORMAT pair in bash
 LOG_SEARCH_ZSH_EPOCH = 1736899300  # a `: <ts>:<dur>;cmd` extended-history line
 
 
-def _rfc3164(month_day_time: str, host: str, program: str, pid: int | None, msg: str) -> str:
+def _rfc3164(
+    month_day_time: str, host: str, program: str, pid: int | None, msg: str
+) -> str:
     """Compose one RFC3164 syslog line: ``Mmm dd HH:MM:SS host prog[pid]: msg``."""
     tag = f"{program}[{pid}]" if pid is not None else program
     return f"{month_day_time} {host} {tag}: {msg}\n"
@@ -813,50 +815,110 @@ def _rfc3164(month_day_time: str, host: str, program: str, pid: int | None, msg:
 # Oldest rotated member (auth.log.2.gz): DECEMBER lines of the PREVIOUS year.
 _AUTH_LOG_2 = "".join(
     [
-        _rfc3164("Dec 30 23:58:01", "host01", "sshd", 4011,
-                 "Failed password for invalid user oldguest from 198.51.100.7 port 2222 ssh2"),
-        _rfc3164("Dec 31 23:59:59", "host01", "sshd", 4012,
-                 "Accepted publickey for alice from 192.0.2.5 port 51000 ssh2"),
+        _rfc3164(
+            "Dec 30 23:58:01",
+            "host01",
+            "sshd",
+            4011,
+            "Failed password for invalid user oldguest from 198.51.100.7 "
+            "port 2222 ssh2",
+        ),
+        _rfc3164(
+            "Dec 31 23:59:59",
+            "host01",
+            "sshd",
+            4012,
+            "Accepted publickey for alice from 192.0.2.5 port 51000 ssh2",
+        ),
     ]
 )
 # Middle rotated member (auth.log.1): early-JANUARY lines of the seed year.
 _AUTH_LOG_1 = "".join(
     [
-        _rfc3164("Jan 02 08:00:00", "host01", "sshd", 5001,
-                 "Accepted password for alice from 192.0.2.5 port 51002 ssh2"),
-        _rfc3164("Jan 02 08:05:10", "host01", "sudo", None,
-                 "alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/apt update"),
-        _rfc3164("Jan 02 08:06:00", "host01", "sshd", 5002,
-                 "session opened for user alice by (uid=0)"),
+        _rfc3164(
+            "Jan 02 08:00:00",
+            "host01",
+            "sshd",
+            5001,
+            "Accepted password for alice from 192.0.2.5 port 51002 ssh2",
+        ),
+        _rfc3164(
+            "Jan 02 08:05:10",
+            "host01",
+            "sudo",
+            None,
+            "alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; "
+            "COMMAND=/usr/bin/apt update",
+        ),
+        _rfc3164(
+            "Jan 02 08:06:00",
+            "host01",
+            "sshd",
+            5002,
+            "session opened for user alice by (uid=0)",
+        ),
     ]
 )
 # Live auth.log: later-JANUARY lines incl. a sudo authentication FAILURE + a
 # session close + a line carrying the IOC term.
 _AUTH_LOG_LIVE = "".join(
     [
-        _rfc3164("Jan 15 02:00:00", "host01", "sudo", None,
-                 "pam_unix(sudo:auth): authentication failure; logname=alice uid=1000 "
-                 "euid=0 tty=/dev/pts/1 ruser=alice rhost= user=alice"),
-        _rfc3164("Jan 15 02:01:30", "host01", "sshd", 6001,
-                 "Failed password for alice from 203.0.113.9 port 40000 ssh2"),
-        _rfc3164("Jan 15 02:02:45", "host01", "sshd", 6002,
-                 f"Accepted publickey for alice from {LOG_SEARCH_IOC_TERM.decode()} port 40002 ssh2"),
-        _rfc3164("Jan 15 02:05:00", "host01", "sshd", 6001,
-                 "session closed for user alice"),
+        _rfc3164(
+            "Jan 15 02:00:00",
+            "host01",
+            "sudo",
+            None,
+            "pam_unix(sudo:auth): authentication failure; logname=alice uid=1000 "
+            "euid=0 tty=/dev/pts/1 ruser=alice rhost= user=alice",
+        ),
+        _rfc3164(
+            "Jan 15 02:01:30",
+            "host01",
+            "sshd",
+            6001,
+            "Failed password for alice from 203.0.113.9 port 40000 ssh2",
+        ),
+        _rfc3164(
+            "Jan 15 02:02:45",
+            "host01",
+            "sshd",
+            6002,
+            f"Accepted publickey for alice from {LOG_SEARCH_IOC_TERM.decode()} "
+            "port 40002 ssh2",
+        ),
+        _rfc3164(
+            "Jan 15 02:05:00", "host01", "sshd", 6001, "session closed for user alice"
+        ),
     ]
 )
 # syslog: service/kernel/cron/error lines (LOG-02) + the two CR-01 TIED-second
 # lines (identical timestamp, distinct programs) for the tied-order regression.
 _SYSLOG = "".join(
     [
-        _rfc3164("Jan 15 01:00:00", "host01", "systemd", 1,
-                 "Started Daily apt download activities."),
-        _rfc3164("Jan 15 01:00:05", "host01", "kernel", None,
-                 "[12345.6789] usb 1-1: new high-speed USB device number 5 using xhci_hcd"),
-        _rfc3164("Jan 15 01:30:00", "host01", "CRON", 7001,
-                 "(root) CMD (/usr/bin/backup.sh)"),
-        _rfc3164("Jan 15 02:10:00", "host01", "nginx", 8001,
-                 "error: upstream timed out connecting to evil-c2.example.invalid"),
+        _rfc3164(
+            "Jan 15 01:00:00",
+            "host01",
+            "systemd",
+            1,
+            "Started Daily apt download activities.",
+        ),
+        _rfc3164(
+            "Jan 15 01:00:05",
+            "host01",
+            "kernel",
+            None,
+            "[12345.6789] usb 1-1: new high-speed USB device number 5 using xhci_hcd",
+        ),
+        _rfc3164(
+            "Jan 15 01:30:00", "host01", "CRON", 7001, "(root) CMD (/usr/bin/backup.sh)"
+        ),
+        _rfc3164(
+            "Jan 15 02:10:00",
+            "host01",
+            "nginx",
+            8001,
+            "error: upstream timed out connecting to evil-c2.example.invalid",
+        ),
         # --- two TIED-second events (CR-01 / Pitfall 3) ---
         _rfc3164(LOG_SEARCH_TIED_SECOND, "host01", "alpha", 9001, "tied event one"),
         _rfc3164(LOG_SEARCH_TIED_SECOND, "host01", "bravo", 9002, "tied event two"),
@@ -899,7 +961,9 @@ def _groundtruth_dict() -> dict[str, object]:
         "allocated_search": {
             "path": f"/{LOG_SEARCH_ALLOCATED_NAME}",
             "needle": LOG_SEARCH_ALLOCATED_NEEDLE.decode(),
-            "needle_offset": LOG_SEARCH_ALLOCATED_CONTENT.index(LOG_SEARCH_ALLOCATED_NEEDLE),
+            "needle_offset": LOG_SEARCH_ALLOCATED_CONTENT.index(
+                LOG_SEARCH_ALLOCATED_NEEDLE
+            ),
         },
         "unallocated_search": {
             "needle": LOG_SEARCH_UNALLOC_NEEDLE.decode(),

