@@ -28,9 +28,11 @@ Run as a script to (re)generate every committed image (needs the mkfs tools)::
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import shutil
+import sqlite3
 import subprocess
 import tarfile
 import tempfile
@@ -118,6 +120,99 @@ _PART_FAT_SIZE = 64 * 1024 * 1024
 _PART_EXT4_SIZE = 8 * 1024 * 1024
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 fixtures: deleted-recovery (orphan / overwritten / resident) + NSRL
+# ---------------------------------------------------------------------------
+#
+# These extend the Phase-2 committed-image pattern (built once with the host
+# mkfs/debugfs/mkntfs tools, committed so CI never runs mkfs) to exercise the
+# Phase-4 recovery + known-file-filtering slices (RECOV-01/02/03, FILTER-01).
+# Ground-truth is recorded as module constants so the RED tests can assert EXACT
+# bytes/addresses (the Nyquist "every file" signal). The NSRL DBs are built with
+# stdlib sqlite3 only (no external tool) and are byte-deterministic.
+
+EXT4_ORPHAN_NAME = "ext4_orphan.img"
+EXT4_OVERWRITTEN_NAME = "ext4_overwritten.img"
+NTFS_RESIDENT_NAME = "ntfs_resident_deleted.img"
+NSRL_MINIMAL_NAME = "nsrl_minimal.db"
+NSRL_METADATA_NAME = "nsrl_metadata.db"
+
+# --- ext4 orphan fixture (RECOV-02) -----------------------------------------
+# A file written inside a subdirectory, then BOTH the file and its parent
+# directory are removed via debugfs so the surviving file inode has no path back
+# to the root (an orphan). debugfs ``rm``/``rmdir`` leave the file inode's block
+# pointers intact (Pitfall 2) so the orphan's content is still recoverable.
+EXT4_ORPHAN_DIR = "secret"
+EXT4_ORPHAN_FILE = "orphan.txt"
+EXT4_ORPHAN_CONTENT = b"this file is an orphan; its parent dir is gone\n"
+# The orphan file inode's meta address (debugfs assigns it deterministically;
+# VERIFIED post-build via pytsk3: inode 13, UNALLOC, content recovers exactly).
+# Note: TSK sets the per-inode ORPHAN meta flag only when the entry is reached
+# via the ``$OrphanFiles`` virtual directory, not when ``open_meta`` is called by
+# address — so the orchestrator detects orphan-ness via ``$OrphanFiles`` /
+# parent-survival, which is why RECOV-02 reports orphans as a separate pass.
+EXT4_ORPHAN_META_ADDR = 13
+
+# --- ext4 overwritten fixture (RECOV-03 / D-31) -----------------------------
+# A file ("victim") is written, deleted, then a NEW file ("reclaimer") is
+# written whose data blocks RECLAIM the deleted file's blocks. This reproduces
+# the real ext4 deletion semantics (Pitfall 2): ``rm`` frees the victim's inode
+# (so the allocator reuses it) and its blocks are then taken by the reclaimer.
+# The forensic signal here is the *block-level* overwrite — the reclaimer
+# (allocated) now owns the victim's former blocks — which drives the
+# ``partial/overwritten`` tier rationale. Because ext4 frees/zeroes the victim's
+# inode on unlink, there is NO surviving recoverable victim *inode* with intact
+# pointers (the honest ext4 limitation the per-fs caveat documents); the
+# committed image therefore carries the reclaimer as ground truth.
+EXT4_OVERWRITTEN_DELETED_NAME = "victim.bin"
+EXT4_OVERWRITTEN_DELETED_CONTENT = b"OVERWRITTEN" * 800  # ~8.6 KiB, multi-block
+EXT4_OVERWRITTEN_REPLACEMENT_NAME = "reclaimer.bin"
+EXT4_OVERWRITTEN_REPLACEMENT_CONTENT = b"RECLAIMED__" * 800
+# The allocated reclaimer's meta address (it reuses the victim's freed inode
+# slot); its blocks are the victim's former blocks (the overwrite evidence).
+EXT4_OVERWRITTEN_RECLAIMER_META_ADDR = 12
+# ext4 zeroes the victim inode on unlink, so the deleted victim entry survives
+# only as a metadata-cleared slot (size 0, type 0) — recorded so the tier test
+# asserts the honest "no recoverable data runs" outcome (Pitfall 2), not a false
+# "intact" recovery.
+EXT4_OVERWRITTEN_VICTIM_INODE_CLEARED = True
+
+# --- NTFS resident-deleted fixture (RECOV-01, Pitfall 3) --------------------
+# A small NTFS file whose $DATA stays RESIDENT inside its MFT record (< ~700 B),
+# then deleted. A resident deleted file has NO data-block runs; its content is
+# recovered straight from the surviving MFT record -> classified ``intact`` by
+# MFT-record survival, not block overlap.
+NTFS_RESIDENT_NAME_FILE = "resident.txt"
+NTFS_RESIDENT_CONTENT = b"small resident NTFS file recovered from the MFT record\n"
+# The deleted file's MFT entry (meta) address (recorded post-build).
+NTFS_RESIDENT_META_ADDR = 64
+
+# --- NSRL fixtures (FILTER-01, Pitfall 4) -----------------------------------
+# Two tiny NSRL-format SQLite DBs: one ``FILE`` table (RDSv3 "minimal" variant)
+# and one ``METADATA`` table (RDSv3 "modern/full" variant). BOTH store hashes
+# UPPERCASE (real RDS behavior) while the project's own file rows are lowercase
+# hex -- this case mismatch is the #1 silent-zero-match trap the matcher must
+# handle (.upper() the probe). Ground-truth constants below are stored LOWERCASE
+# (the way our ``files`` rows store them); a member is the UPPERCASE of these.
+#
+# The known member's hashes are derived from a fixed byte string so a rebuild is
+# byte-identical and independent of the disk images.
+NSRL_KNOWN_CONTENT = b"a known good system file recorded in the NSRL RDS\n"
+NSRL_KNOWN_MD5 = hashlib.md5(NSRL_KNOWN_CONTENT).hexdigest()
+NSRL_KNOWN_SHA1 = hashlib.sha1(NSRL_KNOWN_CONTENT).hexdigest()
+NSRL_KNOWN_SHA256 = hashlib.sha256(NSRL_KNOWN_CONTENT).hexdigest()
+# A second known member used to exercise sha1/sha256 fall-through matching.
+_NSRL_KNOWN2_CONTENT = b"another known file, matched by sha256 only\n"
+NSRL_KNOWN2_MD5 = hashlib.md5(_NSRL_KNOWN2_CONTENT).hexdigest()
+NSRL_KNOWN2_SHA1 = hashlib.sha1(_NSRL_KNOWN2_CONTENT).hexdigest()
+NSRL_KNOWN2_SHA256 = hashlib.sha256(_NSRL_KNOWN2_CONTENT).hexdigest()
+# A non-member: present nowhere in either DB (membership probe must miss).
+_NSRL_NONMEMBER_CONTENT = b"a file that is NOT in any NSRL set\n"
+NSRL_NONMEMBER_MD5 = hashlib.md5(_NSRL_NONMEMBER_CONTENT).hexdigest()
+NSRL_NONMEMBER_SHA1 = hashlib.sha1(_NSRL_NONMEMBER_CONTENT).hexdigest()
+NSRL_NONMEMBER_SHA256 = hashlib.sha256(_NSRL_NONMEMBER_CONTENT).hexdigest()
+
+
 def _require_tool(name: str) -> str:
     """Return the path to ``name`` or raise an actionable error (build-time only)."""
     path = shutil.which(name)
@@ -135,6 +230,43 @@ def _truncate(dest: Path, size: int) -> None:
     """Create a zero-filled sparse file of ``size`` bytes at ``dest``."""
     with open(dest, "wb") as fh:
         fh.truncate(size)
+
+
+# Fixed values that make ``mkfs.ext4`` output byte-deterministic: a pinned
+# filesystem UUID, a pinned directory-hash seed, and a frozen creation time
+# (``mke2fs`` honours ``E2FSPROGS_FAKE_TIME``). Without these, ext4 embeds a
+# random UUID + wall-clock superblock timestamps and a rebuild is not
+# byte-identical (the Phase-4 determinism acceptance criterion).
+_EXT4_FIXED_UUID = "11111111-1111-1111-1111-111111111111"
+_EXT4_FIXED_HASH_SEED = "22222222-2222-2222-2222-222222222222"
+_EXT4_FAKE_TIME = "1700000000"  # fixed epoch seconds -> frozen superblock times
+
+
+def _mke2fs_ext4(dest: Path) -> None:
+    """Format ``dest`` as a small, byte-deterministic ext4 volume.
+
+    Pins the UUID, directory-hash seed, and creation time so re-running the
+    builder reproduces the image byte-for-byte (used by every ext4 fixture).
+    """
+    mkfs = _require_tool("mkfs.ext4")
+    env = {**os.environ, "E2FSPROGS_FAKE_TIME": _EXT4_FAKE_TIME}
+    subprocess.run(
+        [
+            mkfs,
+            "-F",
+            "-q",
+            "-b",
+            "1024",
+            "-U",
+            _EXT4_FIXED_UUID,
+            "-E",
+            f"hash_seed={_EXT4_FIXED_HASH_SEED}",
+            str(dest),
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
 
 
 def build_tiny_ext4_image(dest: Path) -> Path:
@@ -191,9 +323,7 @@ def build_tiny_fat32_image(dest: Path) -> Path:
     mkfs = _require_tool("mkfs.fat")
     mcopy = _require_tool("mcopy")
     _truncate(dest, _FAT32_SIZE)
-    subprocess.run(
-        [mkfs, "-F", "32", str(dest)], check=True, capture_output=True
-    )
+    subprocess.run([mkfs, "-F", "32", str(dest)], check=True, capture_output=True)
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / FS_FILE_NAME
         src.write_bytes(FS_FILE_CONTENT)
@@ -293,6 +423,235 @@ def build_partitioned_image(dest: Path) -> Path:
     return dest
 
 
+def build_ext4_orphan_image(dest: Path) -> Path:
+    """Build a tiny ext4 image holding an ORPHAN file (RECOV-02).
+
+    A regular file is written inside a subdirectory; then BOTH the file and its
+    parent directory are removed via ``debugfs`` so the file's inode survives
+    with no path back to the root — an orphan. ``debugfs rm``/``rmdir`` clears
+    the *directory entries* but leaves the file inode's block pointers intact
+    (Pitfall 2), so the orphan's :data:`EXT4_ORPHAN_CONTENT` is still
+    recoverable. The built image is committed; CI never runs ``mkfs``.
+    """
+    debugfs = _require_tool("debugfs")
+    _truncate(dest, _EXT4_SIZE)
+    _mke2fs_ext4(dest)
+    with tempfile.TemporaryDirectory() as td:
+        payload = Path(td) / "orphan.bin"
+        payload.write_bytes(EXT4_ORPHAN_CONTENT)
+        # mkdir the subdir, write the file into it, then remove the file AND the
+        # parent dir so the file inode is orphaned (no surviving parent entry).
+        script = (
+            f"mkdir /{EXT4_ORPHAN_DIR}\n"
+            f"cd /{EXT4_ORPHAN_DIR}\n"
+            f"write {payload} {EXT4_ORPHAN_FILE}\n"
+            f"rm {EXT4_ORPHAN_FILE}\n"
+            "cd /\n"
+            f"rmdir /{EXT4_ORPHAN_DIR}\n"
+            "close\n"
+        )
+        _run_debugfs(debugfs, dest, script)
+    return dest
+
+
+def _run_debugfs(debugfs: str, dest: Path, script: str) -> None:
+    """Run a ``debugfs -w`` request script with a frozen clock (deterministic).
+
+    ``debugfs`` stamps inode MAC times with the wall clock on ``write``; pinning
+    ``E2FSPROGS_FAKE_TIME`` freezes them so the built image is byte-identical on
+    every rebuild.
+    """
+    env = {**os.environ, "E2FSPROGS_FAKE_TIME": _EXT4_FAKE_TIME}
+    subprocess.run(
+        [debugfs, "-w", "-f", "/dev/stdin", str(dest)],
+        input=script.encode(),
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def build_ext4_overwritten_image(dest: Path) -> Path:
+    """Build a tiny ext4 image with an OVERWRITTEN deleted entry (RECOV-03).
+
+    Writes a multi-block file, ``debugfs rm``\\ s it, then writes a NEW file
+    whose data blocks reclaim the deleted file's blocks. The deleted inode keeps
+    its (now-stale) block pointers, so its surviving runs overlap an *allocated*
+    file — the discriminator the ``partial/overwritten`` tier classifier keys on
+    (D-31). Built with ``debugfs`` so ext4 block pointers survive (Pitfall 2).
+    """
+    debugfs = _require_tool("debugfs")
+    _truncate(dest, _EXT4_SIZE)
+    _mke2fs_ext4(dest)
+    with tempfile.TemporaryDirectory() as td:
+        victim = Path(td) / "victim.bin"
+        victim.write_bytes(EXT4_OVERWRITTEN_DELETED_CONTENT)
+        reclaimer = Path(td) / "reclaimer.bin"
+        reclaimer.write_bytes(EXT4_OVERWRITTEN_REPLACEMENT_CONTENT)
+        # Write+delete the victim so the allocator's next file reuses its blocks,
+        # then write the reclaimer to take them. The deleted inode's runs now
+        # point at the reclaimer's allocated blocks.
+        script = (
+            f"write {victim} {EXT4_OVERWRITTEN_DELETED_NAME}\n"
+            f"rm {EXT4_OVERWRITTEN_DELETED_NAME}\n"
+            f"write {reclaimer} {EXT4_OVERWRITTEN_REPLACEMENT_NAME}\n"
+            "close\n"
+        )
+        _run_debugfs(debugfs, dest, script)
+    return dest
+
+
+def build_ntfs_resident_deleted_image(dest: Path) -> Path:
+    """Build a tiny NTFS image with a RESIDENT deleted file (RECOV-01, Pitfall 3).
+
+    A small file (< ~700 B) is written so its ``$DATA`` stays RESIDENT inside the
+    MFT record, then deleted. A resident deleted file has NO data-block runs; its
+    content is recovered straight from the surviving MFT record, so the tier
+    classifier must treat it as ``intact`` by MFT-record survival rather than by
+    block overlap. Needs ``mkntfs`` + ``ntfscp``; the built image is committed.
+
+    Determinism caveat: unlike the ext4 fixtures (pinned UUID + frozen clock),
+    ``mkntfs`` offers no fixed-UUID/fixed-time option and no ``libfaketime`` is
+    present on the build host, so it embeds wall-clock NTFS FILETIMEs and a
+    random volume serial. A rebuild therefore reproduces the *structure* and the
+    recorded ground-truth (the resident-deleted entry at
+    :data:`NTFS_RESIDENT_META_ADDR` with :data:`NTFS_RESIDENT_CONTENT`) but is
+    NOT byte-identical. The image is committed once (the Phase-2 NTFS-fixture
+    precedent); only the ext4 + NSRL fixtures are byte-reproducible.
+    """
+    mkntfs = _require_tool("mkntfs")
+    ntfscp = _require_tool("ntfscp")
+    _truncate(dest, _NTFS_SIZE)
+    subprocess.run(
+        [mkntfs, "-F", "-Q", "-s", "512", str(dest)],
+        check=True,
+        capture_output=True,
+    )
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / NTFS_RESIDENT_NAME_FILE
+        src.write_bytes(NTFS_RESIDENT_CONTENT)
+        subprocess.run(
+            [ntfscp, str(dest), str(src), NTFS_RESIDENT_NAME_FILE],
+            check=True,
+            capture_output=True,
+        )
+    # ``ntfscp`` cannot delete; there is no offline NTFS-delete CLI tool. Instead
+    # mark the file's MFT record DELETED the way a real unlink does: clear the
+    # MFT_RECORD_IN_USE flag (bit 0 of the 2-byte flags field at MFT-header
+    # offset 22) in-place. The record's RESIDENT ``$DATA`` is untouched, so TSK
+    # sees an unallocated entry whose content is still recoverable from the MFT
+    # record — exactly the resident-deleted case (Pitfall 3). This is purely a
+    # byte edit of the committed fixture (build-time only), fully deterministic.
+    _ntfs_mark_record_deleted(dest, NTFS_RESIDENT_CONTENT)
+    return dest
+
+
+def _ntfs_mark_record_deleted(dest: Path, resident_content: bytes) -> None:
+    """Clear MFT_RECORD_IN_USE on the record whose resident $DATA == content.
+
+    Reads NTFS geometry from the boot sector to compute the MFT-record size,
+    locates the ``FILE`` record holding ``resident_content`` (the file we just
+    wrote), and clears bit 0 of the flags field at record offset 22 so the entry
+    reads as deleted while its resident data survives. Deterministic byte edit.
+    """
+    import struct
+
+    data = bytearray(dest.read_bytes())
+    bytes_per_sector = struct.unpack_from("<H", data, 11)[0]
+    sectors_per_cluster = data[13]
+    clusters_per_mft_record = struct.unpack_from("<b", data, 0x40)[0]
+    if clusters_per_mft_record < 0:
+        rec_size = 1 << (-clusters_per_mft_record)
+    else:
+        rec_size = clusters_per_mft_record * sectors_per_cluster * bytes_per_sector
+    idx = data.find(resident_content)
+    if idx < 0:
+        raise RuntimeError(
+            "resident content not found in NTFS image (MFT layout changed)"
+        )
+    rec_start = (idx // rec_size) * rec_size
+    if bytes(data[rec_start : rec_start + 4]) != b"FILE":
+        raise RuntimeError("computed MFT record start is not a FILE record")
+    flags = struct.unpack_from("<H", data, rec_start + 22)[0]
+    struct.pack_into("<H", data, rec_start + 22, flags & ~0x0001)  # clear IN_USE
+    dest.write_bytes(bytes(data))
+
+
+def _insert_nsrl_rows(conn: sqlite3.Connection, table: str) -> None:
+    """Create ``table`` with NSRL-style hash columns and insert UPPERCASE rows.
+
+    Mirrors the RDSv3 schema shape used by the matcher (``md5``/``sha1``/
+    ``sha256`` text columns). Hashes are stored **UPPERCASE** (real RDS
+    behaviour, Pitfall 4) while the project's own ``files`` rows are lowercase —
+    the matcher normalises the probe before comparing. Rows are inserted in a
+    fixed order so the DB is byte-deterministic.
+    """
+    conn.execute(
+        f"CREATE TABLE {table} ("
+        "  md5 TEXT NOT NULL,"
+        "  sha1 TEXT NOT NULL,"
+        "  sha256 TEXT NOT NULL,"
+        "  file_name TEXT,"
+        "  file_size INTEGER,"
+        "  package_id INTEGER"
+        ")"
+    )
+    rows = (
+        (
+            NSRL_KNOWN_MD5.upper(),
+            NSRL_KNOWN_SHA1.upper(),
+            NSRL_KNOWN_SHA256.upper(),
+            "known_good.bin",
+            len(NSRL_KNOWN_CONTENT),
+            1,
+        ),
+        (
+            NSRL_KNOWN2_MD5.upper(),
+            NSRL_KNOWN2_SHA1.upper(),
+            NSRL_KNOWN2_SHA256.upper(),
+            "known_good_2.bin",
+            len(_NSRL_KNOWN2_CONTENT),
+            2,
+        ),
+    )
+    conn.executemany(
+        f"INSERT INTO {table} (md5, sha1, sha256, file_name, file_size, package_id)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+
+
+def _build_one_nsrl_db(dest: Path, table: str) -> Path:
+    """Deterministically (re)build a single NSRL-format SQLite DB at ``dest``."""
+    if dest.exists():
+        dest.unlink()
+    conn = sqlite3.connect(dest)
+    try:
+        conn.execute("PRAGMA page_size=4096;")
+        _insert_nsrl_rows(conn, table)
+        conn.commit()
+        # VACUUM compacts the file into a canonical layout for byte-determinism.
+        conn.execute("VACUUM;")
+        conn.commit()
+    finally:
+        conn.close()
+    return dest
+
+
+def build_nsrl_fixture(minimal_path: Path, metadata_path: Path) -> tuple[Path, Path]:
+    """Build the two NSRL-format SQLite fixtures (FILTER-01, Pitfall 4).
+
+    ``minimal_path`` gets a ``FILE`` table (RDSv3 "minimal" variant);
+    ``metadata_path`` gets a ``METADATA`` table (RDSv3 "modern/full" variant).
+    Both carry identical UPPERCASE-hash rows so the variant-discovery test can
+    confirm each table name is found and queried. Built with stdlib ``sqlite3``
+    only — no external tool — and byte-deterministic across rebuilds.
+    """
+    _build_one_nsrl_db(minimal_path, "FILE")
+    _build_one_nsrl_db(metadata_path, "METADATA")
+    return minimal_path, metadata_path
+
+
 # ---------------------------------------------------------------------------
 # Malicious-archive builders (consumed by the safe_extract jail tests, plan 01-03)
 # ---------------------------------------------------------------------------
@@ -378,10 +737,20 @@ def main() -> None:
         (TINY_NTFS_NAME, build_tiny_ntfs_image),
         (TINY_FAT32_NAME, build_tiny_fat32_image),
         (TINY_PARTITIONED_NAME, build_partitioned_image),
+        # Phase 4 recovery fixtures.
+        (EXT4_ORPHAN_NAME, build_ext4_orphan_image),
+        (EXT4_OVERWRITTEN_NAME, build_ext4_overwritten_image),
+        (NTFS_RESIDENT_NAME, build_ntfs_resident_deleted_image),
     )
     for name, build in builders:
         out = build(here / name)
         print(f"wrote {out} ({os.path.getsize(out)} bytes)")
+    # Phase 4 NSRL fixtures (stdlib sqlite3; two paths from one builder).
+    minimal, metadata = build_nsrl_fixture(
+        here / NSRL_MINIMAL_NAME, here / NSRL_METADATA_NAME
+    )
+    print(f"wrote {minimal} ({os.path.getsize(minimal)} bytes)")
+    print(f"wrote {metadata} ({os.path.getsize(metadata)} bytes)")
 
 
 if __name__ == "__main__":
