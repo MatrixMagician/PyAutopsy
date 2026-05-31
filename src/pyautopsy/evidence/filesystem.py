@@ -42,6 +42,7 @@ __all__ = [
     "enumerate_volumes",
     "fs_type_int",
     "iter_deleted_inodes",
+    "iter_unallocated_blocks",
     "open_fs",
     "recover_meta",
     "walk_fs",
@@ -563,6 +564,62 @@ def allocated_data_blocks(fs: pytsk3.FS_Info) -> frozenset[int]:
             continue
         blocks.update(_iter_block_runs(f))
     return frozenset(blocks)
+
+
+def iter_unallocated_blocks(
+    handle: object, fs: pytsk3.FS_Info, vol: VolumeEntry
+) -> Iterator[tuple[int, bytes]]:
+    """Yield ``(block_index, bytes)`` for each UNALLOCATED block (SEARCH-01).
+
+    pytsk3 exposes no usable block-allocation-bitmap / ``block_walk`` API (RESEARCH
+    Pitfall 1, verified), so the unallocated-block stream is derived as the
+    COMPLEMENT of the allocated-block set: :func:`allocated_data_blocks` walks
+    every allocated inode's runs once, and this generator reads (read-only, via the
+    byte seam ``handle.read``) the raw bytes of every block index NOT in that set.
+
+    ALL native ``pytsk3``/``fs.info`` access stays inside this seam function (D-14
+    / Pitfall 1) so the upper ``search/`` tier imports no native binding — it
+    receives a clean ``(block_index, bytes)`` stream and never touches block
+    geometry. The block geometry is read from ``fs.info`` here: ``block_size`` is
+    the bytes-per-block and ``block_count`` the total block count of the
+    filesystem. The read is bounded to one block at a time (PERF-01): a whole
+    volume is never slurped into memory.
+
+    The byte offset of block ``i`` within the image is ``vol.offset + i *
+    block_size`` (``vol.offset`` is already a byte offset — PITFALLS Pitfall 7),
+    so a hit found at intra-block position ``p`` in the yielded ``bytes`` sits at
+    absolute image offset ``vol.offset + i * block_size + p``.
+
+    Args:
+        handle: The opened read-only image handle (the byte seam); only its
+            ``read(offset, size) -> bytes`` method is used (read-only, D-05/P1).
+        fs: The open filesystem (from :func:`open_fs`).
+        vol: The :class:`VolumeEntry` the filesystem was opened in (its
+            ``offset`` anchors every block's absolute image offset).
+
+    Yields:
+        ``(block_index, block_bytes)`` for every unallocated block, in ascending
+        block-index order (deterministic). A block whose raw read fails is
+        skipped rather than aborting the stream.
+    """
+    allocated = allocated_data_blocks(fs)
+    block_size = int(fs.info.block_size)
+    block_count = int(fs.info.block_count)
+    if block_size <= 0 or block_count <= 0:
+        return
+    for i in range(block_count):
+        if i in allocated:
+            continue
+        offset = vol.offset + i * block_size
+        try:
+            data = handle.read(offset, block_size)  # type: ignore[attr-defined]
+        except OSError:
+            # A block past the readable extent / a transient read error must not
+            # abort the whole unallocated stream — skip it (deterministic).
+            continue
+        if not data:
+            continue
+        yield i, data
 
 
 def enumerate_volumes(img: pytsk3.Img_Info) -> Iterator[VolumeEntry]:

@@ -145,6 +145,45 @@ CREATE TABLE IF NOT EXISTS known_file_matches (
 CREATE INDEX IF NOT EXISTS idx_known_file_matches_file_id
     ON known_file_matches (file_id);
 
+-- Content / IOC / known-bad-hash search hits, reported by file + byte offset
+-- (SEARCH-01/02, D-49). This is the ONLY new schema item in Phase 5; it mirrors
+-- known_file_matches (typed core columns + a JSON ``attributes`` blackboard) and
+-- is purely ADDITIVE — no existing row needs backfill and ``timeline_events`` is
+-- UNTOUCHED (D-47). ``file_id`` is nullable because an UNALLOCATED-space hit
+-- belongs to no live file; ``region`` ∈ {allocated, unallocated, metadata};
+-- ``term_kind`` ∈ {literal, regex, ioc, hash}. ``term`` is the matched needle
+-- stored as a latin-1 string so a non-UTF-8 needle round-trips byte-exactly back
+-- to ``bytes``. ``byte_offset`` is file-relative for allocated content and
+-- image/volume-relative for unallocated; ``block_index`` is the unallocated
+-- block (NULL otherwise). ``context`` is a bounded surrounding-bytes snippet
+-- (data only — the report autoescapes it). The hit ordering lives ONLY in
+-- get_search_hits (no raw SQL outside the store, D-41); the index matches it.
+CREATE TABLE IF NOT EXISTS search_hits (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_source_id INTEGER NOT NULL REFERENCES evidence_sources (id),
+    file_id            INTEGER REFERENCES files (id),   -- nullable (unallocated hits)
+    region             TEXT    NOT NULL,                 -- allocated | unallocated | metadata
+    term               TEXT    NOT NULL,                 -- matched needle (latin-1 round-trip)
+    term_kind          TEXT    NOT NULL,                 -- literal | regex | ioc | hash
+    volume_id          INTEGER NOT NULL,
+    volume_offset      INTEGER NOT NULL,
+    byte_offset        INTEGER,                           -- nullable (pure hash match)
+    block_index        INTEGER,                           -- unallocated block; NULL otherwise
+    path               TEXT,                              -- owning file path; NULL (unallocated)
+    context            TEXT,                              -- bounded snippet (data only)
+    attributes         TEXT    NOT NULL DEFAULT '{}'
+);
+
+-- Index supporting the get_search_hits D-41 total order. The surrogate id is the
+-- final insertion-deterministic tiebreak. Matches get_search_hits' ORDER BY.
+CREATE INDEX IF NOT EXISTS idx_search_hits_order
+    ON search_hits (
+        evidence_source_id, volume_id, volume_offset, byte_offset, term, id
+    );
+
+CREATE INDEX IF NOT EXISTS idx_search_hits_evidence_source_id
+    ON search_hits (evidence_source_id);
+
 -- Normalized forensic timeline events — the shared event model (D-23/D-24).
 --
 -- This is the spine Phase 3 reads back for the timeline and report, and the

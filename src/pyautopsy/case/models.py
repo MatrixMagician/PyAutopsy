@@ -21,6 +21,7 @@ __all__ = [
     "TimelineEvent",
     "VolumeLimitation",
     "KnownMatch",
+    "SearchHit",
     "AuditEvent",
 ]
 
@@ -279,6 +280,60 @@ class KnownMatch:
     matched_on: str
     list_name: str | None = None
     sense: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchHit:
+    """One search hit reported by file and byte offset (SEARCH-01/02, D-49).
+
+    A streaming literal/regex/IOC content scan or a known-bad-hash match produces
+    one of these per hit. It is the SEARCH analogue of :class:`KnownMatch`: an
+    additive ``search_hits`` row carrying which ``term`` matched, what KIND of
+    term (``literal``/``regex``/``ioc``/``hash``), and WHERE — the ``region``
+    (``allocated`` file content, ``unallocated`` space, or ``metadata``), the
+    owning volume + byte offset, and (for an unallocated hit) the ``block_index``.
+    ``file_id``/``path`` are populated for allocated and known-bad-hash hits and
+    ``None`` for an unallocated-space hit that belongs to no live file. A bounded
+    ``context`` snippet (data only — the report autoescapes it, Security V5) gives
+    the examiner a peek at the surrounding bytes. ``term`` is the raw matched
+    bytes so a non-UTF-8 needle round-trips exactly; it is stored as a latin-1
+    string in the DB and decoded back to ``bytes`` on read.
+
+    Args:
+        evidence_source_id: Owning evidence-source id (FK into
+            ``evidence_sources``).
+        region: Where the hit was found — ``"allocated"`` | ``"unallocated"`` |
+            ``"metadata"``.
+        term: The matched needle as raw ``bytes`` (round-trips a non-UTF-8 term).
+        term_kind: The kind of term — ``"literal"`` | ``"regex"`` | ``"ioc"`` |
+            ``"hash"``.
+        volume_id: The volume the hit was found in (D-15).
+        volume_offset: Byte offset of that volume within the image (D-15).
+        byte_offset: Absolute byte offset of the hit (file-relative for allocated
+            content, image/volume-relative for unallocated); ``None`` only when
+            no offset applies (e.g. a pure hash match).
+        file_id: The owning ``files`` row id, or ``None`` (unallocated space).
+        path: The owning file's path, or ``None`` (unallocated space).
+        block_index: The unallocated block index for an unallocated hit; ``None``
+            otherwise.
+        context: A bounded surrounding-bytes snippet (data only), or ``None``.
+        attributes: Heterogeneous JSON-serialisable extra data (D-02).
+        id: Surrogate primary key; ``None`` until persisted.
+    """
+
+    evidence_source_id: int
+    region: str
+    term: bytes
+    term_kind: str
+    volume_id: int
+    volume_offset: int
+    byte_offset: int | None = None
+    file_id: int | None = None
+    path: str | None = None
+    block_index: int | None = None
+    context: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 

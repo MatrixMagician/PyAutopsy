@@ -27,6 +27,7 @@ from pyautopsy.case.models import (
     EvidenceSource,
     FileRow,
     KnownMatch,
+    SearchHit,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -729,6 +730,74 @@ class CaseStore:
             for row in rows
         ]
 
+    # -- search hits (SEARCH-01/02, D-49) ---------------------------------
+
+    def insert_search_hits(self, rows: Iterable[SearchHit]) -> int:
+        """Bulk-persist :class:`SearchHit` rows (SEARCH-01/02, D-49).
+
+        Like :meth:`insert_known_matches` this calls
+        :meth:`_commit_unless_in_transaction`, so it composes inside the search
+        orchestrator's single outer :meth:`transaction` block (WR-01) alongside
+        the hash-arm :meth:`insert_known_matches`. CaseStore stays the sole DB
+        writer (D-08) — search-hit rows never bypass this method (no raw SQL
+        outside the store, D-41).
+
+        Args:
+            rows: The search hits to insert (any iterable; materialised once).
+
+        Returns:
+            The number of rows inserted.
+        """
+        params = [_search_hit_params(row) for row in rows]
+        if params:
+            self.connection.executemany(_SEARCH_HIT_INSERT_SQL, params)
+        self._commit_unless_in_transaction()
+        return len(params)
+
+    def get_search_hits(self, evidence_source_id: int) -> list[SearchHit]:
+        """Read search hits for a source in a deterministic total order (D-41).
+
+        This is the SINGLE place the search-hit read ordering is defined (no raw
+        SQL outside the store, D-41). Hits are filtered to one evidence source and
+        ordered by ``volume_id → volume_offset → byte_offset → term`` and finally
+        the surrogate ``id`` (the insertion-deterministic final tiebreak — the
+        orchestrator inserts hits in a deterministic scan order within one
+        transaction, so the same fixture always assigns the same id to the same
+        hit). ``byte_offset`` may be NULL (a pure hash match); SQLite sorts NULLs
+        first, which is stable and deterministic.
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            The matching :class:`SearchHit` rows in the store's total order
+            (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT * FROM search_hits WHERE evidence_source_id = ? "
+            "ORDER BY volume_id, volume_offset, byte_offset, term, id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [
+            SearchHit(
+                evidence_source_id=row["evidence_source_id"],
+                region=row["region"],
+                # ``term`` round-trips via latin-1 so a non-UTF-8 needle is exact.
+                term=row["term"].encode("latin-1"),
+                term_kind=row["term_kind"],
+                volume_id=row["volume_id"],
+                volume_offset=row["volume_offset"],
+                byte_offset=row["byte_offset"],
+                file_id=row["file_id"],
+                path=row["path"],
+                block_index=row["block_index"],
+                context=row["context"],
+                attributes=_load_attributes(row["attributes"]),
+                id=row["id"],
+            )
+            for row in rows
+        ]
+
 
 # The ``files`` insert column order, used by both insert_file and the bulk
 # insert_files ``executemany`` so the single SQL statement and the parameter
@@ -882,6 +951,51 @@ def _known_match_params(match: KnownMatch) -> tuple[Any, ...]:
         match.sense,
         match.matched_on,
         json.dumps(match.attributes, sort_keys=True),
+    )
+
+
+# The ``search_hits`` insert column order, kept in lockstep with
+# :func:`_search_hit_params` exactly like ``known_file_matches`` (WR-01).
+_SEARCH_HIT_COLUMNS: tuple[str, ...] = (
+    "evidence_source_id",
+    "file_id",
+    "region",
+    "term",
+    "term_kind",
+    "volume_id",
+    "volume_offset",
+    "byte_offset",
+    "block_index",
+    "path",
+    "context",
+    "attributes",
+)
+
+_SEARCH_HIT_INSERT_SQL = (
+    "INSERT INTO search_hits ("
+    + ", ".join(_SEARCH_HIT_COLUMNS)
+    + ") VALUES ("
+    + ", ".join("?" for _ in _SEARCH_HIT_COLUMNS)
+    + ")"
+)
+
+
+def _search_hit_params(hit: SearchHit) -> tuple[Any, ...]:
+    """Flatten a :class:`SearchHit` into the :data:`_SEARCH_HIT_COLUMNS` tuple."""
+    return (
+        hit.evidence_source_id,
+        hit.file_id,
+        hit.region,
+        # Store the raw needle bytes as a latin-1 string (byte-exact round-trip).
+        hit.term.decode("latin-1"),
+        hit.term_kind,
+        hit.volume_id,
+        hit.volume_offset,
+        hit.byte_offset,
+        hit.block_index,
+        hit.path,
+        hit.context,
+        json.dumps(hit.attributes, sort_keys=True),
     )
 
 
