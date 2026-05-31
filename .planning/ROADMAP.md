@@ -187,7 +187,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1; 05-02 and 05-03 run in parallel)*
 
-- [ ] 05-02-PLAN.md — syslog/messages + shell-history parsers registering into the shared pipeline (LOG-02, LOG-03; D-44 tamperability findings)
+- [x] 05-02-PLAN.md — syslog/messages + shell-history parsers registering into the shared pipeline (LOG-02, LOG-03; D-44 tamperability findings)
 - [ ] 05-03-PLAN.md — Search slice: iter_unallocated_blocks seam + additive search_hits store + streaming literal/regex + IOC/known-bad-hash + `pyautopsy search` CLI (SEARCH-01, SEARCH-02; D-49)
 
 **Wave 3** *(blocked on Waves 1+2)*
@@ -205,4 +205,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 2/5 | In Progress|  |
+| 5. Log Parsing, Super-Timeline & Search | 3/5 | In Progress|  |

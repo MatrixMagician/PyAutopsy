@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 05-00-PLAN.md
-last_updated: "2026-05-31T18:40:20.569Z"
+last_updated: "2026-05-31T18:47:33.359Z"
 last_activity: 2026-05-31 -- Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 23
-  completed_plans: 20
+  completed_plans: 21
   percent: 80
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 ## Current Position
 
 Phase: 05 (log-parsing-supertimeline-search) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-05-31 -- Phase 05 execution started
 
@@ -70,6 +70,7 @@ Progress: [████████░░] 80%
 | Phase 04 P04-03 | 30 | 2 tasks | 5 files |
 | Phase 05 P00 | 7min | 2 tasks | 8 files |
 | Phase 05 P01 | 9min | 2 tasks | 11 files |
+| Phase 05 P02 | 13m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -109,6 +110,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 04-03: analyze recovery+filtering are opt-in (D-40); default analyze stays Phase-3 byte-identical
 - [Phase ?]: 04-03: _MVP_LIMITATIONS disclaimer is conditional — verbatim Phase-3 text when nothing ran, rebuilt honestly when recovery/filtering ran (D-28/D-32)
 - [Phase ?]: 04-03: CLI carries hash-list sense via paired --hash-set-allow/--hash-set-block options (deterministic order, D-41)
+- [Phase ?]: 05-02: shell-history/syslog parsers self-register at import time (mirroring auth) so core/logs.py stays unchanged (EXT-01)
 
 ### Pending Todos
 
@@ -133,6 +135,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T18:40:16.298Z
+Last session: 2026-05-31T18:47:29.332Z
 Stopped at: Completed 05-00-PLAN.md
 Resume file: None
