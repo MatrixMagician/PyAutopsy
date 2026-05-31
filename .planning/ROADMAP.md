@@ -71,7 +71,24 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. MD5, SHA-1, and SHA-256 are computed per file during the walk in a single streaming pass
   5. File type is identified by content signature (not extension), and encrypted/unsupported volumes are reported as an explicit known-limitation finding rather than producing empty or garbage results
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 0**
+
+- [ ] 02-00-PLAN.md — Wave 0 scaffold: python-magic dep + filetype.py binding guard, ext4/NTFS/FAT32/partitioned fixtures, executable D-14 seam allowlist test, failing META-01..05 + D-20 + read-only stubs (D-14, D-19)
+
+**Wave 1** *(blocked on Wave 0)*
+
+- [ ] 02-01-PLAN.md — Walk slice: files + volume_limitations schema, filesystem.py FS seam, walk orchestrator + `pyautopsy walk` CLI — inventory every entry incl. deleted, volume tagging, D-20 limitations, read-only (META-01, D-14/D-15/D-18/D-20)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 02-02-PLAN.md — MACB → tz-aware UTC ISO-8601 (FAT local-time flagged, zero→None, no-naive invariant) + UID/GID/mode (META-02, META-03, D-16)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 02-03-PLAN.md — Per-file single-pass MD5+SHA-1+SHA-256 (empty sentinels, --max-hash-size) + content-signature file typing (META-04, META-05, D-17/D-19)
 
 ### Phase 3: Timeline & MVP Report
 
@@ -129,7 +146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
-| 2. Filesystem Walk & Metadata | 0/TBD | Not started | - |
+| 2. Filesystem Walk & Metadata | 0/4 | Planned | - |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
