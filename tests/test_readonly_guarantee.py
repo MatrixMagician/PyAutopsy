@@ -57,6 +57,54 @@ def test_source_unchanged_after_walk(
     assert after.st_size == before.st_size
 
 
+def test_recover_does_not_write_source(
+    ntfs_resident_deleted_image: Path, tmp_path: Path
+) -> None:
+    """D-42: deleted-file recovery never modifies the source image.
+
+    Mirrors ``test_source_unchanged_after_walk`` for the recovery path: stat the
+    source before, run ``ingest`` + ``walk`` + ``recover`` (which reopens each
+    deleted inode read-only and writes ONLY under ``<case>/recovered/``), stat
+    after, and assert ``st_mtime_ns`` + ``st_size`` are unchanged — the source
+    bytes are provably untouched. The Phase-1 end-of-run re-verify still ran
+    (it lives inside ``run_ingest``), and a second ``assert_source_not_mounted``
+    confirms the read-only-boundary guard is re-asserted (the same guard
+    ``run_recover`` re-asserts before any access).
+    """
+    from pyautopsy.core.ingest import run_ingest
+    from pyautopsy.core.recover import run_recover
+    from pyautopsy.core.walk import run_walk
+
+    case_dir = tmp_path / "case"
+    before = ntfs_resident_deleted_image.stat()
+
+    run_ingest(
+        ntfs_resident_deleted_image, case_dir, examiner="X", evidence_id="E1"
+    )
+    run_walk(ntfs_resident_deleted_image, case_dir)
+    result = run_recover(ntfs_resident_deleted_image, case_dir)
+
+    after = ntfs_resident_deleted_image.stat()
+
+    # The source image is provably never written: identical mtime + size (D-42).
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_size == before.st_size
+
+    # Sanity: recovery actually did work (so this is not a vacuous read-only
+    # pass over a no-op), and recovered bytes landed ONLY under the case dir.
+    assert result.files_recovered >= 1
+    recovered_root = case_dir / "recovered"
+    assert recovered_root.is_dir()
+    for recovered in recovered_root.rglob("*"):
+        if recovered.is_file():
+            # Every recovered byte is confined to the case dir, never the source.
+            assert recovered_root in recovered.resolve().parents
+
+    # The read-only-boundary guard is re-assertable on the source after recovery
+    # (it is not a mountpoint), the same guard run_recover re-asserts (D-42/P1).
+    assert_source_not_mounted(ntfs_resident_deleted_image)
+
+
 def _mounts_table(*device_mount_pairs: tuple[str, str]) -> str:
     """Build a synthetic /proc/mounts body from (device, mountpoint) pairs."""
     return "".join(

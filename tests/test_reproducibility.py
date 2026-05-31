@@ -13,6 +13,7 @@ tool ran.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -20,6 +21,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from pyautopsy.cli.main import app
+from tests.fixtures import make_fixtures
 
 runner = CliRunner()
 
@@ -186,3 +188,143 @@ def test_two_analyze_runs_byte_identical_report(
     )
     assert meta_a["generated_utc"].endswith("+00:00")
     assert meta_a["generated_utc"] != meta_b["generated_utc"]
+
+
+def _analyze_recover_filter(
+    image: Path, case: Path, *, nsrl_db: Path, hash_set_allow: Path
+) -> None:
+    """Run ``analyze --recover --nsrl <db> --hash-set-allow <list>`` once.
+
+    Drives the full INTEGRATION path (recovery + filtering opt-in, D-40) so the
+    CLI-02/D-41 byte-identical comparison covers the recovered/orphan/known
+    sections, not just the default pipeline.
+    """
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(image),
+            "--case",
+            str(case),
+            "--examiner",
+            "X",
+            "--evidence-id",
+            "E1",
+            "--recover",
+            "--nsrl",
+            str(nsrl_db),
+            "--hash-set-allow",
+            str(hash_set_allow),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_recover_filter_reproducible(
+    ntfs_resident_deleted_image: Path,
+    nsrl_minimal_db: Path,
+    tmp_path: Path,
+) -> None:
+    """CLI-02/D-41: two ``analyze --recover --nsrl`` runs are byte-identical.
+
+    Runs the full recover+filter analyze twice into ``case_a``/``case_b`` on the
+    same NTFS resident-deleted fixture (which recovers a real intact file plus a
+    separate orphan) and asserts:
+
+    * ``report.json`` is whole-file byte-equal across runs (D-41), so the
+      recovered/orphan/known sections carry no run-to-run drift; and
+    * the SET of ``recovered/`` filenames is identical across runs — the
+      deterministic ``vol/off/meta_addr`` naming has no wall-clock or
+      enumeration-order leak (Pitfall 6).
+    """
+    # A custom allow-list whose single member is the recovered resident file's
+    # md5 (UPPERCASE, as real RDS/hash sets store it) so the filtering pass
+    # produces a real, deterministic custom match against a RECOVERED row.
+    resident_md5 = hashlib.md5(make_fixtures.NTFS_RESIDENT_CONTENT).hexdigest()
+    allow_list = tmp_path / "allow.txt"
+    allow_list.write_text(
+        f"{resident_md5.upper()}  resident-known\n", encoding="utf-8"
+    )
+
+    case_a = tmp_path / "case_a"
+    case_b = tmp_path / "case_b"
+
+    _analyze_recover_filter(
+        ntfs_resident_deleted_image,
+        case_a,
+        nsrl_db=nsrl_minimal_db,
+        hash_set_allow=allow_list,
+    )
+    _analyze_recover_filter(
+        ntfs_resident_deleted_image,
+        case_b,
+        nsrl_db=nsrl_minimal_db,
+        hash_set_allow=allow_list,
+    )
+
+    json_a = (case_a / "reports" / "report.json").read_bytes()
+    json_b = (case_b / "reports" / "report.json").read_bytes()
+    assert json_a == json_b
+
+    # Sanity: the recover+filter path actually produced content (guards against
+    # an empty-section false pass) — at least one recovered/orphan entry (this
+    # fixture's resident file is recovered as a separate orphan) and the custom
+    # allow-list matched the recovered resident row.
+    body_a = json.loads(json_a)
+    recovered_total = body_a["recovered"]["count"] + body_a["orphans"]["count"]
+    assert recovered_total >= 1, "expected a recovered/orphan file"
+    assert body_a["known"]["custom"]["count"] >= 1, "expected a custom match"
+
+    def _recovered_names(case: Path) -> set[str]:
+        recovered = case / "recovered"
+        return {
+            str(p.relative_to(recovered))
+            for p in recovered.rglob("*")
+            if p.is_file()
+        }
+
+    names_a = _recovered_names(case_a)
+    names_b = _recovered_names(case_b)
+    assert names_a, "expected recovered/ filenames to exist"
+    assert names_a == names_b, "recovered/ filenames must be deterministic (D-41)"
+
+
+def test_default_analyze_unchanged(
+    tiny_ext4_image: Path, tmp_path: Path
+) -> None:
+    """D-40: a plain ``analyze`` (no recover/filter inputs) is byte-unchanged.
+
+    Proves the opt-in wiring left the DEFAULT path untouched: a plain
+    ``analyze`` (no ``--recover``/``--nsrl``/``--hash-set-*``) produces a
+    ``report.json``/``report.html`` byte-identical to a second plain run — i.e.
+    the Phase-3 baseline determinism still holds after the Phase-4 opt-in steps
+    were spliced in. The MVP-limitations disclaimer also retains its verbatim
+    default text (it must NOT mention that recovery/filtering ran, because they
+    did not).
+    """
+    case_a = tmp_path / "case_a"
+    case_b = tmp_path / "case_b"
+
+    _analyze(tiny_ext4_image, case_a)
+    _analyze(tiny_ext4_image, case_b)
+
+    json_a = (case_a / "reports" / "report.json").read_bytes()
+    json_b = (case_b / "reports" / "report.json").read_bytes()
+    html_a = (case_a / "reports" / "report.html").read_bytes()
+    html_b = (case_b / "reports" / "report.html").read_bytes()
+
+    # D-40: the default path stays byte-identical across runs (no Phase-4 drift).
+    assert json_a == json_b
+    assert html_a == html_b
+
+    # The default disclaimer is verbatim Phase-3 copy: it still asserts the
+    # report does NOT include deleted-file recovery / NSRL filtering, because
+    # neither ran on the default path (honesty without over/under-claim).
+    body_a = json.loads(json_a)
+    disclaimer = body_a["limitations"]["mvp_disclaimer"]
+    assert "does NOT include deleted-file recovery" in disclaimer
+    assert "known-file (NSRL) filtering" in disclaimer
+    # And nothing was recovered/matched on the default path.
+    assert body_a["recovered"]["count"] == 0
+    assert body_a["known"]["custom"]["count"] == 0
+    assert body_a["known"]["nsrl"]["count"] == 0
