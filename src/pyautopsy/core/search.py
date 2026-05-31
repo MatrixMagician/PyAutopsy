@@ -84,16 +84,17 @@ _EXPECTED_SEARCH_ERRORS: tuple[type[BaseException], ...] = (
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
-    """Return the latest ``evidence_sources`` id, or raise :class:`SearchError`."""
-    row = store.connection.execute(
-        "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+    """Return the latest ``evidence_sources`` id, or raise :class:`SearchError`.
+
+    Reads through the CaseStore (WR-02: no raw SQL outside the store boundary).
+    """
+    source_id = store.get_latest_evidence_source_id()
+    if source_id is None:
         raise SearchError(
             "no evidence source in the case; run `pyautopsy ingest` first so "
             "search has an image + inventory to scan"
         )
-    return int(row["id"])
+    return source_id
 
 
 def _read_ioc_file(path: Path) -> list[bytes]:
@@ -145,13 +146,35 @@ def run_search(
     image_path = Path(image).resolve()
     case_path = Path(case_dir).resolve()
 
+    # Bind the audit log BEFORE the first guard so a pre-open mounted-source
+    # rejection is recorded as a FAIL event (WR-03), honoring the D-08 "record
+    # FAIL before non-zero exit" contract. ``run_search`` requires a prior ingest,
+    # so the case dir already exists; AuditLog creates the journal lazily on write.
+    audit = AuditLog(case_path)
+
     # (1) Re-assert the read-only / not-mounted guard before any access (D-42/P1).
-    integrity.assert_source_not_mounted(image_path)
+    #     Audited: a mounted source is a FAIL event, not a silent clean exit.
+    try:
+        integrity.assert_source_not_mounted(image_path)
+    except integrity.MountedSourceError as exc:
+        audit.write(
+            "search.error",
+            outcome="FAIL",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
 
     # (2) Open the existing case store (ingest created it).
     try:
         store = CaseStore.open(case_path)
     except FileNotFoundError as exc:
+        audit.write(
+            "search.error",
+            outcome="FAIL",
+            error=str(exc),
+            error_type="SearchError",
+        )
         raise SearchError(
             f"no case database under {case_path}; run `pyautopsy ingest` first"
         ) from exc
@@ -163,7 +186,6 @@ def run_search(
 
     bad_set = ioc_mod.build_bad_hash_set(bad_hashes)
 
-    audit = AuditLog(case_path)
     audit.write(
         "search.start",
         image=str(image_path),
