@@ -137,6 +137,100 @@ def test_macb_utc_and_fat_flagged(
     # The FAT fixture's ctime epoch is 0 -> must read back as None, not 1970.
     assert fat_file.ctime_utc is None
 
+    # CR-01 VALUE assertion: the FAT branch must ACTUALLY rebase the stored local
+    # wall-clock to UTC, not merely re-label a no-op. The plain (non-FAT) UTC
+    # interpretation of the SAME stored wall-clock components differs from the
+    # correct FAT result by exactly the assumed-zone offset. Walking the same FAT
+    # image as if its times were already UTC must therefore yield a DIFFERENT
+    # mtime — if the two agree, the rebasing silently did nothing (the original
+    # bug). New York is never UTC+0, so a real conversion is observable.
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    fat_utc_case = tmp_path / "fat_utc_case"
+    _, fat_utc_source = _ingest_then_walk(
+        tiny_fat32_image, fat_utc_case, timezone="UTC"
+    )
+    with CaseStore.open(fat_utc_case) as store:
+        fat_utc_rows = store.get_files(fat_utc_source)
+    fat_utc_file = next(
+        r for r in fat_utc_rows if r.name == make_fixtures.FS_FILE_NAME
+    )
+    assert fat_utc_file.mtime_utc is not None
+    ny_instant = datetime.fromisoformat(fat_file.mtime_utc)
+    utc_instant = datetime.fromisoformat(fat_utc_file.mtime_utc)
+    assert ny_instant != utc_instant, (
+        "FAT local-time rebasing is a no-op: NY and UTC assumptions yielded the "
+        "same instant (CR-01 regression)"
+    )
+    # The wall-clock the report claims (the UTC-assumed walk preserves it as-is),
+    # when reinterpreted in NY and shifted to UTC, must equal the NY-assumed
+    # instant — proving a true reinterpret rather than a re-render.
+    naive_wall = utc_instant.replace(tzinfo=None)
+    expected_ny = naive_wall.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(
+        timezone.utc
+    )
+    assert ny_instant == expected_ny
+
+
+def test_macb_to_utc_iso_fat_reinterprets_local() -> None:
+    """CR-01 unit: the FAT branch reinterprets the wall-clock in walk_tz.
+
+    A direct test of ``_macb_to_utc_iso`` independent of any fixture: a stored FAT
+    wall-clock of 12:00 under America/New_York must persist as 17:00:00+00:00
+    (EST, UTC-5), NOT 12:00:00+00:00 (the no-op the original code produced).
+    Non-FAT (``is_fat=False``) keeps the raw UTC epoch unchanged.
+    """
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from pyautopsy.core.walk import _macb_to_utc_iso
+
+    # The stored wall-clock (2023-01-15 12:00:00, a winter date so NY is EST/UTC-5)
+    # is encoded by TSK AS-IF it were a UTC epoch.
+    wall = datetime(2023, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    secs = int(wall.timestamp())
+
+    ny = ZoneInfo("America/New_York")
+    fat_iso = _macb_to_utc_iso(secs, 0, is_fat=True, walk_tz=ny)
+    assert fat_iso == "2023-01-15T17:00:00+00:00", fat_iso
+
+    utc_iso = _macb_to_utc_iso(secs, 0, is_fat=False, walk_tz=ny)
+    assert utc_iso == "2023-01-15T12:00:00+00:00", utc_iso
+
+    # A zero epoch is "not recorded" -> None, never a fake 1970 (Pitfall 3).
+    assert _macb_to_utc_iso(0, 0, is_fat=True, walk_tz=ny) is None
+
+
+def test_fs_type_label_ext2_ext3_ext4() -> None:
+    """CR-02 unit: ext2/ext3/ext4 enum values all label ``ext`` (not unknown).
+
+    Feeds the real pytsk3 EXT2=128 / EXT3=256 / EXT4=8192 enum integers through
+    the orchestrator's classifier and asserts the correct label + provenance, so
+    an ext2/ext3 image can never silently fall through to ``unknown`` with a null
+    ``timestamp_source`` again (the original bug used the FAT values {2,4,8}).
+    """
+    from pyautopsy.core.walk import _TIMESTAMP_SOURCE_BY_LABEL, _fs_type_label
+    from pyautopsy.evidence.filesystem import (
+        EXT_FS_TYPES,
+        FAT_FS_TYPES,
+        NTFS_FS_TYPES,
+    )
+
+    for ext_ftype in (128, 256, 8192):
+        assert ext_ftype in EXT_FS_TYPES
+        assert _fs_type_label(ext_ftype) == "ext"
+        assert _TIMESTAMP_SOURCE_BY_LABEL.get(_fs_type_label(ext_ftype)) is not None
+
+    # The {2,4,8} integers are FAT (NOT ext): they must label ``fat``, proving the
+    # old _EXT_FTYPES={2,4,8} comment was wrong and is gone.
+    for fat_ftype in (2, 4, 8):
+        assert fat_ftype in FAT_FS_TYPES
+        assert _fs_type_label(fat_ftype) == "fat"
+
+    assert all(_fs_type_label(n) == "ntfs" for n in NTFS_FS_TYPES)
+    assert _fs_type_label(999999) == "unknown"
+
 
 def test_no_naive_datetimes(tiny_ext4_image: Path, case_dir: Path) -> None:
     """META-02 invariant: every *time column re-parses to an aware datetime.

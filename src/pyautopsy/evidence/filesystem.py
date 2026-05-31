@@ -29,25 +29,49 @@ from dataclasses import dataclass, field
 import pytsk3
 
 __all__ = [
+    "EXT_FS_TYPES",
     "FAT_FS_TYPES",
     "FileEntry",
     "FilesystemError",
+    "NTFS_FS_TYPES",
     "VolumeEntry",
     "enumerate_volumes",
     "open_fs",
     "walk_fs",
 ]
 
-# The FAT TSK fs-type integers, captured here as PLAIN INTS. This is the seam's
+# The TSK fs-type integers, captured here as PLAIN INTS. These are the seam's
 # pytsk3-free contract: ``core/walk.py`` (which MUST NOT import pytsk3, D-14) can
-# classify a filesystem as FAT — and thus apply the D-16 local-time handling —
-# by membership-testing ``fs_ftype in FAT_FS_TYPES`` without ever touching the
-# native binding. Exported as a ``frozenset[int]`` so it is immutable.
+# classify a filesystem family — and thus apply the right D-16 timestamp handling
+# / label — by membership-testing ``fs_ftype in <SET>`` without ever touching the
+# native binding. Deriving each set from the pytsk3 enums (rather than hard-coding
+# magic ints in the orchestrator) means the labels can never silently drift from
+# the installed binding (CR-02). Exported as ``frozenset[int]`` so they are
+# immutable.
 FAT_FS_TYPES: frozenset[int] = frozenset(
     {
         int(pytsk3.TSK_FS_TYPE_FAT12),
         int(pytsk3.TSK_FS_TYPE_FAT16),
         int(pytsk3.TSK_FS_TYPE_FAT32),
+    }
+)
+
+# ext2/ext3/ext4 — verified against pytsk3 4.15.0: EXT2=128, EXT3=256, EXT4=8192.
+# Derived from the enums (NOT the literal ``{2,4,8}`` which are in fact the FAT
+# values) so ext2/ext3 images are correctly labelled ``ext`` and not ``unknown``.
+EXT_FS_TYPES: frozenset[int] = frozenset(
+    {
+        int(pytsk3.TSK_FS_TYPE_EXT2),
+        int(pytsk3.TSK_FS_TYPE_EXT3),
+        int(pytsk3.TSK_FS_TYPE_EXT4),
+    }
+)
+
+# NTFS — a single TSK fs-type integer, exported as a set for a uniform,
+# pytsk3-free membership contract alongside FAT/EXT.
+NTFS_FS_TYPES: frozenset[int] = frozenset(
+    {
+        int(pytsk3.TSK_FS_TYPE_NTFS),
     }
 )
 

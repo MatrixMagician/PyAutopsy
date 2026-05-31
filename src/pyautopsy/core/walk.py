@@ -44,7 +44,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -56,7 +56,7 @@ from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
-from pyautopsy.evidence.filesystem import FAT_FS_TYPES
+from pyautopsy.evidence.filesystem import EXT_FS_TYPES, FAT_FS_TYPES, NTFS_FS_TYPES
 from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
 
 # A read-only content byte-reader as exposed by the FS seam (D-14): the closure
@@ -72,20 +72,20 @@ __all__ = ["WalkError", "WalkResult", "run_walk"]
 
 # A small, pytsk3-free map from the filesystem type integer to a stable label
 # string for the ``files.fs_type`` column. FAT variants collapse to ``"fat"``
-# (the local-time class, D-16); everything recognised maps to its name; anything
-# else is ``"unknown"`` so a label always exists.
-_NTFS_FTYPE = 1
-_EXT_FTYPES = frozenset({2, 4, 8})  # libtsk EXT2/EXT3/EXT4 enum group
-_EXT4_FTYPE = 8192
+# (the local-time class, D-16); ext2/ext3/ext4 collapse to ``"ext"``; NTFS maps
+# to ``"ntfs"``; anything else is ``"unknown"`` so a label always exists. The
+# membership sets are imported from the FS seam (derived from the pytsk3 enums)
+# so they can never drift from the installed binding (CR-02) — never hard-code the
+# enum integers here.
 
 
 def _fs_type_label(fs_ftype: int) -> str:
     """Return a stable, pytsk3-free filesystem-type label for ``fs_ftype``."""
     if fs_ftype in FAT_FS_TYPES:
         return "fat"
-    if fs_ftype == _NTFS_FTYPE:
+    if fs_ftype in NTFS_FS_TYPES:
         return "ntfs"
-    if fs_ftype == _EXT4_FTYPE or fs_ftype in _EXT_FTYPES:
+    if fs_ftype in EXT_FS_TYPES:
         return "ext"
     return "unknown"
 
@@ -126,8 +126,18 @@ def _macb_to_utc_iso(
         return None
     micro = (nano // 1000) if nano else 0
     if is_fat:
-        # FAT epochs are wall-clock in walk_tz; interpret then convert aware→UTC.
-        dt = datetime.fromtimestamp(secs, tz=walk_tz)
+        # FAT stores LOCAL wall-clock time with no embedded zone. TSK reports
+        # those wall-clock fields encoded AS-IF they were a UTC epoch — so the
+        # integer's UTC rendering reproduces the stored wall-clock components.
+        # We recover those naive wall-clock components, then RE-INTERPRET them as
+        # being in ``walk_tz`` and convert that instant to true UTC (D-16, threat
+        # T-2-02-FAT). ``datetime.fromtimestamp(secs, tz=walk_tz)`` would NOT do
+        # this — it treats ``secs`` as a UTC epoch and merely renders it in
+        # ``walk_tz``, leaving the absolute instant unchanged (CR-01).
+        naive_wall = datetime.fromtimestamp(secs, tz=timezone.utc).replace(
+            tzinfo=None
+        )
+        dt = naive_wall.replace(tzinfo=walk_tz)
     else:
         # ext4/NTFS epochs are already UTC.
         dt = from_epoch_utc(secs)
