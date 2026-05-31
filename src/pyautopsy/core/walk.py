@@ -1,0 +1,322 @@
+"""The filesystem-walk orchestrator (META-01, D-15/D-18/D-20, REPORT-02).
+
+:func:`run_walk` mirrors :func:`pyautopsy.core.ingest.run_ingest`: it composes the
+proven lower tiers into one forensically-sound operation that turns an opened
+evidence image into a normalized per-file inventory in the case store. In order:
+
+1. **Resolve the image and re-assert the read-only guard.** The source is opened
+   read-only through the byte-layer seam and the mounted-source guard
+   (:func:`integrity.assert_source_not_mounted`) is re-asserted (D-05/P1) — the
+   walk never mounts or writes the evidence.
+2. **Open the case store.** Phase 1's ingest already created it; the walk opens
+   the existing ``case.db`` and resolves the evidence source to attach rows to
+   (the latest ``evidence_sources`` row when no id is supplied).
+3. **Enumerate volumes** through the FS-layer seam
+   (:func:`filesystem.enumerate_volumes`) — every allocated volume (D-15), or a
+   single bare-FS volume at offset 0.
+4. **Per volume**, open the filesystem (:func:`filesystem.open_fs`). On
+   ``OSError`` the volume is encrypted/unsupported: record an explicit
+   :class:`~pyautopsy.case.models.VolumeLimitation` finding and **continue** —
+   never abort the run or emit empty/garbage rows (D-20, PITFALLS Pitfall 6).
+   Otherwise :func:`filesystem.walk_fs` yields every entry (including deleted
+   ones, D-18) which is mapped to a :class:`~pyautopsy.case.models.FileRow` and
+   bulk-inserted inside one :meth:`CaseStore.transaction` (WR-01).
+5. **Audit every stage** (``walk.start`` → ``walk.volume`` →
+   ``walk.limitation`` → ``walk.end``) with a FAIL event always written *before*
+   the exception propagates (CR-03/REPORT-02).
+
+The MACB / ownership / hash / file-type columns are deliberately left ``None``
+here — this plan delivers the inventory spine (META-01); Plans 02-02/02-03 enrich
+those columns without changing the walk shape.
+
+This module is part of the orchestration tier and **does not import pytsk3** — all
+native filesystem access lives behind :mod:`pyautopsy.evidence.filesystem` (D-14).
+It classifies FAT (for downstream local-time handling) via the seam's pytsk3-free
+``FAT_FS_TYPES`` contract.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from pyautopsy.audit import AuditLog
+from pyautopsy.case import CaseStore
+from pyautopsy.case.models import FileRow, VolumeLimitation
+from pyautopsy.evidence import filesystem as fs_seam
+from pyautopsy.evidence import image as image_seam
+from pyautopsy.evidence import integrity
+from pyautopsy.evidence.filesystem import FAT_FS_TYPES
+
+__all__ = ["WalkError", "WalkResult", "run_walk"]
+
+# A small, pytsk3-free map from the filesystem type integer to a stable label
+# string for the ``files.fs_type`` column. FAT variants collapse to ``"fat"``
+# (the local-time class, D-16); everything recognised maps to its name; anything
+# else is ``"unknown"`` so a label always exists.
+_NTFS_FTYPE = 1
+_EXT_FTYPES = frozenset({2, 4, 8})  # libtsk EXT2/EXT3/EXT4 enum group
+_EXT4_FTYPE = 8192
+
+
+def _fs_type_label(fs_ftype: int) -> str:
+    """Return a stable, pytsk3-free filesystem-type label for ``fs_ftype``."""
+    if fs_ftype in FAT_FS_TYPES:
+        return "fat"
+    if fs_ftype == _NTFS_FTYPE:
+        return "ntfs"
+    if fs_ftype == _EXT4_FTYPE or fs_ftype in _EXT_FTYPES:
+        return "ext"
+    return "unknown"
+
+
+class WalkError(Exception):
+    """Raised when the walk cannot proceed for a non-integrity reason.
+
+    Chiefly: the case directory has no ``case.db`` (ingest was never run) or no
+    evidence source to attach the inventory to. Integrity / read-only-boundary
+    failures surface as :class:`~pyautopsy.evidence.integrity.MountedSourceError`
+    or :class:`~pyautopsy.evidence.integrity.IntegrityError` instead.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class WalkResult:
+    """The analytical outcome of a successful walk (reproducible counts only).
+
+    Carries only analytical content — never wall-clock metadata — so the CLI can
+    print a deterministic summary (PITFALLS P3).
+
+    Attributes:
+        evidence_source_id: The evidence source the inventory was attached to.
+        files_inventoried: Total ``files`` rows written.
+        deleted_count: How many of those were deleted/unallocated (D-18).
+        volumes_walked: How many volumes were successfully walked.
+        limitations_recorded: How many D-20 limitation findings were recorded.
+    """
+
+    evidence_source_id: int
+    files_inventoried: int
+    deleted_count: int
+    volumes_walked: int
+    limitations_recorded: int
+
+
+def _latest_evidence_source_id(store: CaseStore) -> int:
+    """Return the most-recent ``evidence_sources`` id, or raise :class:`WalkError`."""
+    row = store.connection.execute(
+        "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        raise WalkError(
+            "no evidence source in the case; run `pyautopsy ingest` first so the "
+            "walk has an evidence_sources row to attach the inventory to"
+        )
+    return int(row["id"])
+
+
+def _build_file_row(
+    entry: fs_seam.FileEntry, evidence_source_id: int
+) -> FileRow:
+    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01).
+
+    Only the META-01 spine is populated here (path/name/addr/status + volume
+    tagging + meta-type + fs-type); MACB/ownership/hash/file-type stay ``None``
+    until Plans 02-02/02-03.
+    """
+    return FileRow(
+        evidence_source_id=evidence_source_id,
+        volume_id=entry.volume_id,
+        volume_offset=entry.volume_offset,
+        path=entry.path,
+        name=entry.name,
+        parent_addr=entry.parent_addr,
+        meta_addr=entry.meta_addr,
+        fs_type=_fs_type_label(entry.fs_ftype),
+        size=entry.size,
+        allocated=entry.allocated,
+        meta_type=entry.meta_type,
+    )
+
+
+def run_walk(
+    image: str | os.PathLike[str],
+    case_dir: str | os.PathLike[str],
+    *,
+    evidence_source_id: int | None = None,
+    timezone: str = "UTC",
+    max_hash_size: int | None = None,
+) -> WalkResult:
+    """Walk a filesystem image into a normalized ``files`` inventory (META-01).
+
+    See the module docstring for the full ordered pipeline. The source is opened
+    read-only and never mounted; every entry (including deleted ones) is
+    inventoried with allocated/unallocated status + inode/MFT address + volume
+    tagging (D-15/D-18), and any encrypted/unsupported volume is recorded as a
+    D-20 limitation while the walk continues.
+
+    Args:
+        image: Path to the evidence image (raw/dd file or first E01 segment).
+        case_dir: Existing case directory (created by a prior ingest).
+        evidence_source_id: Which evidence source to attach the inventory to;
+            defaults to the latest ``evidence_sources`` row in the case.
+        timezone: IANA zone name used for FAT local-time handling downstream
+            (validated by the caller); recorded for provenance.
+        max_hash_size: Reserved for the Plan 02-02 hashing pass; unused here.
+
+    Returns:
+        A :class:`WalkResult` with the analytical inventory counts.
+
+    Raises:
+        WalkError: If the case has no ``case.db`` or no evidence source.
+        MountedSourceError: If the source path is a mounted filesystem (P1).
+        ImageOpenError: If the image cannot be opened read-only.
+    """
+    image_path = Path(image).resolve()
+    case_path = Path(case_dir).resolve()
+
+    # (1) Re-assert the read-only / not-mounted guard before any access (D-05/P1).
+    integrity.assert_source_not_mounted(image_path)
+
+    # (2) Open the existing case store (ingest created it in Phase 1).
+    try:
+        store = CaseStore.open(case_path)
+    except FileNotFoundError as exc:
+        raise WalkError(
+            f"no case database under {case_path}; run `pyautopsy ingest` first"
+        ) from exc
+
+    audit = AuditLog(case_path)
+    audit.write(
+        "walk.start",
+        image=str(image_path),
+        case_dir=str(case_path),
+        timezone=timezone,
+        max_hash_size=max_hash_size,
+    )
+
+    files_inventoried = 0
+    deleted_count = 0
+    volumes_walked = 0
+    limitations_recorded = 0
+
+    try:
+        source_id = (
+            evidence_source_id
+            if evidence_source_id is not None
+            else _latest_evidence_source_id(store)
+        )
+
+        handle = image_seam.open_image(image_path)
+        try:
+            # (WR-02) Re-assert not-mounted after the open, before reading.
+            integrity.assert_source_not_mounted(image_path)
+
+            with store.transaction():
+                for vol in fs_seam.enumerate_volumes(handle.image):
+                    audit.write(
+                        "walk.volume",
+                        volume_id=vol.volume_id,
+                        volume_offset=vol.offset,
+                        description=vol.description,
+                    )
+                    try:
+                        fs = fs_seam.open_fs(handle.image, vol.offset)
+                    except OSError as exc:
+                        # (D-20) Encrypted/unsupported volume: record a finding
+                        # and continue — never abort, never emit garbage rows.
+                        attributes = _encryption_hint(handle, vol.offset)
+                        store.insert_volume_limitation(
+                            VolumeLimitation(
+                                evidence_source_id=source_id,
+                                volume_id=vol.volume_id,
+                                volume_offset=vol.offset,
+                                detected_desc=vol.description,
+                                reason=str(exc),
+                                attributes=attributes,
+                            )
+                        )
+                        limitations_recorded += 1
+                        audit.write(
+                            "walk.limitation",
+                            volume_id=vol.volume_id,
+                            volume_offset=vol.offset,
+                            reason=str(exc),
+                        )
+                        continue
+
+                    rows: list[FileRow] = []
+                    vol_deleted = 0
+                    for entry in fs_seam.walk_fs(fs, vol.volume_id, vol.offset):
+                        rows.append(_build_file_row(entry, source_id))
+                        if entry.allocated is False:
+                            vol_deleted += 1
+                    store.insert_files(rows)
+                    files_inventoried += len(rows)
+                    deleted_count += vol_deleted
+                    volumes_walked += 1
+                    audit.write(
+                        "walk.volume_done",
+                        volume_id=vol.volume_id,
+                        files=len(rows),
+                        deleted=vol_deleted,
+                    )
+        finally:
+            handle.close()
+
+        audit.write(
+            "walk.end",
+            outcome="SUCCESS",
+            evidence_source_id=source_id,
+            files_inventoried=files_inventoried,
+            deleted_count=deleted_count,
+            volumes_walked=volumes_walked,
+            limitations_recorded=limitations_recorded,
+        )
+    except Exception as exc:
+        # (CR-03) Always leave a terminal FAIL event before propagating.
+        audit.write(
+            "walk.error",
+            outcome="FAIL",
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+    finally:
+        store.close()
+
+    return WalkResult(
+        evidence_source_id=source_id,
+        files_inventoried=files_inventoried,
+        deleted_count=deleted_count,
+        volumes_walked=volumes_walked,
+        limitations_recorded=limitations_recorded,
+    )
+
+
+# Cheap, optional encryption-container hints (02-RESEARCH Pattern 7/A2). Read the
+# first bytes at the volume offset read-only and label a likely LUKS/BitLocker
+# container so the D-20 finding is more informative. Never attempts decryption.
+_LUKS_MAGIC = b"LUKS\xba\xbe"
+_BITLOCKER_MARKER = b"-FVE-FS-"
+
+
+def _encryption_hint(
+    handle: image_seam.ImageHandle, offset: int
+) -> dict[str, str]:
+    """Return an optional ``{"encryption_hint": ...}`` for a D-20 finding.
+
+    Reads the first 512 bytes at ``offset`` (read-only) and checks well-known
+    container magic. Any read failure is swallowed — the hint is best-effort and
+    must never break the D-20 continue-the-walk contract.
+    """
+    try:
+        head = handle.read(offset, 512)
+    except OSError:
+        return {}
+    if head.startswith(_LUKS_MAGIC):
+        return {"encryption_hint": "likely LUKS"}
+    if _BITLOCKER_MARKER in head[:16]:
+        return {"encryption_hint": "likely BitLocker"}
+    return {}

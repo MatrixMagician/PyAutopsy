@@ -14,7 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Case", "EvidenceSource", "AuditEvent"]
+__all__ = [
+    "Case",
+    "EvidenceSource",
+    "FileRow",
+    "VolumeLimitation",
+    "AuditEvent",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +75,107 @@ class EvidenceSource:
     byte_size: int | None = None
     acquired_utc: str | None = None
     tsk_version: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FileRow:
+    """One inventoried filesystem entry produced by the walk (META-01..05).
+
+    The required typed fields are the META-01 core the walk always knows: which
+    evidence source + volume the entry came from, its path/name, inode/MFT
+    address, allocated/unallocated status, declared meta-type and size. The
+    optional fields (MACB/ownership/hash/file-type) default to ``None`` meaning
+    "not yet known" — they are declared interface-first here but stay null until
+    Plans 02-02/02-03 populate them. MACB times are UTC ISO-8601 strings (D-10)
+    or ``None`` (``0`` epoch ⇒ "not recorded", never a fake 1970).
+
+    Args:
+        evidence_source_id: Owning evidence source id (FK into
+            ``evidence_sources``).
+        volume_id: Volume/partition id the entry was found in (D-15).
+        volume_offset: Byte offset of that volume within the image (D-15).
+        path: Full path of the entry within its filesystem.
+        name: The entry's own name (decoded ``utf-8``/``errors="replace"``).
+        parent_addr: Parent directory inode/MFT address, when known.
+        meta_addr: The entry's inode/MFT address (META-01).
+        fs_type: Filesystem type string (e.g. ``ext4``/``ntfs``/``fat``).
+        size: Logical size in bytes, when known.
+        allocated: ``True`` if both name + meta slots are allocated; ``False``
+            for a deleted/unallocated entry (META-01/D-18).
+        meta_type: Entry meta-type label (``reg``/``dir``/``lnk``/...).
+        uid: Owning user id (META-03), when populated.
+        gid: Owning group id (META-03), when populated.
+        mode: POSIX permission/mode bits (META-03), when populated.
+        md5: MD5 hex digest of the content (META-04), when populated.
+        sha1: SHA-1 hex digest of the content (META-04), when populated.
+        sha256: SHA-256 hex digest of the content (META-04), when populated.
+        mtime_utc: Modified time as UTC ISO-8601 (META-02), or ``None``.
+        atime_utc: Accessed time as UTC ISO-8601 (META-02), or ``None``.
+        ctime_utc: Changed/metadata time as UTC ISO-8601 (META-02), or ``None``.
+        crtime_utc: Created/born time as UTC ISO-8601 (META-02), or ``None``.
+        timestamp_source: Origin of the MACB times (e.g. ``ext4:inode``).
+        file_type: Content-signature file type (META-05), when populated.
+        attributes: Heterogeneous JSON-serialisable extra data (D-02).
+        id: Surrogate primary key; ``None`` until persisted.
+    """
+
+    evidence_source_id: int
+    volume_id: int
+    volume_offset: int
+    path: str
+    name: str
+    meta_addr: int | None = None
+    parent_addr: int | None = None
+    fs_type: str | None = None
+    size: int | None = None
+    allocated: bool | None = None
+    meta_type: str | None = None
+    uid: int | None = None
+    gid: int | None = None
+    mode: int | None = None
+    md5: str | None = None
+    sha1: str | None = None
+    sha256: str | None = None
+    mtime_utc: str | None = None
+    atime_utc: str | None = None
+    ctime_utc: str | None = None
+    crtime_utc: str | None = None
+    timestamp_source: str | None = None
+    file_type: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VolumeLimitation:
+    """A known-limitation finding for a volume the walk could not open (D-20).
+
+    When ``FS_Info`` raises ``OSError`` on an encrypted/unsupported volume, the
+    orchestrator records this row (volume id/offset + detected type + reason)
+    and continues, rather than aborting the run or emitting empty ``files``
+    rows. The ``attributes`` blackboard can carry an optional encryption hint
+    (e.g. a likely LUKS/BitLocker magic-byte match).
+
+    Args:
+        evidence_source_id: Owning evidence source id (FK into
+            ``evidence_sources``).
+        volume_id: Volume/partition id that could not be opened.
+        volume_offset: Byte offset of that volume within the image.
+        detected_desc: Human-readable detected description (e.g. the partition
+            type string from the volume system).
+        reason: Why the volume could not be walked (e.g. the ``FS_Info``
+            ``OSError`` message — "encrypted/unsupported volume").
+        attributes: Heterogeneous JSON-serialisable extra data (D-02).
+        id: Surrogate primary key; ``None`` until persisted.
+    """
+
+    evidence_source_id: int
+    volume_id: int
+    volume_offset: int
+    detected_desc: str | None = None
+    reason: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 

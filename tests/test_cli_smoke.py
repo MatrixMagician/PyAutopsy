@@ -103,6 +103,52 @@ def test_ingest_missing_required_option_errors(
     assert result.exit_code != 0
 
 
+def test_walk_smoke_inventories_into_case(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """`pyautopsy walk <img> --case <dir>` exits 0 and prints an inventory.
+
+    Runs against a case created by a prior `ingest`, asserts exit 0 and that the
+    summary reports inventoried files.
+    """
+    ingest = runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
+    assert ingest.exit_code == 0, ingest.output
+
+    result = runner.invoke(
+        app, ["walk", str(tiny_ext4_image), "--case", str(case_dir)]
+    )
+    assert result.exit_code == 0, result.output
+    assert "walk complete" in result.output
+    assert "files inventoried:" in result.output
+
+
+def test_walk_rejects_invalid_timezone(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """An invalid ``--timezone`` exits non-zero (Security V5 validation)."""
+    runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
+    result = runner.invoke(
+        app,
+        [
+            "walk",
+            str(tiny_ext4_image),
+            "--case",
+            str(case_dir),
+            "--timezone",
+            "Not/AZone",
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_walk_help_lists_options() -> None:
+    """``walk --help`` lists the documented options."""
+    result = runner.invoke(app, ["walk", "--help"])
+    assert result.exit_code == 0
+    for option in ("--case", "--timezone", "--max-hash-size"):
+        assert option in result.output
+
+
 def test_version_flag() -> None:
     """``pyautopsy --version`` prints the package version and exits 0."""
     import pyautopsy

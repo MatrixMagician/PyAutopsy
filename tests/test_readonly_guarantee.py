@@ -34,18 +34,27 @@ def test_source_mtime_and_size_unchanged_after_open_and_hash(
     assert after.st_size == before.st_size
 
 
-def test_source_unchanged_after_walk(tiny_ext4_image: Path) -> None:
-    """D-05/P1: a full filesystem walk never modifies the source (RED scaffold).
+def test_source_unchanged_after_walk(
+    tiny_ext4_image: Path, tmp_path: Path
+) -> None:
+    """D-05/P1: a full filesystem walk never modifies the source.
 
     Mirrors ``test_source_mtime_and_size_unchanged_after_open_and_hash`` for the
-    walk path: stat before, run the walk over the fs fixtures, stat after, assert
-    ``st_mtime_ns`` + ``st_size`` unchanged. References ``core.walk`` (Plan
-    02-02/02-03) which does not exist yet, so this is RED until the walk lands.
+    walk path: stat before, ingest + run the full walk over the fs fixture, stat
+    after, assert ``st_mtime_ns`` + ``st_size`` unchanged (the walk reads only
+    through the TSK File object and never mounts/writes the source).
     """
-    pytest.fail(
-        "Plan 02-02/02-03: core/walk.py read-only-after-walk guarantee not "
-        "implemented yet (RED)"
-    )
+    from pyautopsy.core.ingest import run_ingest
+    from pyautopsy.core.walk import run_walk
+
+    case_dir = tmp_path / "case"
+    before = tiny_ext4_image.stat()
+    run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    after = tiny_ext4_image.stat()
+
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_size == before.st_size
 
 
 def _mounts_table(*device_mount_pairs: tuple[str, str]) -> str:
