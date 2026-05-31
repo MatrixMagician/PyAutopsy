@@ -125,3 +125,7 @@ explicit alternative) — cleaner validation via Typer `exists=True` per option.
 
 None. All wired sections are fed by real store rows; opt-in steps run real
 orchestrators.
+
+## Self-Check: PASSED
+
+All 5 modified files + the SUMMARY exist; all 3 commits (a417759, 1ecbae6, 1a62ebe) are present in git history.

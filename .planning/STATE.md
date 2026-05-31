@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
+status: verifying
 stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-05-31T14:41:53.195Z"
+last_updated: "2026-05-31T14:50:14.101Z"
 last_activity: 2026-05-31 -- Phase 4 execution started
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 17
-  completed_plans: 16
-  percent: 60
+  completed_plans: 17
+  percent: 80
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 
 Phase: 4 (deleted-recovery-known-file-filtering) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-31 -- Phase 4 execution started
 
 Progress: [████████░░] 80%
@@ -65,6 +65,7 @@ Progress: [████████░░] 80%
 | Phase 04 P00 | 60 | 2 tasks | 9 files |
 | Phase 04 P04-01 | ~75min | 3 tasks | 8 files |
 | Phase 04 P04-02 | 35min | 2 tasks | 10 files |
+| Phase 04 P04-03 | 30 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,9 @@ Recent decisions affecting current work:
 - [Phase 04]: 04-01: recovery enumerates deleted inodes via a new seam helper (iter_deleted_inodes: directory-walk + inode-range scan), not a prior walk inventory — required for standalone ingest->recover and NTFS broken name->meta links
 - [Phase 04]: 04-01: orphan-ness = parent-gone (parent_addr not in allocated-inode set) OR the TSK ORPHAN meta flag, since the ext4 orphan fixture leaves the meta flag unset
 - [Phase ?]: 04-02: NSRL probe opens DB read-only (mode=ro + PRAGMA query_only), FILE/METADATA from a fixed allowlist, UPPERCASE-normalized (Pitfall 4), parameterized SQL only (D-36/D-37); neutral known annotations never good/bad (D-38); dedicated known_file_matches table keeps CaseStore sole writer with a store-owned report total order (D-41)
+- [Phase ?]: 04-03: analyze recovery+filtering are opt-in (D-40); default analyze stays Phase-3 byte-identical
+- [Phase ?]: 04-03: _MVP_LIMITATIONS disclaimer is conditional — verbatim Phase-3 text when nothing ran, rebuilt honestly when recovery/filtering ran (D-28/D-32)
+- [Phase ?]: 04-03: CLI carries hash-list sense via paired --hash-set-allow/--hash-set-block options (deterministic order, D-41)
 
 ### Pending Todos
 
@@ -125,6 +129,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-31T14:41:27.877Z
+Last session: 2026-05-31T14:49:50.729Z
 Stopped at: Completed 04-01-PLAN.md
 Resume file: None

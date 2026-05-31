@@ -26,7 +26,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Forensic Foundation** - Read-only ingest (raw/dd + E01), source hash verify, case store, safe-extraction jail, COC + audit log (completed 2026-05-30)
 - [x] **Phase 2: Filesystem Walk & Metadata** - Walk ext4/NTFS/FAT yielding per-file inventory, UTC MACB times, owner/perms, per-file hashes, type-by-signature (completed 2026-05-31)
 - [x] **Phase 3: Timeline & MVP Report** - Chronological timeline + deterministic HTML/JSON report from one command (closes image -> report MVP) (completed 2026-05-31)
-- [ ] **Phase 4: Deleted Recovery & Known-File Filtering** - Recover deleted/orphan files with confidence tiers; filter against NSRL + custom hash sets
+- [x] **Phase 4: Deleted Recovery & Known-File Filtering** - Recover deleted/orphan files with confidence tiers; filter against NSRL + custom hash sets (completed 2026-05-31)
 - [ ] **Phase 5: Log Parsing, Super-Timeline & Search** - Parse Linux logs into a shared event model, merge into a UTC super-timeline, keyword/IOC search
 
 ## Phase Details
@@ -154,7 +154,7 @@ Plans:
 
 **Wave 3** *(blocked on Waves 1+2)*
 
-- [ ] 04-03-PLAN.md — Integration: opt-in recover/filter wiring in `analyze` + --recover/--nsrl/--hash-set flags + reproducibility/read-only/seam-allowlist tests + _MVP_LIMITATIONS honesty update (D-40/D-41/D-42)
+- [x] 04-03-PLAN.md — Integration: opt-in recover/filter wiring in `analyze` + --recover/--nsrl/--hash-set flags + reproducibility/read-only/seam-allowlist tests + _MVP_LIMITATIONS honesty update (D-40/D-41/D-42)
 
 ### Phase 5: Log Parsing, Super-Timeline & Search
 
@@ -182,5 +182,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
-| 4. Deleted Recovery & Known-File Filtering | 3/4 | In Progress|  |
+| 4. Deleted Recovery & Known-File Filtering | 4/4 | Complete   | 2026-05-31 |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
