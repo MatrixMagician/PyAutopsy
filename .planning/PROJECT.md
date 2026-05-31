@@ -24,14 +24,15 @@ single automated Python workflow.
 - ✓ Preserve evidence integrity (single-pass MD5+SHA-256, acquisition compare, end-of-run re-verify, never-mounted guard, chain-of-custody in SQLite case store, append-only JSONL audit log) — Validated in Phase 1
 - ✓ Run on Linux as a command-line tool (`pyautopsy ingest`, Typer CLI) — Validated in Phase 1
 - ✓ Analyze file metadata: walk ext4/NTFS/FAT yielding a normalized per-file inventory (path, size, inode/MFT addr, allocated/unallocated status), UTC-correct MACB times, ownership/mode, per-file MD5+SHA-1+SHA-256, and content-signature file typing; encrypted/unsupported volumes recorded as known-limitation findings (`pyautopsy walk`) — Validated in Phase 2 (real partitioned-disk-at-scale and sub-second nano MACB are manual-only, tracked in 02-HUMAN-UAT.md)
+- ✓ Build a chronological **filesystem timeline** (bodyfile/mactime-style MACB explosion) persisted into a shared forensic-event model, UTC-ordered with a deterministic total order — Validated in Phase 3 (super-timeline merge with logs remains Phase 5)
+- ✓ Generate a **forensic report suitable for evidence presentation** — human-readable HTML (Jinja2) + structured JSON, with case/COC, methodology + pinned tool/TSK versions, findings, evidence hashes, bounded timeline, and a no-overclaiming limitations section, all from a single reproducible `pyautopsy analyze` command (byte-identical analytical bodies across runs) — Validated in Phase 3 (large real-disk run, visual/A4-print, and live acquisition-hash FAIL path are manual-only, tracked in 03-HUMAN-UAT.md; PDF rendering deferred)
 
 ### Active
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
 - [ ] Recover deleted files from supported filesystems — Phase 4
 - [ ] Parse and analyze log files for forensically relevant events — Phase 5
-- [ ] Build a timeline of file/system activity from metadata and logs — Phases 3 & 5
-- [ ] Generate a forensic report suitable for evidence presentation (human-readable + structured) — Phase 3
+- [ ] Merge filesystem + log events into one UTC super-timeline — Phase 5
 
 ### Out of Scope
 
@@ -96,4 +97,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-31 after Phase 2 (Filesystem Walk & Metadata) completion*
+*Last updated: 2026-05-31 after Phase 3 (Timeline & MVP Report) completion — end-to-end MVP slice (image → reproducible HTML+JSON report) now closed*
