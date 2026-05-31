@@ -72,6 +72,26 @@ _META_TYPE_LABELS: dict[int, str] = {
     int(pytsk3.TSK_FS_META_TYPE_VIRT_DIR): "virt_dir",
 }
 
+# Map the TSK *name*-entry type integer to the SAME stable labels. The directory
+# entry carries its own type byte (the ``TSK_FS_NAME_TYPE_*`` enum, which is a
+# DIFFERENT integer space from the meta-type enum) and is the authoritative type
+# source when the inode's meta-type is UNDEF — e.g. ext4 files written by
+# ``debugfs`` carry ``meta.type == UNDEF`` but a correct ``name.type == REG``.
+# Falling back to it mirrors TSK's own ``fls`` behaviour and keeps a genuine
+# regular file from being mislabelled ``unknown`` (which would wrongly exclude it
+# from META-04/META-05 content hashing/typing).
+_NAME_TYPE_LABELS: dict[int, str] = {
+    int(pytsk3.TSK_FS_NAME_TYPE_REG): "reg",
+    int(pytsk3.TSK_FS_NAME_TYPE_DIR): "dir",
+    int(pytsk3.TSK_FS_NAME_TYPE_LNK): "lnk",
+    int(pytsk3.TSK_FS_NAME_TYPE_FIFO): "fifo",
+    int(pytsk3.TSK_FS_NAME_TYPE_CHR): "chr",
+    int(pytsk3.TSK_FS_NAME_TYPE_BLK): "blk",
+    int(pytsk3.TSK_FS_NAME_TYPE_SOCK): "sock",
+    int(pytsk3.TSK_FS_NAME_TYPE_VIRT): "virt",
+    int(pytsk3.TSK_FS_NAME_TYPE_VIRT_DIR): "virt_dir",
+}
+
 
 class FilesystemError(Exception):
     """Raised when the FS-layer seam cannot enumerate or walk a filesystem.
@@ -253,11 +273,26 @@ def _make_reader(entry: object) -> Callable[[int, int], bytes] | None:
     return read_random
 
 
-def _meta_type_label(meta_type: int | None) -> str:
-    """Return a stable label for a TSK meta-type integer (``unknown`` if absent)."""
-    if meta_type is None:
-        return "unknown"
-    return _META_TYPE_LABELS.get(int(meta_type), "unknown")
+def _meta_type_label(meta_type: int | None, name_type: int | None = None) -> str:
+    """Return a stable type label for an entry, with a name-entry-type fallback.
+
+    The inode's ``meta.type`` is authoritative when set, but ext4 entries written
+    by ``debugfs`` (and some recovered/deleted entries) carry ``meta.type ==
+    UNDEF`` while the directory entry still records the correct
+    ``TSK_FS_NAME_TYPE_*``. When the meta-type is absent or unmapped we therefore
+    fall back to the name-entry type (a DIFFERENT enum space) so a genuine regular
+    file is labelled ``reg`` rather than ``unknown`` — mirroring TSK's ``fls``.
+    Returns ``unknown`` only when neither source yields a known type.
+    """
+    if meta_type is not None:
+        label = _META_TYPE_LABELS.get(int(meta_type))
+        if label is not None:
+            return label
+    if name_type is not None:
+        label = _NAME_TYPE_LABELS.get(int(name_type))
+        if label is not None:
+            return label
+    return "unknown"
 
 
 def walk_fs(
@@ -311,6 +346,9 @@ def walk_fs(
 
         meta_addr = int(meta.addr) if meta is not None else None
         meta_type_int = int(meta.type) if meta is not None else None
+        # The directory entry's own type byte (a DIFFERENT enum from meta.type);
+        # the authoritative fallback when the inode meta-type is UNDEF.
+        name_type_int = int(name_obj.type) if name_obj.type is not None else None
         size = int(meta.size) if meta is not None else 0
 
         child_path = parent_path.rstrip("/") + "/" + name
@@ -320,7 +358,7 @@ def walk_fs(
             parent_addr=None,
             meta_addr=meta_addr,
             allocated=allocated,
-            meta_type=_meta_type_label(meta_type_int),
+            meta_type=_meta_type_label(meta_type_int, name_type_int),
             size=size,
             uid=int(meta.uid) if meta is not None else None,
             gid=int(meta.gid) if meta is not None else None,

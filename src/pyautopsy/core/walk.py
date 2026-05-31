@@ -25,9 +25,13 @@ evidence image into a normalized per-file inventory in the case store. In order:
    ``walk.limitation`` → ``walk.end``) with a FAIL event always written *before*
    the exception propagates (CR-03/REPORT-02).
 
-The MACB / ownership / hash / file-type columns are deliberately left ``None``
-here — this plan delivers the inventory spine (META-01); Plans 02-02/02-03 enrich
-those columns without changing the walk shape.
+Per allocated regular file the walk additionally computes MD5 + SHA-1 + SHA-256
+in a single streaming pass (META-04, D-17) via :func:`integrity.hash_file` and
+identifies the file's type by content signature (META-05, D-19) via
+:func:`filetype.file_type` — both reading read-only through the seam's
+``read_random`` byte-reader closure (never mounting, D-05/P1). Non-regular
+entries (directories/symlinks/devices) are never read for content; oversize files
+(over ``--max-hash-size``) record null hashes plus a skip reason.
 
 This module is part of the orchestration tier and **does not import pytsk3** — all
 native filesystem access lives behind :mod:`pyautopsy.evidence.filesystem` (D-14).
@@ -38,6 +42,7 @@ It classifies FAT (for downstream local-time handling) via the seam's pytsk3-fre
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -48,10 +53,20 @@ from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import FileRow, VolumeLimitation
 from pyautopsy.evidence import filesystem as fs_seam
+from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
 from pyautopsy.evidence.filesystem import FAT_FS_TYPES
 from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
+
+# A read-only content byte-reader as exposed by the FS seam (D-14): the closure
+# the orchestrator hashes/types through, never a native ``File`` object.
+ContentReader = Callable[[int, int], bytes]
+
+# Type-identification callable signature, injected so the orchestrator stays
+# testable with a fake typer; defaults to the content-signature ``file_type``
+# (python-magic, D-19). It is NOT a pytsk3 seam, so importing it here is allowed.
+FileTyper = Callable[[ContentReader, int], "str | None"]
 
 __all__ = ["WalkError", "WalkResult", "run_walk"]
 
@@ -209,21 +224,104 @@ def _latest_evidence_source_id(store: CaseStore) -> int:
     return int(row["id"])
 
 
+# Meta-type labels that are eligible for content hashing/typing. Only a *regular*
+# file has byte content: reading a directory/symlink/device through ``read_random``
+# returns dirent bytes / nothing — never the content libmagic or a digest should
+# see (Pitfall 5, threat T-2-03-NONREG). Anything else is left unhashed/untyped.
+_REGULAR = "reg"
+
+# Stable, magic-free type labels for the common non-regular entries so the report
+# can render *something* without ever calling libmagic on dirent bytes (RESEARCH
+# Open Question 3). Directories/symlinks get a structural label; everything else
+# (devices/fifos/sockets/unknown) stays ``None``.
+_NONREG_TYPE_LABELS: dict[str, str] = {"dir": "directory", "lnk": "symlink"}
+
+
+def _content_fields(
+    entry: fs_seam.FileEntry,
+    *,
+    max_hash_size: int | None,
+    typer: FileTyper,
+) -> tuple[dict[str, str | None], str | None, dict[str, Any]]:
+    """Compute hash + content-type columns for one entry (META-04/META-05).
+
+    Returns a triple of:
+      * the ``{md5, sha1, sha256}`` → hex-or-``None`` mapping for the hash columns,
+      * the ``file_type`` content-signature string (or a structural label / ``None``),
+      * any extra ``attributes`` to merge (a ``hash_skipped`` reason only).
+
+    Content work is gated on an allocated *regular* file with a readable content
+    closure (``read_random`` is ``None`` for meta-less entries). Non-regular
+    entries are never read for content (Pitfall 5): they get null hashes and an
+    optional structural type label. For a qualifying regular file the hashing and
+    typing both stream read-only through the seam's ``read_random`` closure
+    (D-05/P1 — never a mount).
+    """
+    null_hashes: dict[str, str | None] = {"md5": None, "sha1": None, "sha256": None}
+
+    if entry.meta_type != _REGULAR:
+        # Directories/symlinks/devices: never hashed, never magic-typed.
+        return (null_hashes, _NONREG_TYPE_LABELS.get(entry.meta_type), {})
+
+    reader = entry.read_random
+    if reader is None:
+        # A regular entry with no readable content (no meta/data): leave null.
+        return (null_hashes, None, {})
+
+    # (D-18) Only hash allocated regular files. A deleted/unallocated regular
+    # entry's data may be partly reused; we do not record a hash for it unless its
+    # metadata+data are trivially intact (a normal read returns all of size) —
+    # hash_file's own short-read→None covers that case, so we still attempt it but
+    # only for allocated entries to avoid hashing reclaimed blocks as if intact.
+    attributes: dict[str, Any] = {}
+    hashes: dict[str, str | None] = dict(null_hashes)
+    if entry.allocated:
+        digests = integrity.hash_file(
+            reader, entry.size, max_size=max_hash_size
+        )
+        if digests is not None:
+            hashes = {
+                "md5": digests["md5"],
+                "sha1": digests["sha1"],
+                "sha256": digests["sha256"],
+            }
+        elif max_hash_size is not None and entry.size > max_hash_size:
+            attributes["hash_skipped"] = "exceeds_max_hash_size"
+        else:
+            # A short/truncated read returned no digest (no partial digest, D-17).
+            attributes["hash_skipped"] = "short_read"
+
+    # Content typing reads only the leading HEAD_BYTES and is independent of the
+    # hash skip, so a file too big to hash can still be typed (head bytes only).
+    file_type = typer(reader, entry.size)
+    return (hashes, file_type, attributes)
+
+
 def _build_file_row(
-    entry: fs_seam.FileEntry, evidence_source_id: int, walk_tz: ZoneInfo
+    entry: fs_seam.FileEntry,
+    evidence_source_id: int,
+    walk_tz: ZoneInfo,
+    *,
+    max_hash_size: int | None,
+    typer: FileTyper,
 ) -> FileRow:
-    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01..03).
+    """Map a seam :class:`FileEntry` to a persisted :class:`FileRow` (META-01..05).
 
     Populates the META-01 spine (path/name/addr/status + volume tagging +
     meta-type + fs-type), the META-02 MACB columns (normalised to tz-aware UTC
     ISO-8601 with FAT local-time handling + zero→None, D-16) plus
-    ``timestamp_source``, and the META-03 ownership/mode columns straight from the
-    seam's plain-int ``uid``/``gid``/``mode`` fields (``None`` is preserved for
-    meta-less entries — never coerced to ``0``; the raw mode integer is stored
-    unformatted, the Phase 3 report layer formats it). Hash/file-type columns stay
-    ``None`` until Plan 02-03.
+    ``timestamp_source``, the META-03 ownership/mode columns straight from the
+    seam's plain-int ``uid``/``gid``/``mode`` fields (``None`` preserved for
+    meta-less entries — never coerced to ``0``), and the META-04/META-05 hash +
+    content-type columns for allocated regular files (null for non-regular /
+    oversize entries, with a ``hash_skipped`` reason recorded in ``attributes``).
     """
     macb, timestamp_source, attributes = _macb_fields(entry, walk_tz)
+    hashes, file_type, hash_attrs = _content_fields(
+        entry, max_hash_size=max_hash_size, typer=typer
+    )
+    # Merge the FAT local-time flags (from MACB) with any hash-skip reason.
+    attributes = {**attributes, **hash_attrs}
     return FileRow(
         evidence_source_id=evidence_source_id,
         volume_id=entry.volume_id,
@@ -239,11 +337,15 @@ def _build_file_row(
         uid=entry.uid,
         gid=entry.gid,
         mode=entry.mode,
+        md5=hashes["md5"],
+        sha1=hashes["sha1"],
+        sha256=hashes["sha256"],
         mtime_utc=macb["m"],
         atime_utc=macb["a"],
         ctime_utc=macb["c"],
         crtime_utc=macb["b"],
         timestamp_source=timestamp_source,
+        file_type=file_type,
         attributes=attributes,
     )
 
@@ -255,6 +357,7 @@ def run_walk(
     evidence_source_id: int | None = None,
     timezone: str = "UTC",
     max_hash_size: int | None = None,
+    typer: FileTyper | None = None,
 ) -> WalkResult:
     """Walk a filesystem image into a normalized ``files`` inventory (META-01).
 
@@ -271,7 +374,12 @@ def run_walk(
             defaults to the latest ``evidence_sources`` row in the case.
         timezone: IANA zone name used for FAT local-time handling downstream
             (validated by the caller); recorded for provenance.
-        max_hash_size: Reserved for the Plan 02-02 hashing pass; unused here.
+        max_hash_size: Skip hashing any file whose logical size exceeds this many
+            bytes (records null hashes + a ``hash_skipped`` reason); ``None``
+            (default) means no cap (META-04/D-17, threat T-2-03-HOG).
+        typer: Content-signature type-identification callable, injected for
+            testability; defaults to :func:`filetype.file_type` (python-magic,
+            META-05/D-19).
 
     Returns:
         A :class:`WalkResult` with the analytical inventory counts.
@@ -283,6 +391,9 @@ def run_walk(
     """
     image_path = Path(image).resolve()
     case_path = Path(case_dir).resolve()
+
+    # Default to the content-signature typer (python-magic); injectable for tests.
+    active_typer: FileTyper = typer if typer is not None else filetype_mod.file_type
 
     # Resolve the FAT local-time zone once (validated here; a bad zone raises
     # before any evidence access — threat T-2-02-TZ / Security V5).
@@ -361,7 +472,15 @@ def run_walk(
                     rows: list[FileRow] = []
                     vol_deleted = 0
                     for entry in fs_seam.walk_fs(fs, vol.volume_id, vol.offset):
-                        rows.append(_build_file_row(entry, source_id, walk_tz))
+                        rows.append(
+                            _build_file_row(
+                                entry,
+                                source_id,
+                                walk_tz,
+                                max_hash_size=max_hash_size,
+                                typer=active_typer,
+                            )
+                        )
                         if entry.allocated is False:
                             vol_deleted += 1
                     store.insert_files(rows)

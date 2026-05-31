@@ -30,6 +30,19 @@ _NOT_YET = "Plan 02-02/02-03: core/walk.py orchestrator not implemented yet (RED
 _EXT4_EXPECTED_ROW_COUNT = 4
 
 
+def _bytes_reader(data: bytes):
+    """Return a read-only ``(offset, size) -> bytes`` closure over ``data``.
+
+    Models the FS-seam ``read_random`` byte-reader so the hashing/typing helpers
+    are exercised with no native object (D-06/D-14 testability contract).
+    """
+
+    def read_random(offset: int, size: int) -> bytes:
+        return data[offset : offset + size]
+
+    return read_random
+
+
 def _ingest_then_walk(
     image: Path, case_dir: Path, *, timezone: str = "UTC"
 ) -> tuple[WalkResult, int]:
@@ -183,23 +196,100 @@ def test_ownership_and_mode(tiny_ext4_image: Path, case_dir: Path) -> None:
             assert isinstance(row.mode, int)
 
 
-def test_three_digest_single_pass(tiny_ext4_image: Path) -> None:
+def test_three_digest_single_pass(tiny_ext4_image: Path, tmp_path: Path) -> None:
     """META-04: MD5+SHA1+SHA256 per regular file in a single pass.
 
     Digests must match an independent ``hashlib`` pass; empty files get the
     sentinel digests; ``--max-hash-size`` skips oversized files and records a
     reason (D-17).
     """
-    pytest.fail(_NOT_YET)
+    import hashlib
+
+    from pyautopsy.evidence.integrity import EMPTY, hash_file
+
+    # -- unit: hash_file matches a direct hashlib pass over the same bytes ----
+    data = make_fixtures.FS_FILE_CONTENT * 137  # spans several 1 MiB-less reads
+    reader = _bytes_reader(data)
+    digests = hash_file(reader, len(data))
+    assert digests is not None
+    assert digests["md5"] == hashlib.md5(data).hexdigest()
+    assert digests["sha1"] == hashlib.sha1(data).hexdigest()
+    assert digests["sha256"] == hashlib.sha256(data).hexdigest()
+
+    # -- unit: a zero-length file returns the well-known empty sentinels -----
+    assert hash_file(_bytes_reader(b""), 0) == EMPTY
+    assert EMPTY["md5"] == hashlib.md5(b"").hexdigest()
+    assert EMPTY["sha1"] == hashlib.sha1(b"").hexdigest()
+    assert EMPTY["sha256"] == hashlib.sha256(b"").hexdigest()
+
+    # -- unit: a file over max_size is skipped (None — caller records reason) -
+    assert hash_file(_bytes_reader(data), len(data), max_size=len(data) - 1) is None
+    # -- unit: a short/truncated read records no partial digest (returns None) -
+    assert hash_file(_bytes_reader(b"\x00" * 10), 1000) is None
+    # -- unit: a non-positive chunk is rejected loudly (mirrors hash_image) ---
+    with pytest.raises(ValueError):
+        hash_file(_bytes_reader(data), len(data), chunk=0)
+
+    # -- end-to-end: the walk hashes the known regular file with all three ---
+    case_dir = tmp_path / "case"
+    _, source_id = _ingest_then_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        rows = store.get_files(source_id)
+
+    known = next(r for r in rows if r.name == make_fixtures.FS_FILE_NAME)
+    expected = make_fixtures.FS_FILE_CONTENT
+    assert known.md5 == hashlib.md5(expected).hexdigest()
+    assert known.sha1 == hashlib.sha1(expected).hexdigest()
+    assert known.sha256 == hashlib.sha256(expected).hexdigest()
+
+    # Non-regular entries (directories like lost+found, $OrphanFiles) are never
+    # hashed: no content digest is recorded for them.
+    for row in rows:
+        if row.meta_type != "reg":
+            assert row.md5 is None
+            assert row.sha1 is None
+            assert row.sha256 is None
+
+    # -- end-to-end: --max-hash-size skips the file and records the reason ---
+    skip_case = tmp_path / "skip_case"
+    run_ingest(tiny_ext4_image, skip_case, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, skip_case, max_hash_size=1)
+    with CaseStore.open(skip_case) as store:
+        skip_rows = store.get_files(source_id)
+    skipped = next(r for r in skip_rows if r.name == make_fixtures.FS_FILE_NAME)
+    assert skipped.md5 is None
+    assert skipped.sha1 is None
+    assert skipped.sha256 is None
+    assert (skipped.attributes or {}).get("hash_skipped") == "exceeds_max_hash_size"
 
 
-def test_filetype_by_content_not_extension(tiny_ext4_image: Path) -> None:
+def test_filetype_by_content_not_extension(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
     """META-05: file_type derives from content, not extension.
 
     A text file is typed ``text/plain`` even with a misleading extension
     (content-signature via python-magic, D-19).
     """
-    pytest.fail(_NOT_YET)
+    from pyautopsy.evidence import filetype
+
+    # -- unit: content wins over a misleading extension. The signature engine
+    # is fed bytes, never a name — a ``.png``-named text payload types text. ---
+    misleading = filetype.file_type(_bytes_reader(b"just plain text\n"), 16)
+    assert misleading == "text/plain"
+
+    # -- end-to-end: the walk types the known regular file by content --------
+    _, source_id = _ingest_then_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        rows = store.get_files(source_id)
+
+    known = next(r for r in rows if r.name == make_fixtures.FS_FILE_NAME)
+    assert known.file_type == "text/plain"
+
+    # Non-regular entries are never typed by a magic call on their dirent bytes.
+    for row in rows:
+        if row.meta_type != "reg":
+            assert row.file_type in (None, "directory", "symlink")
 
 
 def test_volume_tagging_on_partitioned_image(
