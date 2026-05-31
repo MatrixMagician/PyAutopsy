@@ -158,7 +158,7 @@ Plans:
 
 **Gap closure** *(post-UAT fix)*
 
-- [ ] 04-04-PLAN.md — Fix root-level deleted-file misclassification: walk_fs tags root entries with fs.info.root_inum so root deletions classify as Recovered (not falsely Orphan); reserve None for genuine no-dir-link orphans; root-deletion regression fixture + test (FAT + ext4) (RECOV-02 gap)
+- [x] 04-04-PLAN.md — Fix root-level deleted-file misclassification: walk_fs tags root entries with fs.info.root_inum so root deletions classify as Recovered (not falsely Orphan); reserve None for genuine no-dir-link orphans; root-deletion regression fixture + test (FAT + ext4) (RECOV-02 gap)
 
 ### Phase 5: Log Parsing, Super-Timeline & Search
 
@@ -186,5 +186,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
-| 4. Deleted Recovery & Known-File Filtering | 4/4 | Complete    | 2026-05-31 |
+| 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete   | 2026-05-31 |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
