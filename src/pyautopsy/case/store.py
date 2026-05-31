@@ -26,6 +26,7 @@ from pyautopsy.case.models import (
     Case,
     EvidenceSource,
     FileRow,
+    KnownMatch,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -662,6 +663,72 @@ class CaseStore:
             for row in rows
         ]
 
+    # -- known-file matches (FILTER-01, D-38/D-39/D-41) -------------------
+
+    def insert_known_matches(self, rows: Iterable[KnownMatch]) -> int:
+        """Bulk-persist neutral :class:`KnownMatch` annotations (FILTER-01).
+
+        Like :meth:`insert_files` this calls
+        :meth:`_commit_unless_in_transaction`, so it composes inside the
+        filtering orchestrator's single outer :meth:`transaction` block (WR-01).
+        CaseStore stays the sole DB writer (D-08) — known-match rows never bypass
+        this method (no raw SQL outside the store, D-39).
+
+        Args:
+            rows: The known-match annotations to insert (any iterable;
+                materialised once).
+
+        Returns:
+            The number of rows inserted.
+        """
+        params = [_known_match_params(row) for row in rows]
+        if params:
+            self.connection.executemany(_KNOWN_MATCH_INSERT_SQL, params)
+        self._commit_unless_in_transaction()
+        return len(params)
+
+    def get_known_matches(self, evidence_source_id: int) -> list[KnownMatch]:
+        """Read known-file matches for a source in a deterministic total order.
+
+        This is the SINGLE place the known-match read ordering is defined (no raw
+        SQL outside the store, D-39). Matches are joined to ``files`` so they can
+        be filtered to one evidence source, then ordered by the file's D-26
+        grouping columns (``volume_id → volume_offset → path → files.id``) and
+        finally the match's own (``source → list_name → sense → matched_on →
+        known_file_matches.id``) so two runs on the same fixture serialize
+        byte-identically (D-41). The trailing surrogate ``id`` is the
+        insertion-deterministic final tiebreak — ``run_filter`` inserts matches
+        in ``get_files`` id order within one transaction, so the same fixture
+        always assigns the same id to the same match.
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            The matching :class:`KnownMatch` rows in the store's total order
+            (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT k.* FROM known_file_matches AS k "
+            "JOIN files AS f ON f.id = k.file_id "
+            "WHERE f.evidence_source_id = ? "
+            "ORDER BY f.volume_id, f.volume_offset, f.path, f.id, "
+            "k.source, k.list_name, k.sense, k.matched_on, k.id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [
+            KnownMatch(
+                file_id=row["file_id"],
+                source=row["source"],
+                matched_on=row["matched_on"],
+                list_name=row["list_name"],
+                sense=row["sense"],
+                attributes=_load_attributes(row["attributes"]),
+                id=row["id"],
+            )
+            for row in rows
+        ]
+
 
 # The ``files`` insert column order, used by both insert_file and the bulk
 # insert_files ``executemany`` so the single SQL statement and the parameter
@@ -783,6 +850,38 @@ def _timeline_event_params(event: TimelineEvent) -> tuple[Any, ...]:
         event.action,
         event.outcome,
         json.dumps(event.attributes, sort_keys=True),
+    )
+
+
+# The ``known_file_matches`` insert column order, kept in lockstep with
+# :func:`_known_match_params` exactly like ``files``/``timeline_events`` (WR-01).
+_KNOWN_MATCH_COLUMNS: tuple[str, ...] = (
+    "file_id",
+    "source",
+    "list_name",
+    "sense",
+    "matched_on",
+    "attributes",
+)
+
+_KNOWN_MATCH_INSERT_SQL = (
+    "INSERT INTO known_file_matches ("
+    + ", ".join(_KNOWN_MATCH_COLUMNS)
+    + ") VALUES ("
+    + ", ".join("?" for _ in _KNOWN_MATCH_COLUMNS)
+    + ")"
+)
+
+
+def _known_match_params(match: KnownMatch) -> tuple[Any, ...]:
+    """Flatten a :class:`KnownMatch` into the :data:`_KNOWN_MATCH_COLUMNS` tuple."""
+    return (
+        match.file_id,
+        match.source,
+        match.list_name,
+        match.sense,
+        match.matched_on,
+        json.dumps(match.attributes, sort_keys=True),
     )
 
 

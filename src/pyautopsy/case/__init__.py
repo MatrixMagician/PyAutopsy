@@ -12,6 +12,7 @@ from pyautopsy.case.models import (
     Case,
     EvidenceSource,
     FileRow,
+    KnownMatch,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "FileRow",
     "TimelineEvent",
     "VolumeLimitation",
+    "KnownMatch",
     "AuditEvent",
     "CaseStore",
 ]

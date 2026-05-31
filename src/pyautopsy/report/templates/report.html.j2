@@ -351,6 +351,44 @@
   {% endif %}
 </section>
 
+{# 6c. Known-File Filtering (noise reduction, FILTER-01) — neutral membership #}
+<section>
+  <h2>Known-File Filtering (noise reduction)</h2>
+  <p>{{ body.known.intro }}</p>
+  {% if body.known.files_matched == 0 %}
+  <p class="empty-state">No files matched the NSRL Reference Data Set or any
+    supplied custom hash list.</p>
+  {% else %}
+  <p>{{ body.known.files_matched }} file(s) matched a reference set.</p>
+  <table>
+    <thead>
+      <tr><th>Source</th><th>List</th><th>Sense</th><th>Matched on</th>
+        <th>Count</th></tr>
+    </thead>
+    <tbody>
+      {% for row in body.known.nsrl.matched_on %}
+      <tr>
+        <td>NSRL</td>
+        <td class="empty-state">—</td>
+        <td class="empty-state">—</td>
+        <td class="mono">{{ row.hash }}</td>
+        <td>{{ row.count }}</td>
+      </tr>
+      {% endfor %}
+      {% for row in body.known.custom.lists %}
+      <tr>
+        <td>custom</td>
+        <td class="mono">{{ row.list_name }}</td>
+        <td>{{ row.sense }}</td>
+        <td class="empty-state">—</td>
+        <td>{{ row.count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
 {# 7. Limitations (mandatory; D-20 volumes + standing MVP disclaimer) #}
 <section>
   <h2>Limitations</h2>

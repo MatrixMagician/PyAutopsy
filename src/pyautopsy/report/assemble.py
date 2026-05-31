@@ -33,6 +33,19 @@ if TYPE_CHECKING:
 __all__ = ["assemble_report_body", "build_run_metadata"]
 
 
+# Neutral intro for the Known-File Filtering section (FILTER-01, D-38). This is
+# NOISE REDUCTION, not classification: a "known" file is one whose hash appears
+# in a reference set (NSRL or a custom list) — the report makes NO claim that a
+# known file is good/safe or that an unknown file is bad/suspicious.
+_KNOWN_FILTER_INTRO = (
+    "Known-File Filtering matches each file's hash against reference sets (the "
+    "NSRL Reference Data Set and any supplied custom hash lists) purely to "
+    "reduce review noise. A match means the hash is KNOWN to that set — it is "
+    "not a judgement of the file's content: a known file is not asserted to be "
+    "good or safe, and an unknown file is not asserted to be bad or suspicious. "
+    "Allow/block is recorded only as the supplied list's sense, not as a verdict."
+)
+
 # Standing MVP-limitations disclaimer, verbatim from 03-UI-SPEC.md:171. Surfaced
 # in both reports so the report never overclaims what this MVP analyzed (D-28).
 _MVP_LIMITATIONS = (
@@ -169,6 +182,9 @@ def assemble_report_body(
     # the recovered list.
     recovered_files = store.get_recovered_files(evidence_source_id)
     orphan_files = store.get_orphan_files(evidence_source_id)
+    # Neutral known-file annotations in the store's total order (never re-sorted
+    # here — D-41); aggregated below into deterministic per-source/per-list counts.
+    known_matches = store.get_known_matches(evidence_source_id)
 
     # -- Findings 4a: inventory counts (deterministic; no iteration-order deps) --
     file_count = len(files)
@@ -250,6 +266,32 @@ def assemble_report_body(
         for ev in events
     ]
     timeline_total = len(timeline)
+
+    # -- Known-File Filtering (noise reduction): per-source/per-list counts ------
+    # Deterministic aggregation: NSRL matches by which hash matched, and custom
+    # matches grouped by (list_name, sense). Counters are ranked by sorted keys
+    # so the section is byte-stable across runs (D-41); neutral framing only —
+    # no good/bad/clean/malicious language (D-38).
+    nsrl_match_count = sum(1 for m in known_matches if m.source == "nsrl")
+    nsrl_matched_on: Counter[str] = Counter(
+        m.matched_on for m in known_matches if m.source == "nsrl"
+    )
+    custom_acc: dict[tuple[str, str], int] = {}
+    for m in known_matches:
+        if m.source != "custom":
+            continue
+        custom_key = (m.list_name or "", m.sense or "")
+        custom_acc[custom_key] = custom_acc.get(custom_key, 0) + 1
+    custom_lists: list[dict[str, Any]] = [
+        {
+            "list_name": list_name,
+            "sense": sense,
+            "count": custom_acc[(list_name, sense)],
+        }
+        for (list_name, sense) in sorted(custom_acc)
+    ]
+    custom_match_count = sum(int(item["count"]) for item in custom_lists)
+    known_file_ids = {m.file_id for m in known_matches}
 
     # Derive the THREE honest integrity states from the real ingest outcome
     # (WR-02) — never a hardcoded PASS:
@@ -376,6 +418,27 @@ def assemble_report_body(
             "intro": RECOVERY_REPORT_COPY["orphan_intro"],
             "files": [_recovered_section(f) for f in orphan_files],
             "count": len(orphan_files),
+        },
+        # 6c. Known-File Filtering (noise reduction, FILTER-01/D-38) — neutral
+        # membership annotations only; deterministic per-source/per-list counts,
+        # no good/bad/verdict, no wall-clock.
+        "known": {
+            "intro": _KNOWN_FILTER_INTRO,
+            "files_matched": len(known_file_ids),
+            "nsrl": {
+                "count": nsrl_match_count,
+                "matched_on": [
+                    {"hash": hash_col, "count": count}
+                    for hash_col, count in sorted(
+                        nsrl_matched_on.items(),
+                        key=lambda item: (-item[1], item[0]),
+                    )
+                ],
+            },
+            "custom": {
+                "count": custom_match_count,
+                "lists": custom_lists,
+            },
         },
         # 7. Limitations: D-20 volumes + the standing MVP disclaimer (mandatory)
         "limitations": {

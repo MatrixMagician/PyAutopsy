@@ -123,6 +123,28 @@ CREATE TABLE IF NOT EXISTS volume_limitations (
 CREATE INDEX IF NOT EXISTS idx_volume_limitations_evidence_source_id
     ON volume_limitations (evidence_source_id);
 
+-- Neutral known-file annotations from the post-walk filtering pass (FILTER-01,
+-- D-38/D-39). One row per (file, membership-source) match: a file may match the
+-- NSRL RDS AND several custom lists, so this is a dedicated table (FK to
+-- ``files``) rather than a single column, keeping multiple matches clean and the
+-- sole-writer rule intact. ``source`` is {nsrl, custom}; ``sense`` is
+-- {allow, block} for custom lists and NULL for NSRL (which carries no sense);
+-- ``matched_on`` is the hash column that matched {md5, sha1, sha256}. This is a
+-- NEUTRAL noise-reduction annotation — there is deliberately no good/bad/verdict
+-- column anywhere (D-38). Additive only: no existing row needs backfill.
+CREATE TABLE IF NOT EXISTS known_file_matches (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id            INTEGER NOT NULL REFERENCES files (id),
+    source             TEXT    NOT NULL,                 -- nsrl | custom
+    list_name          TEXT,                             -- custom list name; NULL for nsrl
+    sense              TEXT,                             -- allow | block; NULL for nsrl
+    matched_on         TEXT    NOT NULL,                 -- md5 | sha1 | sha256
+    attributes         TEXT    NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_known_file_matches_file_id
+    ON known_file_matches (file_id);
+
 -- Normalized forensic timeline events — the shared event model (D-23/D-24).
 --
 -- This is the spine Phase 3 reads back for the timeline and report, and the

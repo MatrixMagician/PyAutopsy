@@ -20,6 +20,7 @@ __all__ = [
     "FileRow",
     "TimelineEvent",
     "VolumeLimitation",
+    "KnownMatch",
     "AuditEvent",
 ]
 
@@ -246,6 +247,38 @@ class VolumeLimitation:
     volume_offset: int
     detected_desc: str | None = None
     reason: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class KnownMatch:
+    """A neutral known-file annotation from the filtering pass (FILTER-01, D-38).
+
+    Records that one ``files`` row's hash was found in a reference set — the
+    NSRL RDS or a custom allow/block list — purely for NOISE REDUCTION. It is a
+    NEUTRAL annotation: it carries the membership *source*, the *list* and
+    *sense* (provenance only), and which hash *matched_on* — and deliberately
+    NEVER a good/bad/clean/malicious verdict (D-38). A file may carry several
+    matches (NSRL + multiple lists), one row each.
+
+    Args:
+        file_id: The matched ``files`` row id (FK into ``files``).
+        source: The membership source — ``"nsrl"`` or ``"custom"``.
+        matched_on: The hash column that matched — ``"md5"``/``"sha1"``/
+            ``"sha256"``.
+        list_name: The custom list's display name; ``None`` for NSRL.
+        sense: The custom list's sense — ``"allow"``/``"block"``; ``None`` for
+            NSRL (which carries no sense). Provenance only, not a verdict.
+        attributes: Heterogeneous JSON-serialisable extra data (D-02).
+        id: Surrogate primary key; ``None`` until persisted.
+    """
+
+    file_id: int
+    source: str
+    matched_on: str
+    list_name: str | None = None
+    sense: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 
