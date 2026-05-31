@@ -24,7 +24,7 @@ slice that produces something demonstrable and defensible.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Forensic Foundation** - Read-only ingest (raw/dd + E01), source hash verify, case store, safe-extraction jail, COC + audit log (completed 2026-05-30)
-- [ ] **Phase 2: Filesystem Walk & Metadata** - Walk ext4/NTFS/FAT yielding per-file inventory, UTC MACB times, owner/perms, per-file hashes, type-by-signature
+- [x] **Phase 2: Filesystem Walk & Metadata** - Walk ext4/NTFS/FAT yielding per-file inventory, UTC MACB times, owner/perms, per-file hashes, type-by-signature (completed 2026-05-31)
 - [ ] **Phase 3: Timeline & MVP Report** - Chronological timeline + deterministic HTML/JSON report from one command (closes image -> report MVP)
 - [ ] **Phase 4: Deleted Recovery & Known-File Filtering** - Recover deleted/orphan files with confidence tiers; filter against NSRL + custom hash sets
 - [ ] **Phase 5: Log Parsing, Super-Timeline & Search** - Parse Linux logs into a shared event model, merge into a UTC super-timeline, keyword/IOC search
@@ -88,7 +88,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 02-03-PLAN.md — Per-file single-pass MD5+SHA-1+SHA-256 (empty sentinels, --max-hash-size) + content-signature file typing (META-04, META-05, D-17/D-19)
+- [x] 02-03-PLAN.md — Per-file single-pass MD5+SHA-1+SHA-256 (empty sentinels, --max-hash-size) + content-signature file typing (META-04, META-05, D-17/D-19)
 
 ### Phase 3: Timeline & MVP Report
 
@@ -146,7 +146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
-| 2. Filesystem Walk & Metadata | 3/4 | In Progress|  |
+| 2. Filesystem Walk & Metadata | 4/4 | Complete   | 2026-05-31 |
 | 3. Timeline & MVP Report | 0/TBD | Not started | - |
 | 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
