@@ -131,11 +131,17 @@ def run_filter(
             f"no case database under {case_path}; run `pyautopsy ingest` first"
         ) from exc
 
+    # WR-03: resolve the NSRL path ONCE and use the same resolved path for both
+    # the audit record and the open_nsrl call, so the chain-of-custody audit
+    # trail can never name a different file than the one actually queried (a CWD
+    # divergence would otherwise let the audited and opened paths drift apart).
+    nsrl_path = Path(nsrl_db).resolve() if nsrl_db is not None else None
+
     audit = AuditLog(case_path)
     audit.write(
         "filter.start",
         case_dir=str(case_path),
-        nsrl_db=str(Path(nsrl_db).resolve()) if nsrl_db is not None else None,
+        nsrl_db=str(nsrl_path) if nsrl_path is not None else None,
         hash_set_count=len(hash_sets),
     )
 
@@ -162,8 +168,8 @@ def run_filter(
         # Open the NSRL DB once (read-only), reused for every probe.
         nsrl_conn: sqlite3.Connection | None = None
         nsrl_table = ""
-        if nsrl_db is not None:
-            nsrl_conn, nsrl_table = nsrl.open_nsrl(str(Path(nsrl_db)))
+        if nsrl_path is not None:
+            nsrl_conn, nsrl_table = nsrl.open_nsrl(str(nsrl_path))
 
         matches: list[KnownMatch] = []
         try:
