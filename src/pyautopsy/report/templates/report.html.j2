@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ body.header.title }}</title>
+<style>
+  :root {
+    --ink: #18181b;
+    --muted: #52525b;
+    --secondary-bg: #f4f4f5;
+    --accent: #1d4ed8;
+    --success: #15803d;
+    --destructive: #b91c1c;
+    --border: #d4d4d8;
+  }
+  html { font-size: 16px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #ffffff;
+    margin: 0;
+    padding: 1.5rem;
+    line-height: 1.45;
+  }
+  .mono {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    overflow-wrap: anywhere;
+  }
+  h1, h2 { break-after: avoid; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.25rem 0; }
+  h2 {
+    font-size: 1.15rem;
+    margin: 2rem 0 0.5rem 0;
+    padding-bottom: 0.25rem;
+    border-bottom: 2px solid var(--accent);
+  }
+  .header-band {
+    background: var(--accent);
+    color: #ffffff;
+    padding: 1rem 1.25rem;
+    border-radius: 6px;
+    break-inside: avoid;
+  }
+  .header-band h1 { color: #ffffff; }
+  .header-band dl { margin: 0.5rem 0 0 0; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem; }
+  dt { font-weight: 600; }
+  dd { margin: 0; }
+  .card { break-inside: avoid; padding: 0.75rem 1rem; border-radius: 6px; }
+  .card.pass { background: #f0fdf4; border: 1px solid var(--success); }
+  .card.fail {
+    background: #fef2f2;
+    border: 1px solid var(--destructive);
+    color: var(--destructive);
+    font-weight: 600;
+  }
+  .status-pass { color: var(--success); font-weight: 600; }
+  .status-fail { color: var(--destructive); font-weight: 700; }
+  .tag {
+    display: inline-block;
+    background: var(--secondary-bg);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 0 0.4rem;
+    font-size: 0.8rem;
+  }
+  .warn { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td {
+    text-align: left;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th { font-weight: 600; background: var(--secondary-bg); }
+  tbody tr:nth-child(even) { background: var(--secondary-bg); }
+  .disclosure {
+    background: #fffbeb;
+    border: 1px solid #d97706;
+    color: #92400e;
+    padding: 0.6rem 0.9rem;
+    border-radius: 6px;
+    font-weight: 600;
+    margin: 0.5rem 0;
+    break-inside: avoid;
+  }
+  .limitation {
+    color: var(--destructive);
+    background: #fef2f2;
+    border-left: 3px solid var(--destructive);
+    padding: 0.4rem 0.75rem;
+    margin: 0.4rem 0;
+    break-inside: avoid;
+  }
+  .mvp-disclaimer {
+    background: var(--secondary-bg);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    break-inside: avoid;
+  }
+  .empty-state { color: var(--muted); font-style: italic; }
+  @page { size: A4; margin: 16mm; }
+  @media print {
+    body { padding: 0; }
+    table { font-size: 8pt; }
+    .card, .disclosure, .limitation, tr { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+{# 1. Header / identity band #}
+<header class="header-band">
+  <h1>{{ body.header.title }}</h1>
+  <dl>
+    <dt>Case ID</dt><dd>{{ body.header.case_id }}</dd>
+    <dt>Case name</dt><dd>{{ body.header.case_name }}</dd>
+    <dt>Examiner</dt><dd>{{ body.header.examiner }}</dd>
+    <dt>Evidence ID</dt><dd>{{ body.header.evidence_id }}</dd>
+    <dt>Acquisition source</dt><dd class="mono">{{ body.header.acquisition_source }}</dd>
+    <dt>Image type</dt><dd>{{ body.header.image_type }}</dd>
+  </dl>
+</header>
+
+{# 2. Integrity verification (prominent, near the top) #}
+<section>
+  <h2>Integrity Verification</h2>
+  {% if body.integrity.passed %}
+  <div class="card pass">
+    <span class="status-pass">PASS &#x2713;</span> {{ body.integrity.copy }}
+  </div>
+  {% else %}
+  <div class="card fail">
+    <span class="status-fail">FAIL &#x2717;</span> {{ body.integrity.copy }}
+  </div>
+  {% endif %}
+</section>
+
+{# 3. Methodology + pinned tool versions #}
+<section>
+  <h2>Methodology &amp; Tool Versions</h2>
+  <p>{{ body.methodology.summary }}</p>
+  <dl>
+    <dt>pyautopsy_version</dt><dd class="mono">{{ body.methodology.pyautopsy_version }}</dd>
+    <dt>tsk_version</dt><dd class="mono">{{ body.methodology.tsk_version }}</dd>
+  </dl>
+</section>
+
+{# 4. Findings (D-28) #}
+<section>
+  <h2>Findings</h2>
+
+  <h3>Inventory summary</h3>
+  {% if body.findings.inventory.file_count == 0 %}
+  <p class="empty-state">No files were inventoried. The volume(s) may be empty,
+    unsupported, or encrypted — see Limitations.</p>
+  {% else %}
+  <dl>
+    <dt>Files</dt><dd>{{ body.findings.inventory.file_count }}</dd>
+    <dt>Directories</dt><dd>{{ body.findings.inventory.directory_count }}</dd>
+    <dt>Deleted / unallocated entries</dt><dd>{{ body.findings.inventory.deleted_count }}</dd>
+  </dl>
+  {% endif %}
+
+  {% if body.findings.per_volume %}
+  <h3>Per-volume breakdown</h3>
+  <table>
+    <thead>
+      <tr><th>Volume</th><th>Offset</th><th>FS type</th><th>Files</th><th>Deleted</th></tr>
+    </thead>
+    <tbody>
+      {% for vol in body.findings.per_volume %}
+      <tr>
+        <td>{{ vol.volume_id }}</td>
+        <td class="mono">{{ vol.volume_offset }}</td>
+        <td>{{ vol.fs_type }}</td>
+        <td>{{ vol.file_count }}</td>
+        <td>{{ vol.deleted_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if body.findings.file_type_distribution %}
+  <h3>File-type distribution</h3>
+  <table>
+    <thead><tr><th>File type</th><th>Count</th></tr></thead>
+    <tbody>
+      {% for row in body.findings.file_type_distribution %}
+      <tr><td>{{ row.file_type }}</td><td>{{ row.count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if body.findings.provenance_flags %}
+  <h3>Timestamp / type provenance</h3>
+  <ul>
+    {% for flags in body.findings.provenance_flags %}
+    <li class="warn">&#x26A0;
+      {% if flags.time_precision %}
+        Timestamp provenance: {{ flags.time_precision }}{% if flags.assumed_timezone %} (assumed_timezone: {{ flags.assumed_timezone }}){% endif %}.
+      {% endif %}
+      {% if flags.file_type_provenance %}
+        File-type provenance: {{ flags.file_type_provenance }}.
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{# 5. Evidence hashes #}
+<section>
+  <h2>Evidence Hashes (source image)</h2>
+  <dl>
+    <dt>MD5</dt><dd class="mono">{{ body.evidence_hashes.md5 }}</dd>
+    <dt>SHA-1</dt><dd class="mono">{{ body.evidence_hashes.sha1 if body.evidence_hashes.sha1 else "(not computed)" }}</dd>
+    <dt>SHA-256</dt><dd class="mono">{{ body.evidence_hashes.sha256 }}</dd>
+  </dl>
+</section>
+
+{# 6. Timeline (bounded, D-26 order) #}
+<section>
+  <h2>Timeline</h2>
+  {% if timeline_total > timeline|length %}
+  <div class="disclosure">&#x26A0; Showing {{ timeline|length }} of {{ timeline_total }}
+    timeline events. This HTML view is truncated for readability; the complete
+    timeline is in report.json.</div>
+  {% endif %}
+  {% if timeline_total == 0 %}
+  <p class="empty-state">No timeline events were produced. No filesystem MACB
+    timestamps were recorded for the analyzed volume(s).</p>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Timestamp (UTC)</th><th>Volume</th><th>Path</th>
+        <th>Event type</th><th>Meta addr</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ev in timeline %}
+      <tr>
+        <td class="mono">{{ ev.ts_utc }}</td>
+        <td class="mono">{{ ev.volume_id }}@{{ ev.volume_offset }}</td>
+        <td class="mono">{{ ev.path }}</td>
+        <td>{{ ev.event_type }}</td>
+        <td class="mono">{{ ev.meta_addr }}</td>
+        <td>{{ ev.source }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if timeline_total > timeline|length %}
+  <div class="disclosure">&#x26A0; Showing {{ timeline|length }} of {{ timeline_total }}
+    timeline events. This HTML view is truncated for readability; the complete
+    timeline is in report.json.</div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# 7. Limitations (mandatory; D-20 volumes + standing MVP disclaimer) #}
+<section>
+  <h2>Limitations</h2>
+  {% for lim in body.limitations.volumes %}
+  <div class="limitation">&#x26A0; Limitation — Volume {{ lim.volume_id }}
+    ({{ lim.detected_desc if lim.detected_desc else lim.reason }}):
+    {{ lim.reason }}. This volume was not analyzed; results elsewhere exclude it.</div>
+  {% endfor %}
+  <p class="mvp-disclaimer">{{ body.limitations.mvp_disclaimer }}</p>
+</section>
+
+</body>
+</html>
