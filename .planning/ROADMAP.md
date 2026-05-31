@@ -142,7 +142,7 @@ Plans:
 Plans:
 **Wave 0**
 
-- [ ] 04-00-PLAN.md — Wave 0 scaffold: RED test stubs (test_recover.py, test_knownfiles.py) + deterministic fixtures (orphan/overwritten ext4, resident NTFS, FILE/METADATA NSRL DBs) with ground-truth constants (RECOV-01..03, FILTER-01)
+- [x] 04-00-PLAN.md — Wave 0 scaffold: RED test stubs (test_recover.py, test_knownfiles.py) + deterministic fixtures (orphan/overwritten ext4, resident NTFS, FILE/METADATA NSRL DBs) with ground-truth constants (RECOV-01..03, FILTER-01)
 
 **Wave 1** *(blocked on Wave 0)*
 
@@ -155,7 +155,6 @@ Plans:
 **Wave 3** *(blocked on Waves 1+2)*
 
 - [ ] 04-03-PLAN.md — Integration: opt-in recover/filter wiring in `analyze` + --recover/--nsrl/--hash-set flags + reproducibility/read-only/seam-allowlist tests + _MVP_LIMITATIONS honesty update (D-40/D-41/D-42)
-
 
 ### Phase 5: Log Parsing, Super-Timeline & Search
 
@@ -183,5 +182,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Forensic Foundation | 5/5 | Complete    | 2026-05-30 |
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
-| 4. Deleted Recovery & Known-File Filtering | 0/TBD | Not started | - |
+| 4. Deleted Recovery & Known-File Filtering | 1/4 | In Progress|  |
 | 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |

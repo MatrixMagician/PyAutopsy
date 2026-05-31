@@ -25,13 +25,13 @@ table-stakes "image → defensible report" pipeline from research/FEATURES.md MV
 
 ### Deleted File Recovery
 
-- [ ] **RECOV-01**: Tool enumerates and recovers deleted files where metadata/data remain intact
-- [ ] **RECOV-02**: Tool reports orphan files (deleted files whose parent directory is gone) separately
-- [ ] **RECOV-03**: Tool labels each recovered file with a confidence level (intact vs partial/overwritten)
+- [x] **RECOV-01**: Tool enumerates and recovers deleted files where metadata/data remain intact
+- [x] **RECOV-02**: Tool reports orphan files (deleted files whose parent directory is gone) separately
+- [x] **RECOV-03**: Tool labels each recovered file with a confidence level (intact vs partial/overwritten)
 
 ### Known-File Filtering
 
-- [ ] **FILTER-01**: Tool filters known files against NSRL RDS and user-supplied custom hash sets (allow/block lists), surfacing matches as "known" rather than a good/bad verdict
+- [x] **FILTER-01**: Tool filters known files against NSRL RDS and user-supplied custom hash sets (allow/block lists), surfacing matches as "known" rather than a good/bad verdict
 
 ### Log Analysis
 
@@ -120,10 +120,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | META-03 | Phase 2 | Complete |
 | META-04 | Phase 2 | Complete |
 | META-05 | Phase 2 | Complete |
-| RECOV-01 | Phase 4 | Pending |
-| RECOV-02 | Phase 4 | Pending |
-| RECOV-03 | Phase 4 | Pending |
-| FILTER-01 | Phase 4 | Pending |
+| RECOV-01 | Phase 4 | Complete |
+| RECOV-02 | Phase 4 | Complete |
+| RECOV-03 | Phase 4 | Complete |
+| FILTER-01 | Phase 4 | Complete |
 | LOG-01 | Phase 5 | Pending |
 | LOG-02 | Phase 5 | Pending |
 | LOG-03 | Phase 5 | Pending |
