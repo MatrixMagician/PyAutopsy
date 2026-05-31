@@ -178,6 +178,33 @@ def test_root_entries_have_no_parent_addr(tiny_ext4_image: Path) -> None:
         assert row.parent_addr is None
 
 
+def test_root_level_deletion_is_not_orphan(tiny_ext4_image: Path) -> None:
+    """RECOV-02: a deleted file in the volume ROOT classifies is_orphan=False.
+
+    Regression for the root-level misclassification gap: ``walk_fs`` now tags
+    root entries with the filesystem root inode, so ``iter_deleted_inodes`` sees
+    an allocated parent for ``deleted.txt`` (which lives in the ext4 root) and
+    does NOT flag it as an orphan. None is reserved for genuine range-scan
+    orphans with no surviving dir link. A revert (root entries back to
+    parent_addr=None) would re-flag this as an orphan and FAIL this test.
+    """
+    with open_image(tiny_ext4_image) as handle:
+        fs = open_fs(handle.image, 0)
+        deleted = [
+            di
+            for di in iter_deleted_inodes(fs, volume_id=0, volume_offset=0)
+            if di.name == make_fixtures.EXT4_DELETED_NAME
+        ]
+    assert deleted, "root-level deleted.txt was not discovered by iter_deleted_inodes"
+    assert deleted[0].is_orphan is False, (
+        "root-level deletion wrongly classified as orphan — root inode parent "
+        "should be allocated"
+    )
+    assert deleted[0].parent_addr is not None, (
+        "root-level deleted entry must carry the root inode, not None"
+    )
+
+
 def test_parent_addr_threaded_through_recursion() -> None:
     """WR-03: a child entry's ``parent_addr`` is its parent directory's inode.
 
