@@ -256,16 +256,17 @@ class WalkResult:
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
-    """Return the most-recent ``evidence_sources`` id, or raise :class:`WalkError`."""
-    row = store.connection.execute(
-        "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+    """Return the most-recent ``evidence_sources`` id, or raise :class:`WalkError`.
+
+    Reads through the CaseStore (WR-02: no raw SQL outside the store boundary).
+    """
+    source_id = store.get_latest_evidence_source_id()
+    if source_id is None:
         raise WalkError(
             "no evidence source in the case; run `pyautopsy ingest` first so the "
             "walk has an evidence_sources row to attach the inventory to"
         )
-    return int(row["id"])
+    return source_id
 
 
 # Meta-type labels that are eligible for content hashing/typing. Only a *regular*

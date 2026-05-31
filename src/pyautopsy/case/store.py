@@ -292,6 +292,51 @@ class CaseStore:
             )
         return cur.lastrowid
 
+    def get_latest_evidence_source_id(self) -> int | None:
+        """Return the most-recent ``evidence_sources`` id, or ``None`` if empty.
+
+        The single sanctioned read for "which source do I attach to by default"
+        (WR-02). Orchestrators (walk/recover/search/logs/knownfiles) call this
+        instead of issuing their own ``SELECT id FROM evidence_sources`` so the
+        documented "no raw SQL outside the store" boundary holds and a schema
+        change to ``evidence_sources`` has ONE call site here, not five scattered
+        copies. Returns ``None`` (not an exception) so each caller raises its own
+        domain error with its own guidance message.
+
+        Returns:
+            The newest evidence-source id, or ``None`` when no source exists.
+        """
+        row = self.connection.execute(
+            "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
+    def has_timeline_events_with_source_prefix(
+        self, evidence_source_id: int, source_prefix: str
+    ) -> bool:
+        """Return whether any timeline event's ``source`` starts with a prefix.
+
+        The single sanctioned EXISTS read for "does this source already have
+        FILESYSTEM events" (WR-06). ``run_logs`` uses it to gate the one-time
+        filesystem-MACB backfill on the absence of ``filesystem``-source events
+        specifically, rather than on the absence of ANY event — so a prior
+        log-only standalone ``logs`` run (which inserts LOG events but no
+        filesystem events) does not permanently suppress the backfill.
+
+        Args:
+            evidence_source_id: The owning evidence source.
+            source_prefix: The ``source`` prefix to test (e.g. ``"filesystem"``).
+
+        Returns:
+            ``True`` if at least one matching event exists, else ``False``.
+        """
+        row = self.connection.execute(
+            "SELECT 1 FROM timeline_events "
+            "WHERE evidence_source_id = ? AND source LIKE ? LIMIT 1",
+            (evidence_source_id, source_prefix + "%"),
+        ).fetchone()
+        return row is not None
+
     def get_evidence_source(self, source_id: int) -> EvidenceSource:
         """Read an evidence source back by id.
 

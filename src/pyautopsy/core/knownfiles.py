@@ -78,16 +78,17 @@ _EXPECTED_FILTER_ERRORS: tuple[type[BaseException], ...] = (
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
-    """Return the latest ``evidence_sources`` id, or raise :class:`FilterError`."""
-    row = store.connection.execute(
-        "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+    """Return the latest ``evidence_sources`` id, or raise :class:`FilterError`.
+
+    Reads through the CaseStore (WR-02: no raw SQL outside the store boundary).
+    """
+    source_id = store.get_latest_evidence_source_id()
+    if source_id is None:
         raise FilterError(
             "no evidence source in the case; run `pyautopsy ingest` + `walk` "
             "first so filtering has an inventory to filter"
         )
-    return int(row["id"])
+    return source_id
 
 
 def run_filter(

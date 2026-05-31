@@ -271,16 +271,17 @@ _EXPECTED_RECOVER_ERRORS: tuple[type[BaseException], ...] = (
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
-    """Return the latest ``evidence_sources`` id, or raise :class:`RecoverError`."""
-    row = store.connection.execute(
-        "SELECT id FROM evidence_sources ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+    """Return the latest ``evidence_sources`` id, or raise :class:`RecoverError`.
+
+    Reads through the CaseStore (WR-02: no raw SQL outside the store boundary).
+    """
+    source_id = store.get_latest_evidence_source_id()
+    if source_id is None:
         raise RecoverError(
             "no evidence source in the case; run `pyautopsy ingest` + `walk` "
             "first so recovery has an inventory to recover from"
         )
-    return int(row["id"])
+    return source_id
 
 
 def _recovered_target(
