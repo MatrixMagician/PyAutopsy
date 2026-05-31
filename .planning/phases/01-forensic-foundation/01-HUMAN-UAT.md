@@ -1,30 +1,36 @@
 ---
-status: partial
+status: complete
 phase: 01-forensic-foundation
 source: [01-VERIFICATION.md]
 started: 2026-05-30T17:35:00Z
-updated: 2026-05-31T00:00:00Z
+updated: 2026-05-31T15:56:00Z
 ---
 
 ## Current Test
 
-[testing paused — 1 item outstanding: real-E01 ingest still unconfirmed on hardware (no libewf host available)]
+[testing complete]
 
 ## Tests
 
 ### 1. Real E01 ingest on a libewf-equipped host
 expected: On a host with `libewf` installed, `pip install .[ewf]` then `pyautopsy ingest sample.E01 --case /tmp/c --examiner me --evidence-id E1` creates the case store + audit log, with `image_type='ewf'` and the `EWFImgInfo` adapter delegating read/get_size/close to a live `pyewf.handle` — producing the same `case.db` + UTC audit chain as the raw/dd path.
-result: skipped
-reason: "User reported: skip — no libewf host available. FOLLOW-UP (2026-05-31): this host DOES have a working pyewf (libewf-python==20240506, reads OK) — original 'no host' reason superseded. New blocker is precise: the bundled libewf was compiled WITHOUT zlib (zlib-devel not installed), so E01 *write* is unsupported and no .E01 fixture can be created locally to exercise the read path. Unblock: `sudo dnf install -y zlib-devel` then `pip install --user --force-reinstall --no-binary :all: libewf-python==20240506`, then a tiny ext4 raw image (dd+mke2fs+debugfs) → sample.E01 via pyewf write → `pyautopsy ingest`. pytsk3, gcc, python3-devel, libewf-devel all already present."
-why_human: This CI/dev host has no libewf/pyewf (`import pyewf` → ImportError; pytsk3 is present). The E01 adapter is real code exercised against a mocked `pyewf.handle` in CI; per 01-VALIDATION.md this is the single documented Manual-Only verification — an accepted arrangement, not a stub. Native-library confirmation needs real libs/hardware.
+result: pass
+verified: "2026-05-31 — PASS on a real libewf-equipped host. Verification evidence:
+  - Fixture: dd 8 MiB → mke2fs ext4 → debugfs wrote f1.txt/f2.txt → ewfacquire -c none (uncompressed) → sample.E01.
+  - `pyautopsy ingest sample.E01 --case /tmp/c --examiner me --evidence-id E1` → exit 0, `image type: ewf`.
+  - EWFImgInfo adapter delegated to a LIVE pyewf.handle: open/hash/reverify read all 8388608 media bytes via EWF (not mocked).
+  - case.db created with full schema; evidence_sources row records image_type='ewf', byte_size=8388608, tsk_version=4.15.0.
+  - UTC audit chain in logs/audit.jsonl: ingest.start→write_guard(PASS)→case_init→write_guard_recheck(PASS)→open(image_type=ewf,read_only=true)→hash→reverify(PASS)→end(SUCCESS); every ts ends in +00:00.
+  - SAME-AS-RAW proof: ingesting the identical media via the raw/dd path produced byte-identical sha256 (8d2623bd…291ea) and md5 (4d73b791…); only image_type differs (ewf vs raw). pyautopsy's media md5 also matched ewfacquire's own data MD5.
+  ENVIRONMENT NOTE: pip libewf-python==20240506 builds WITHOUT zlib (read-uncompressed only, NO write). E01 fixtures must be minted with the system libewf via `libewf-tools` ewfacquire -c none. See graphmind memory ref fbb0c3e2."
 
 ## Summary
 
 total: 1
-passed: 0
+passed: 1
 issues: 0
 pending: 0
-skipped: 1
+skipped: 0
 blocked: 0
 
 ## Gaps
