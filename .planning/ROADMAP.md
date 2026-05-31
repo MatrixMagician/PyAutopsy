@@ -183,7 +183,7 @@ Plans:
 
 **Wave 1** *(blocked on Wave 0)*
 
-- [ ] 05-01-PLAN.md — Auth slice: log/ scaffolding (registry/discover/timeresolve/normalize) + auth.log parser + core/logs.py + `pyautopsy logs` CLI (LOG-01, LOG-04, TIME-02; D-45/D-46/D-47)
+- [x] 05-01-PLAN.md — Auth slice: log/ scaffolding (registry/discover/timeresolve/normalize) + auth.log parser + core/logs.py + `pyautopsy logs` CLI (LOG-01, LOG-04, TIME-02; D-45/D-46/D-47)
 
 **Wave 2** *(blocked on Wave 1; 05-02 and 05-03 run in parallel)*
 
@@ -205,4 +205,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 1/5 | In Progress|  |
+| 5. Log Parsing, Super-Timeline & Search | 2/5 | In Progress|  |
