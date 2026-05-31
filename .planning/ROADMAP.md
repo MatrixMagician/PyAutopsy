@@ -174,7 +174,25 @@ Plans:
   4. Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
   5. Examiner can run literal and regex keyword searches across allocated content, unallocated space, and file content, and match against supplied IOC lists and known-bad hash sets — reporting hits with file and offset
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+**Wave 0**
+
+- [ ] 05-00-PLAN.md — Wave 0 scaffold: committed log/search fixtures + RED test stubs (LOG/SEARCH/TIME) + D-43 no-new-deps guard
+
+**Wave 1** *(blocked on Wave 0)*
+
+- [ ] 05-01-PLAN.md — Auth slice: log/ scaffolding (registry/discover/timeresolve/normalize) + auth.log parser + core/logs.py + `pyautopsy logs` CLI (LOG-01, LOG-04, TIME-02; D-45/D-46/D-47)
+
+**Wave 2** *(blocked on Wave 1; 05-02 and 05-03 run in parallel)*
+
+- [ ] 05-02-PLAN.md — syslog/messages + shell-history parsers registering into the shared pipeline (LOG-02, LOG-03; D-44 tamperability findings)
+- [ ] 05-03-PLAN.md — Search slice: iter_unallocated_blocks seam + additive search_hits store + streaming literal/regex + IOC/known-bad-hash + `pyautopsy search` CLI (SEARCH-01, SEARCH-02; D-49)
+
+**Wave 3** *(blocked on Waves 1+2)*
+
+- [ ] 05-04-PLAN.md — Integration: opt-in `analyze --logs/--search` + report sections + super-timeline (TIME-02) + CLI-02/CR-01 reproducibility tests (D-48)
 
 ## Progress
 
@@ -187,4 +205,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 0/TBD | Not started | - |
+| 5. Log Parsing, Super-Timeline & Search | 0/5 | Not started | - |
