@@ -416,6 +416,15 @@
     timezone. {{ body.log_findings.provenance.caveat }}</div>
   {% endif %}
   {% endif %}
+  {# D-44/D-45 honesty disclosures (guarded so the default path is unchanged) #}
+  {% if body.log_findings.disclosures %}
+  <p>{{ body.log_findings.disclosures_intro }}</p>
+  {% for d in body.log_findings.disclosures %}
+  <div class="disclosure">&#x26A0; <strong>{{ d.category }}</strong>
+    {% if d.subject %}(<span class="mono">{{ d.subject }}</span>){% endif %}:
+    {{ d.detail }}</div>
+  {% endfor %}
+  {% endif %}
 </section>
 
 {# 6e. Content Search (SEARCH-01/02) — located evidence, not a verdict #}

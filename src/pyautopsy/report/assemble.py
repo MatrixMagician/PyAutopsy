@@ -220,6 +220,22 @@ _LOG_FINDINGS_INTRO = (
     "acted or why."
 )
 
+# Neutral intro for the log honesty-disclosure sub-block (D-44/D-45). Like the
+# known-file and log intros this is OBSERVED-FACT framing, never accusation or
+# intent: a tamperability disclosure states only that shell history is editable
+# by the subject and its line order is not chronological truth; a completeness
+# disclosure states only which rotation indices were present/absent. The
+# disclosure text itself is rendered VERBATIM from the parser/discover output.
+_LOG_DISCLOSURE_INTRO = (
+    "These are honesty disclosures about the parsed logs themselves, not "
+    "findings against any person. A TAMPERABILITY disclosure records the "
+    "observed fact that shell history is editable by the subject and its line "
+    "order is therefore not chronological truth (D-44) — treat commands as "
+    "observed evidence only, never as proof of timing or intent. A COMPLETENESS "
+    "disclosure records which rotated-log indices were present or absent, so an "
+    "incomplete log set is never presented as if it were the whole record (D-45)."
+)
+
 # Neutral intro for the Content Search section (SEARCH-01/02, D-49). A hit is a
 # byte-pattern match at an offset — it is located evidence, not a verdict.
 _SEARCH_INTRO = (
@@ -321,6 +337,11 @@ def assemble_report_body(
     # default analyze path (no --search) this is empty, so the search section is
     # byte-identical across runs (CLI-02/D-48).
     search_hits = store.get_search_hits(evidence_source_id)
+    # D-44/D-45 log honesty findings in the store's id order (never re-sorted
+    # here — D-41). Empty on the default analyze path (no --logs), so the
+    # disclosures sub-block renders as [] and the section stays byte-identical to
+    # the Phase-4/05 baseline (D-48).
+    log_findings_rows = store.get_log_findings(evidence_source_id)
 
     # -- Inventory aggregation set (BL-01): exclude recovered rows ---------------
     # The walk records every deleted inode as a ``files`` row (allocated=False,
@@ -452,10 +473,24 @@ def assemble_report_body(
         for ev in log_events
         if (ev.attributes or {}).get("assumed_timezone") is not None
     )
+    # D-44/D-45 honesty disclosures: one dict per persisted finding row, in the
+    # store's id order (never re-sorted here — D-41; mirrors limitation_rows). On
+    # the default path get_log_findings is [], so this is [] and the section is
+    # byte-identical to the Phase-4/05 baseline (D-48).
+    disclosures = [
+        {
+            "category": row.category,
+            "subject": row.subject,
+            "detail": row.detail,
+        }
+        for row in log_findings_rows
+    ]
     log_findings = {
         "intro": _LOG_FINDINGS_INTRO,
         "count": len(log_events),
         "by_source": log_by_source,
+        "disclosures_intro": _LOG_DISCLOSURE_INTRO,
+        "disclosures": disclosures,
         "provenance": {
             "inferred_year_count": inferred_year_count,
             "inferred_timezone_count": inferred_tz_count,
