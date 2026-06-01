@@ -368,6 +368,73 @@ def test_run_logs_persists_findings(
     assert result.findings_count == len(findings)
 
 
+def test_groundtruth_year_matches_fixture_mtime(
+    log_search_image: Path, case_dir: Path, log_search_groundtruth: dict[str, Any]
+) -> None:
+    """G-1 guard: the sidecar year matches the years D-46 infers from the fixture.
+
+    UAT gap G-1 was a fixture-vs-sidecar DOCUMENTATION drift: the committed image is
+    built with a frozen debugfs clock (``_EXT4_FAKE_TIME = 1700000000`` = 2023-11-14),
+    so D-46 (:func:`pyautopsy.core.logs._seed_year_from_mtime`) seeds the RFC3164 year
+    from the live member's mtime year (2023) and the oldest rotated member's Dec lines
+    land in the prior year (2022) — yet the sidecar once asserted 2026/2025. The
+    inference mechanism was SOUND; only the documented expectation was wrong.
+
+    This guard drives the REAL path (ingest + walk + run_logs over the committed
+    fixture), reads the persisted inferred (RFC3164, non-epoch) log events — those
+    carrying a ``year_inferred`` attribute — and asserts every inferred year is drawn
+    from ``{gt["prev_year"], gt["year"]}`` and that ``gt["year"]`` (the live-member seed
+    year) is actually produced. It derives the years from the fixture's real mtime
+    anchor (NOT a hard-coded literal), so editing the sidecar away from the value the
+    image carries would fail it — the drift G-1 found cannot silently return.
+    Deterministic: no wall-clock is read (D-46 seeds from evidence only, CLI-02).
+
+    The pin reads each event's ``year_inferred`` attribute — the D-46 RFC3164 year the
+    sidecar actually documents — NOT the calendar year of the tz-converted ``ts_utc``.
+    A late-December line in the inferred host tz (America/New_York) crosses into the
+    next UTC calendar year (``Dec 31 2023 23:59:59`` ET = ``2024-01-01T04:59:59Z``), so
+    the UTC-year of ts_utc is a tz artifact, not the inferred year; ``year_inferred``
+    is the value generator + sidecar agree on.
+    """
+    from pyautopsy.case import CaseStore  # noqa: PLC0415
+    from pyautopsy.core.ingest import run_ingest  # noqa: PLC0415
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415
+    from pyautopsy.core.walk import run_walk  # noqa: PLC0415
+
+    gt = log_search_groundtruth
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir, timezone="UTC")
+    run_logs(
+        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
+    )
+
+    with CaseStore.open(case_dir) as store:
+        events = store.get_timeline_events(ingested.evidence_source_id)
+
+    # Inferred RFC3164 events are exactly those flagged with year_inferred (epoch
+    # shell-history events resolve from embedded epochs and carry no such flag). The
+    # year_inferred attribute is the D-46 RFC3164 year seeded from the fixture's real
+    # mtime anchor — exactly what the sidecar documents.
+    inferred_years = [
+        int(attrs["year_inferred"])
+        for e in events
+        if "year_inferred" in (attrs := (e.attributes or {}))
+    ]
+    assert inferred_years, "no D-46 year-inferred log events found on the fixture"
+
+    allowed = {gt["prev_year"], gt["year"]}
+    stray = sorted({y for y in inferred_years if y not in allowed})
+    assert not stray, (
+        f"inferred years {stray} not in the sidecar-documented "
+        f"{{prev_year={gt['prev_year']}, year={gt['year']}}} — fixture/sidecar drift (G-1)"
+    )
+    assert gt["year"] in inferred_years, (
+        f"sidecar year {gt['year']} is not produced by the fixture's mtime anchor; "
+        f"observed inferred years: {sorted(set(inferred_years))}"
+    )
+
+
 def test_infer_years_same_month_year_boundary() -> None:
     """CR-03: a same-month year boundary is recognised (month-only compare missed it).
 
