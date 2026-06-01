@@ -174,7 +174,7 @@ Plans:
   4. Tool builds a super-timeline merging filesystem metadata and parsed log events into one UTC-sorted chronological view
   5. Examiner can run literal and regex keyword searches across allocated content, unallocated space, and file content, and match against supplied IOC lists and known-bad hash sets — reporting hits with file and offset
 
-**Plans**: 5 plans
+**Plans**: 7 plans (5 shipped + 2 gap-closure)
 
 Plans:
 **Wave 0**
@@ -194,6 +194,11 @@ Plans:
 
 - [x] 05-04-PLAN.md — Integration: opt-in `analyze --logs/--search` + report sections + super-timeline (TIME-02) + CLI-02/CR-01 reproducibility tests (D-48)
 
+**Gap closure** *(post-UAT; both plans independent, parallel)*
+
+- [ ] 05-05-PLAN.md — G-2 (MAJOR): thread D-44 shell-history tamperability + D-45 log-completeness findings through run_logs into the case and render them in the report log_findings disclosures (LOG-03/LOG-02/LOG-01)
+- [ ] 05-06-PLAN.md — G-1 (minor): reconcile fixture mtime anchor vs ground-truth sidecar year (D-46), Path B — no image rebuild (TIME-02)
+
 ## Progress
 
 **Execution Order:**
@@ -205,4 +210,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 5/5 | Complete   | 2026-05-31 |
+| 5. Log Parsing, Super-Timeline & Search | 5/5 | Complete    | 2026-05-31 |
