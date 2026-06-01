@@ -19,6 +19,7 @@ from pyautopsy.case import (
     CaseStore,
     EvidenceSource,
     FileRow,
+    LogFinding,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -281,6 +282,100 @@ def test_volume_limitation_round_trips(case_dir: Path) -> None:
     assert len(all_for_source) == 1
 
 
+def test_log_finding_round_trips(case_dir: Path) -> None:
+    """A D-44/D-45 LogFinding round-trips equal (mirrors VolumeLimitation)."""
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            source_id = _seed_evidence_source(store)
+            n = store.insert_log_findings(
+                [
+                    LogFinding(
+                        evidence_source_id=source_id,
+                        category="tamperability",
+                        subject="/home/alice/.bash_history",
+                        detail="shell history is editable by the subject",
+                        attributes={"kind": "bash"},
+                    )
+                ]
+            )
+        loaded = store.get_log_findings(source_id)
+
+    assert n == 1
+    assert len(loaded) == 1
+    finding = loaded[0]
+    assert finding.category == "tamperability"
+    assert finding.subject == "/home/alice/.bash_history"
+    assert finding.detail == "shell history is editable by the subject"
+    assert finding.attributes == {"kind": "bash"}
+    assert finding.id is not None
+
+
+def test_get_log_findings_orders_by_id_and_empty_for_none(case_dir: Path) -> None:
+    """get_log_findings returns insertion (id) order and [] for a bare source."""
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            source_id = _seed_evidence_source(store)
+            other_id = store.insert_evidence_source(
+                EvidenceSource(
+                    case_id=store.get_evidence_source(source_id).case_id,
+                    evidence_id="EV-2",
+                    path="/y.dd",
+                    image_type="raw",
+                )
+            )
+            store.insert_log_findings(
+                [
+                    LogFinding(
+                        evidence_source_id=source_id,
+                        category="completeness",
+                        subject="auth.log",
+                        detail="reassembled oldest->newest",
+                    ),
+                    LogFinding(
+                        evidence_source_id=source_id,
+                        category="tamperability",
+                        subject="/root/.bash_history",
+                        detail="editable; not chronological truth",
+                    ),
+                ]
+            )
+        ordered = store.get_log_findings(source_id)
+
+    # Insertion (store-owned id) order, NOT category/subject sort (D-41).
+    assert [f.category for f in ordered] == ["completeness", "tamperability"]
+    assert store.get_log_findings(other_id) == []
+
+
+def test_insert_log_findings_composes_in_outer_transaction(case_dir: Path) -> None:
+    """insert_log_findings defers its commit to the outer transaction (WR-01)."""
+    with CaseStore.create(case_dir) as store:
+        with store.transaction():
+            source_id = _seed_evidence_source(store)
+            store.insert_log_findings(
+                [
+                    LogFinding(
+                        evidence_source_id=source_id,
+                        category="tamperability",
+                        subject="/home/bob/.zsh_history",
+                        detail="editable",
+                    )
+                ]
+            )
+            # Still inside the outer transaction: a sibling connection must not
+            # see the row yet (the insert did not prematurely commit).
+            sibling = sqlite3.connect(case_dir / "case.db")
+            try:
+                sibling.execute("PRAGMA busy_timeout = 200")
+                count = sibling.execute(
+                    "SELECT COUNT(*) FROM log_findings"
+                ).fetchone()[0]
+            finally:
+                sibling.close()
+            assert count == 0
+        # After the outer commit the row is visible.
+        assert len(store.get_log_findings(source_id)) == 1
+
+
 def _seed_timeline_event(
     source_id: int, ts_utc: str, event_type: str, **overrides: object
 ) -> TimelineEvent:
@@ -431,6 +526,7 @@ def test_schema_has_attributes_column_on_every_table(case_dir: Path) -> None:
             "files",
             "volume_limitations",
             "timeline_events",
+            "log_findings",
         ):
             cols = {
                 row[1]
