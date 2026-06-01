@@ -5,8 +5,10 @@
 PyAutopsy is a Python tool for automated digital forensic analysis on Linux. It
 ingests disk images and log files, analyzes file metadata, recovers deleted
 files, and generates a structured forensic report suitable for evidence
-presentation. It is built on top of Autopsy / The Sleuth Kit, wrapping their
-forensic primitives in an automated, scriptable Python workflow.
+presentation. It wraps The Sleuth Kit's forensic primitives directly via the
+`pytsk3` bindings (not the Autopsy GUI app) in an automated, scriptable Python
+CLI workflow. As of v1.0 the full "image (+ logs) → defensible report" pipeline
+ships behind one `pyautopsy analyze` command.
 
 ## Core Value
 
@@ -27,12 +29,19 @@ single automated Python workflow.
 - ✓ Build a chronological **filesystem timeline** (bodyfile/mactime-style MACB explosion) persisted into a shared forensic-event model, UTC-ordered with a deterministic total order — Validated in Phase 3 (super-timeline merge with logs remains Phase 5)
 - ✓ Generate a **forensic report suitable for evidence presentation** — human-readable HTML (Jinja2) + structured JSON, with case/COC, methodology + pinned tool/TSK versions, findings, evidence hashes, bounded timeline, and a no-overclaiming limitations section, all from a single reproducible `pyautopsy analyze` command (byte-identical analytical bodies across runs) — Validated in Phase 3 (large real-disk run, visual/A4-print, and live acquisition-hash FAIL path are manual-only, tracked in 03-HUMAN-UAT.md; PDF rendering deferred)
 - ✓ **Recover deleted and orphaned files** from supported filesystems with honest, filesystem-aware confidence labeling (metadata-intact recovery via the TSK seam; intact vs partial/overwritten tiers from derived allocated-block intersection; orphans reported separately; recovered bytes written to a confined `recovered/` tree and cataloged as hashed `files` rows; never asserting intent), **and cut review noise by filtering files against NSRL RDS + custom allow/block hash sets** surfaced as neutral "known" annotations — opt-in via `pyautopsy recover` and `analyze --recover/--nsrl/--hash-set-*` — Validated in Phase 4 (ext4-journal recovery and signature carving (CARVE-01) deferred; rendered-report visual review + tier-glyph/A4-print are manual-only, tracked in 04-HUMAN-UAT.md)
+- ✓ **Parse Linux logs into a shared forensic-event model** — auth.log/secure (logins/SSH/sudo/failed-auth), syslog/messages (service/kernel/cron/error), and per-user shell history — read from the evidence image via the seam, rotated/gz sets reassembled, tz+year inferred-and-flagged (RFC3164→UTC), tamperability + log-completeness surfaced as neutral findings; all normalized identically to filesystem events — Validated in Phase 5 (LOG-01..04; journald/auditd/wtmp = v2 LOG-05)
+- ✓ **Merge filesystem + log events into one UTC super-timeline** and **search across allocated, unallocated, and file content** (streaming literal/regex, IOC + known-bad-hash matching, hits reported by file+offset) — via `pyautopsy logs` / `search` and `analyze --logs --search`, default `analyze` staying byte-identical — Validated in Phase 5 (TIME-02, SEARCH-01/02; full-text indexing = v2 SEARCH-03)
 
 ### Active
 
 <!-- Current scope. Building toward these. Hypotheses until shipped. -->
-- [ ] Parse and analyze log files for forensically relevant events — Phase 5
-- [ ] Merge filesystem + log events into one UTC super-timeline — Phase 5
+
+v1.0 MVP shipped 2026-06-01 — all v1 requirements validated above. No active
+milestone scope; next requirements defined via `/gsd-new-milestone`. Candidate v2
+directions tracked in `milestones/v1.0-REQUIREMENTS.md` (## v2 Requirements):
+file carving (CARVE-01), journald/auditd/wtmp (LOG-05), web/package logs (LOG-06),
+timestomp/anomaly surfacing (ANOM-*), YARA (RULE-01), full-text search (SEARCH-03),
+CASE/UCO export (JSON-01), plaso backend (TIME-03).
 
 ### Out of Scope
 
@@ -60,6 +69,13 @@ single automated Python workflow.
   reports.
 - **Evidence integrity matters:** Forensic soundness (read-only handling of
   evidence, hashing, reproducibility) is a first-class concern, not an add-on.
+- **Shipped state (v1.0, 2026-06-01):** ~11,550 LOC src + ~7,230 LOC tests
+  (Python 3.11+, src layout). Stack: pytsk3 + pyewf (E01), python-magic, Typer +
+  Rich, Jinja2, stdlib hashlib/sqlite3/re/gzip/zoneinfo — **no plaso/dfVFS/ssdeep
+  yet** (deferred). Two native seams only (`evidence/image.py`,
+  `evidence/filesystem.py`); `CaseStore` is the sole DB writer. CLI surface:
+  `ingest | walk | analyze | recover | search | logs`. Known tech debt + Nyquist
+  coverage gaps recorded in `milestones/v1.0-MILESTONE-AUDIT.md`.
 
 ## Constraints
 
@@ -74,10 +90,13 @@ single automated Python workflow.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Build on Autopsy / The Sleuth Kit rather than reimplement forensic primitives | TSK is the mature, trusted standard for filesystem forensics and deleted-file recovery | — Pending |
-| Python + Linux CLI as the delivery surface | Matches stated requirements; scriptable and automatable | — Pending |
-| Treat evidence read-only with hashing/chain-of-custody metadata | Output supports evidence presentation; forensic soundness required | — Pending |
-| Report is both human-readable and structured (e.g. HTML/PDF + JSON) | Serves evidence presentation and machine consumption | — Pending |
+| Wrap The Sleuth Kit via `pytsk3` directly (not the Autopsy GUI/Jython modules) rather than reimplement forensic primitives | TSK is the mature, court-trusted standard; pytsk3 gives native Python access without a GUI runtime | ✓ Good — single-native-seam discipline held across all 5 phases; recovery/walk/search all ride the seam |
+| Python + Linux CLI as the delivery surface (Typer) | Matches stated requirements; scriptable and automatable | ✓ Good — 6 subcommands ship; `analyze` composes the whole pipeline in one process |
+| Treat evidence read-only with hashing/chain-of-custody metadata | Output supports evidence presentation; forensic soundness required | ✓ Good — read-only never-mounted guard (before+after open) in every orchestrator; end-of-run re-verify; CaseStore sole writer; append-only audit log |
+| Report is both human-readable (HTML) and structured (JSON) | Serves evidence presentation and machine consumption | ✓ Good — byte-identical reproducible bodies; run metadata segregated to sidecar (CLI-02). PDF rendering deferred (WeasyPrint not adopted in v1.0) |
+| Honesty over verdicts — surface observed facts + confidence tiers + tamperability/completeness findings, never inferred intent | Forensic reports must be neutral; overclaiming invites bias challenges | ✓ Good — recovery confidence tiers, neutral "known" framing, D-44 tamperability caveat all verbatim-neutral; verified for accusatory vocabulary (none) |
+| Single shared `timeline_events` model + total-order read = the super-timeline | Avoids a second ordering path; fs and log events merge for free | ✓ Good — TIME-02 needed no new ordering code; surrogate-`id` tiebreak (CR-01) keeps tied/NULL-key log events deterministic |
+| Defer plaso/dfVFS/journald/carving to v2; stdlib-only log+search in v1.0 | Smallest install surface; fastest defensible "image → report" path | ✓ Good — zero new runtime dep added across Phase 5 (D-43 guard) |
 
 ## Evolution
 
@@ -97,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-31 after Phase 4 (Deleted Recovery & Known-File Filtering) completion — headline forensic capability (deleted/orphan recovery with honest confidence tiers + NSRL/custom known-file filtering) layered onto the spine; only Phase 5 (log parsing, super-timeline & search) remains in this milestone*
+*Last updated: 2026-06-01 after v1.0 MVP milestone — all 5 phases shipped (27/27 v1 requirements validated); the full image (+ logs) → defensible report pipeline is complete behind one `pyautopsy analyze` command. Next milestone scope via `/gsd-new-milestone`.*
