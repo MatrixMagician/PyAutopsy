@@ -196,7 +196,7 @@ Plans:
 
 **Gap closure** *(post-UAT; both plans independent, parallel)*
 
-- [ ] 05-05-PLAN.md — G-2 (MAJOR): thread D-44 shell-history tamperability + D-45 log-completeness findings through run_logs into the case and render them in the report log_findings disclosures (LOG-03/LOG-02/LOG-01)
+- [x] 05-05-PLAN.md — G-2 (MAJOR): thread D-44 shell-history tamperability + D-45 log-completeness findings through run_logs into the case and render them in the report log_findings disclosures (LOG-03/LOG-02/LOG-01)
 - [ ] 05-06-PLAN.md — G-1 (minor): reconcile fixture mtime anchor vs ground-truth sidecar year (D-46), Path B — no image rebuild (TIME-02)
 
 ## Progress
@@ -210,4 +210,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Filesystem Walk & Metadata | 4/4 | Complete    | 2026-05-31 |
 | 3. Timeline & MVP Report | 4/4 | Complete    | 2026-05-31 |
 | 4. Deleted Recovery & Known-File Filtering | 5/5 | Complete    | 2026-05-31 |
-| 5. Log Parsing, Super-Timeline & Search | 5/5 | Complete    | 2026-05-31 |
+| 5. Log Parsing, Super-Timeline & Search | 6/7 | In Progress | — |

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 05-00-PLAN.md
-last_updated: "2026-06-01T10:18:03.545Z"
-last_activity: 2026-06-01 -- Phase 05 planning complete
+status: executing
+stopped_at: Completed 05-05-PLAN.md (G-2 gap closure)
+last_updated: "2026-06-01T10:25:00.000Z"
+last_activity: 2026-06-01 -- 05-05 gap closure (G-2) executed
 progress:
   total_phases: 5
-  completed_phases: 5
-  total_plans: 23
+  completed_phases: 4
+  total_plans: 25
   completed_plans: 23
-  percent: 100
+  percent: 80
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 
 ## Current Position
 
-Phase: 05
-Plan: All 5 plans complete (05-00 … 05-04)
-Status: All 5 phases complete — milestone v1.0 in verification
-Last activity: 2026-06-01 -- Phase 05 planning complete
+Phase: 05 (log-parsing-supertimeline-search) — EXECUTING
+Plan: 6 of 7 (05-05 G-2 done; 05-06 G-1 remaining)
+Status: Executing Phase 05
+Last activity: 2026-06-01 -- 05-05 gap closure (G-2) executed
 
 Progress: [██████████] 100%
 
@@ -73,6 +73,7 @@ Progress: [██████████] 100%
 | Phase 05 P02 | 13m | 2 tasks | 2 files |
 | Phase 05 P03 | 25min | 2 tasks | 13 files |
 | Phase 05 P04 | 35min | 2 tasks | 5 files |
+| Phase 05 P05 (G-2) | ~22min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05]: 05-03: known-bad-hash hits persisted BOTH as KnownMatch and term_kind=hash SearchHit so they surface by file in unified search results
 - [Phase ?]: Wave-3 integration: run_analyze --logs/--search opt-in arms run after build_timeline so run_logs fs-event backfill is a no-op; super-timeline total read from get_timeline_events (TIME-02, no new ORDER BY)
 - [Phase ?]: CR-01 locked via a direct store-level NULL-meta tied-log-event tiebreak test (source/actor/id), since run_logs surfaces only auth events on the current fixture
+- [Phase 05]: 05-05 (G-2): D-44/D-45 honesty findings now reach the report — additive log_findings table (mirrors volume_limitations D-20; timeline_events untouched D-47), threaded through run_logs in the existing single transaction (WR-01), rendered as log_findings.disclosures (json+html); default analyze path empties to [] keeping report bytes identical (D-48)
+- [Phase 05]: 05-05: ShellHistoryParser.findings_for additive accessor reaches the dropped tamperability finding WITHOUT changing the EXT-01 LogParser.parse record-only protocol; tamperability detail persisted verbatim (observed-fact, never intent, D-44)
 
 ### Pending Todos
 
@@ -143,6 +146,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T09:14:29.123Z
-Stopped at: Completed 05-00-PLAN.md
+Last session: 2026-06-01T10:25:00.000Z
+Stopped at: Completed 05-05-PLAN.md (G-2 gap closure)
 Resume file: None
