@@ -750,8 +750,17 @@ _LOCALTIME_TARGET = f"/usr/share/zoneinfo/{LOG_SEARCH_TIMEZONE}"
 # carries December lines of YEAR-1, the newer members carry January lines of YEAR.
 # Year inference seeds from file mtime/rotation order and must produce BOTH years,
 # flagged. The newest (live) auth.log mtime fixes the seed year.
-LOG_SEARCH_YEAR = 2026
-LOG_SEARCH_PREV_YEAR = LOG_SEARCH_YEAR - 1  # the Dec lines belong here
+#
+# The seed year is ANCHORED to the committed image's frozen debugfs clock
+# `_EXT4_FAKE_TIME = 1700000000` (2023-11-14 UTC) — every inode MAC time is stamped
+# at that instant, so D-46 (`_seed_year_from_mtime`) seeds the RFC3164 year from the
+# live member's mtime year = 2023, and the oldest rotated member's Dec lines fall in
+# the prior year 2022. This sidecar therefore documents the years the committed
+# fixture ACTUALLY produces (2023 / 2022), NOT an aspirational 2026. Path B (gap G-1):
+# the constants/sidecar are reconciled to the fixture's real mtime anchor; the image
+# is NOT rebuilt, so its sha256 (6e41afad...079b0) stays a stable forensic baseline.
+LOG_SEARCH_YEAR = 2023
+LOG_SEARCH_PREV_YEAR = LOG_SEARCH_YEAR - 1  # the Dec lines belong here (2022)
 
 # --- (5) planted search payloads (SEARCH-01/02) ------------------------------
 # An ALLOCATED file whose content contains a known literal the content scanner

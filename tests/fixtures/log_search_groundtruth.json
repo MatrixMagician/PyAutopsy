@@ -20,7 +20,7 @@
     "sha256": "6a1eb1b6b60b189d964a177a6188fe87b3136483a79c3bba34ee0a51ee6609ca"
   },
   "localtime_target": "/usr/share/zoneinfo/America/New_York",
-  "prev_year": 2025,
+  "prev_year": 2022,
   "syslog_path": "/var/log/syslog",
   "tied_event_count": 2,
   "tied_second": "Jan 15 03:14:15",
@@ -29,7 +29,7 @@
     "needle": "UNALLOCATED-NEEDLE-9c5d1e",
     "needle_offset_in_payload": 248
   },
-  "year": 2026,
+  "year": 2023,
   "zsh_epoch": 1736899300,
   "zsh_history_path": "/home/alice/.zsh_history"
 }
