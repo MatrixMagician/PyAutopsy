@@ -126,6 +126,49 @@ def test_html_truncation_note(case_dir: Path) -> None:
     assert "of 5" in html
 
 
+def test_log_findings_disclosures_in_body(
+    log_search_image: Path, case_dir: Path
+) -> None:
+    """G-2 close: the report surfaces the D-44 tamperability + D-45 disclosures.
+
+    After a real ``run_logs`` pass over the committed fixture, the assembled body's
+    ``log_findings["disclosures"]`` is a non-empty list carrying at least one
+    ``tamperability`` (D-44) item whose detail mentions editable/tamper and at
+    least one ``completeness`` (D-45) item; rendering to HTML surfaces the
+    substring ``tamper``. On pre-fix main the disclosures never reached the report
+    (UAT test 9 saw 0 occurrences of "tamper"), so this body/HTML assertion failed.
+    """
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir, timezone="UTC")
+    run_logs(
+        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
+    )
+
+    with CaseStore.open(case_dir) as store:
+        body = assemble_report_body(
+            store, ingested.evidence_source_id, logs_ran=True
+        )
+        html = render_html(body, case_dir)
+
+    disclosures = body["log_findings"]["disclosures"]
+    assert isinstance(disclosures, list) and disclosures, (
+        "log_findings.disclosures empty after a --logs run (G-2 regression)"
+    )
+    tamper = [d for d in disclosures if d["category"] == "tamperability"]
+    completeness = [d for d in disclosures if d["category"] == "completeness"]
+    assert tamper, "no tamperability disclosure in the report body (D-44)"
+    assert any(
+        "tamper" in (d["detail"] or "") or "editable" in (d["detail"] or "")
+        for d in tamper
+    ), "tamperability disclosure detail missing the D-44 observed fact"
+    assert completeness, "no completeness disclosure in the report body (D-45)"
+
+    # The rendered HTML surfaces the tamperability disclosure (UAT test 9).
+    assert "tamper" in html
+
+
 def test_findings_d28(tiny_ext4_image: Path, case_dir: Path) -> None:
     """Findings = inventory stats + integrity PASS/FAIL + limitations (D-28)."""
     source_id = _analyzed_store(tiny_ext4_image, case_dir)

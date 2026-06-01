@@ -370,6 +370,17 @@ def test_tied_log_events_stable(
     body_a = json.loads(json_a)
     log_count = body_a["log_findings"]["count"]
     assert log_count > 0, "expected merged log events in the super-timeline"
+    # G-2 close: the D-44/D-45 honesty disclosures reach the rendered report and
+    # are byte-stable across the two runs (whole-file json equality above already
+    # covers the bytes; assert the slice is present + non-empty here).
+    disclosures = body_a["log_findings"]["disclosures"]
+    assert disclosures, "expected D-44/D-45 disclosures after --logs"
+    assert any(d["category"] == "tamperability" for d in disclosures)
+    assert any(d["category"] == "completeness" for d in disclosures)
+    html_a = (case_a / "reports" / "report.html").read_text()
+    html_b = (case_b / "reports" / "report.html").read_text()
+    assert html_a == html_b
+    assert "tamper" in html_a
     log_in_timeline = sum(
         1
         for ev in body_a["timeline"]
@@ -479,3 +490,7 @@ def test_default_analyze_unchanged(
     assert body_a["recovered"]["count"] == 0
     assert body_a["known"]["custom"]["count"] == 0
     assert body_a["known"]["nsrl"]["count"] == 0
+    # G-2 close, default-path determinism: with no --logs, the log-findings
+    # disclosures slice empties to [] so the section adds no noise and stays
+    # byte-identical to the Phase-4/05 baseline (D-48).
+    assert body_a["log_findings"]["disclosures"] == []
