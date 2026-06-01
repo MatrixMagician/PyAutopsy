@@ -194,13 +194,31 @@ class ShellHistoryParser:
         leaf = path.rsplit("/", 1)[-1]
         return leaf in (".bash_history", ".zsh_history", ".history")
 
+    @staticmethod
+    def _kind_for(path: str) -> str:
+        """Return the ``"zsh"``/``"bash"`` kind hint from a history path."""
+        return "zsh" if path.endswith(".zsh_history") else "bash"
+
     def parse(
         self, text: str, ctx: dict[str, Any] | None = None
     ) -> Iterable[ParsedRecord]:
         """Parse decoded history text (delegates to :func:`parse`)."""
         path = (ctx or {}).get("path", "")
-        kind = "zsh" if path.endswith(".zsh_history") else "bash"
-        return parse(text, ctx, kind=kind).records
+        return parse(text, ctx, kind=self._kind_for(path)).records
+
+    def findings_for(
+        self, text: str, ctx: dict[str, Any] | None = None
+    ) -> list[str]:
+        """Return this history file's honesty findings (D-44 tamperability).
+
+        An additive concrete accessor that reaches the ``ShellHistoryResult.findings``
+        the EXT-01 record-only :meth:`parse` contract intentionally drops, so
+        :func:`pyautopsy.core.logs.run_logs` can surface the tamperability disclosure
+        WITHOUT changing the shared ``LogParser.parse`` protocol signature. Reuses the
+        same kind detection as :meth:`parse`.
+        """
+        path = (ctx or {}).get("path", "")
+        return parse(text, ctx, kind=self._kind_for(path)).findings
 
 
 # Register the singleton in declared order at import time (EXT-01).

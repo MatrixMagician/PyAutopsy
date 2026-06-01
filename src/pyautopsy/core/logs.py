@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, TimelineEvent
+from pyautopsy.case import CaseStore, LogFinding, TimelineEvent
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
@@ -109,12 +109,15 @@ class LogsResult:
         events_parsed: Total :class:`TimelineEvent` rows written.
         auth_events: How many of those came from the auth parser.
         log_sets: How many rotated log sets were discovered + parsed.
+        findings_count: How many honesty-disclosure :class:`LogFinding` rows were
+            persisted (D-44 tamperability + D-45 completeness).
     """
 
     evidence_source_id: int
     events_parsed: int
     auth_events: int
     log_sets: int
+    findings_count: int = 0
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -372,6 +375,7 @@ def run_logs(
     events_parsed = 0
     auth_events = 0
     log_sets = 0
+    findings_count = 0
 
     try:
         source_id = (
@@ -387,6 +391,10 @@ def run_logs(
             integrity.assert_source_not_mounted(image_path)
 
             all_events: list[TimelineEvent] = []
+            # D-44/D-45 honesty findings accumulated in encounter order so the
+            # store's surrogate-id tiebreak stays insertion-deterministic
+            # (Pitfall 3); persisted in the SAME single transaction as the events.
+            all_findings: list[LogFinding] = []
             for vol in fs_seam.enumerate_volumes(handle.image):
                 try:
                     fs = fs_seam.open_fs(handle.image, vol.offset)
@@ -422,7 +430,25 @@ def run_logs(
                 ]
                 for log_set in discovered:
                     log_sets += 1
-                    set_events = _parse_log_set(
+                    # (D-45) One completeness finding per discovered set: the
+                    # neutral discover ``note`` (reassembled oldest→newest, or
+                    # which rotation indices are absent) with the present/missing
+                    # indices preserved in attributes for the report.
+                    fnd = log_set.finding
+                    all_findings.append(
+                        LogFinding(
+                            evidence_source_id=source_id,
+                            category="completeness",
+                            subject=log_set.basename,
+                            detail=fnd.note,
+                            attributes={
+                                "present_indices": list(fnd.present_indices),
+                                "missing_indices": list(fnd.missing_indices),
+                                "member_count": fnd.member_count,
+                            },
+                        )
+                    )
+                    set_events, set_findings = _parse_log_set(
                         log_set,
                         rows_by_path=rows_by_path,
                         path_index=path_index,
@@ -433,6 +459,7 @@ def run_logs(
                         volume_offset=vol.offset,
                     )
                     all_events.extend(set_events)
+                    all_findings.extend(set_findings)
                     auth_events += sum(1 for e in set_events if e.source == "auth")
 
                 audit.write(
@@ -467,7 +494,12 @@ def run_logs(
                 if fs_events:
                     store.insert_timeline_events(fs_events)
                 store.insert_timeline_events(all_events)
+                # (D-44/D-45) Persist the honesty findings in the SAME single
+                # transaction (CaseStore sole writer / WR-01) so the report can
+                # surface them; no second transaction is opened.
+                store.insert_log_findings(all_findings)
             events_parsed = len(all_events)
+            findings_count = len(all_findings)
         finally:
             handle.close()
 
@@ -478,6 +510,7 @@ def run_logs(
             events_parsed=events_parsed,
             auth_events=auth_events,
             log_sets=log_sets,
+            findings_count=findings_count,
         )
     except _EXPECTED_LOGS_ERRORS as exc:
         audit.write(
@@ -503,6 +536,7 @@ def run_logs(
         events_parsed=events_parsed,
         auth_events=auth_events,
         log_sets=log_sets,
+        findings_count=findings_count,
     )
 
 
@@ -524,15 +558,21 @@ def _parse_log_set(
     tz_basis: str,
     volume_id: int,
     volume_offset: int,
-) -> list[TimelineEvent]:
-    """Discover the parser, read+decode each member oldest→newest, resolve to events."""
+) -> tuple[list[TimelineEvent], list[LogFinding]]:
+    """Discover the parser, read+decode each member oldest→newest, resolve to events.
+
+    Returns the member's normalized events AND any per-member honesty findings
+    (D-44 tamperability) the matched parser exposes — both in encounter order so
+    the store's surrogate-id tiebreak stays insertion-deterministic (Pitfall 3).
+    """
     parser = next(
         (p for p in iter_parsers() if p.matches(log_set.basename)), None
     )
     if parser is None:
-        return []
+        return [], []
 
     events: list[TimelineEvent] = []
+    findings: list[LogFinding] = []
     for member in log_set.members:
         row = rows_by_path.get(member.path)
         reader = getattr(row, "read_random", None) if row is not None else None
@@ -546,7 +586,23 @@ def _parse_log_set(
         # Forward the member path as parser context: the shell-history parser
         # uses ctx["path"] for the per-user actor (/home/<user>) and the bash/zsh
         # kind; the RFC3164 parsers ignore keys they do not need (EXT-01).
-        records = list(parser.parse(text, {"path": member.path}))
+        ctx = {"path": member.path}
+        records = list(parser.parse(text, ctx))
+        # (D-44) When the matched parser exposes the additive findings accessor
+        # (shell-history), capture its observed-fact tamperability finding(s)
+        # VERBATIM — one LogFinding per member finding. The RFC3164 parsers do
+        # not expose it, so syslog/auth members add no tamperability finding.
+        findings_for = getattr(parser, "findings_for", None)
+        if findings_for is not None:
+            for detail in findings_for(text, ctx):
+                findings.append(
+                    LogFinding(
+                        evidence_source_id=source_id,
+                        category="tamperability",
+                        subject=member.path,
+                        detail=detail,
+                    )
+                )
         file_id = path_index.get(member.path)
         seed_year, seed_basis, seed_unresolved = _seed_year_from_mtime(
             rows_by_path, member.path
@@ -567,4 +623,4 @@ def _parse_log_set(
                 volume_offset=volume_offset,
             )
         )
-    return events
+    return events, findings
