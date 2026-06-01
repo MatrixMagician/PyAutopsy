@@ -323,6 +323,51 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     assert all(s.endswith("+00:00") for s in stamps)
 
 
+def test_run_logs_persists_findings(
+    log_search_image: Path, case_dir: Path
+) -> None:
+    """G-2 close: run_logs persists the D-44 tamperability + D-45 completeness findings.
+
+    The orchestrated :func:`run_logs` must capture the shell-history tamperability
+    finding (``ShellHistoryResult.findings``, D-44) and the rotated-set completeness
+    finding (``LogSet.finding.note``, D-45) and persist them through
+    ``store.insert_log_findings`` in its single transaction, so they survive to the
+    report.
+
+    RED on pre-fix main: before this plan ``ShellHistoryParser.parse`` returned only
+    ``.records`` (dropping ``.findings``) and ``run_logs`` had no log_findings sink,
+    so ``store.get_log_findings(...)`` was empty and BOTH asserts below FAILED — the
+    same drop that produced UAT test 9's "0 occurrences of tamper". This test would
+    fail if that regression were reintroduced.
+    """
+    from pyautopsy.case import CaseStore  # noqa: PLC0415
+    from pyautopsy.core.ingest import run_ingest  # noqa: PLC0415
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415
+    from pyautopsy.core.walk import run_walk  # noqa: PLC0415
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir, timezone="UTC")
+    result = run_logs(
+        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
+    )
+
+    with CaseStore.open(case_dir) as store:
+        findings = store.get_log_findings(ingested.evidence_source_id)
+
+    tamper = [f for f in findings if f.category == "tamperability"]
+    completeness = [f for f in findings if f.category == "completeness"]
+
+    assert tamper, "run_logs persisted no D-44 tamperability finding"
+    assert any(
+        "editable" in (f.detail or "") or "history -c" in (f.detail or "")
+        for f in tamper
+    ), "tamperability detail missing the D-44 editable/`history -c` observed fact"
+    assert completeness, "run_logs persisted no D-45 completeness finding"
+
+    # The result's findings_count equals the number of persisted findings.
+    assert result.findings_count == len(findings)
+
+
 def test_infer_years_same_month_year_boundary() -> None:
     """CR-03: a same-month year boundary is recognised (month-only compare missed it).
 
