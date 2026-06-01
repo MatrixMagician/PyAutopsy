@@ -170,21 +170,35 @@ New packages / files (following existing one-concern conventions):
 - `report/` — super-timeline already merged; add log-findings + search-results
   sections; report **body** stays byte-stable (CLI-02).
 
-## Open questions for RESEARCH.md / planner
+## Resolved questions (closed during Phase 5 execution — see 05-VERIFICATION.md)
 
-1. syslog format detection: RFC3164 (no year/tz) vs RFC5424 (ISO-8601+offset);
-   robust **year-inference** heuristic across rotation + year boundaries.
-2. auth.log event taxonomy → `action`/`outcome` mapping (login success/failure,
-   SSH accept/fail, sudo grant/deny, session open/close) — kept honest
-   (describe the observed log line, never inferred intent).
-3. Reading **unallocated space** via the seam for SEARCH-01: how
-   `evidence/filesystem.py` exposes unallocated blocks; streaming chunking +
-   regex-across-chunk-boundary handling; offset reporting semantics.
-4. Determinism (CLI-02): stable total order for search hits and log events
-   (rely on store `id`); verify with a regression test that has tied log events
-   (the CR-01 NULL-key-tie trap).
-5. Rotated/compressed log reassembly ordering (`auth.log`, `auth.log.1`,
-   `auth.log.2.gz` …) and gap/rollover handling for "log completeness" findings.
+All discussion questions below were answered by the shipped implementation and
+confirmed by phase verification (16/16 truths, status `passed`, 2026-06-01).
+Recorded here as a closed log; none remain open at milestone close.
+
+1. **syslog format detection + year inference — RESOLVED.** `log/timeresolve.py`
+   derives host tz (`/etc/localtime` → `/etc/timezone` fallback) and infers year
+   from log mtime + rotation order; `infer_years` compares `(month, day)` tuples
+   with a cascade guard so a lone out-of-order line is absorbed (CR-03 fix), and
+   handles Dec→Jan rollover. RFC5424 (ISO-8601+offset) lines parse directly. Each
+   event carries `timestamp_source` / `assumed_timezone` / `year_basis` /
+   `time_warning` flags (D-46). Verified base truth 3 + G-1 fixture/sidecar
+   reconciliation.
+2. **auth.log event taxonomy — RESOLVED.** `log/auth.py`: Accepted → ssh-login,
+   Failed password → failure, sudo granted/denied, session opened/closed —
+   neutral observed-fact framing, never inferred intent (D-44). Verified truth 1.
+3. **Unallocated-space read for SEARCH-01 — RESOLVED.** `evidence/filesystem.py::
+   iter_unallocated_blocks` seam; `search/content.py` streams allocated +
+   unallocated + file content with overlap logic for regex-across-chunk-boundary;
+   hits reported with absolute file + offset. Verified truths 9/10/12.
+4. **Determinism (CLI-02) — RESOLVED.** Store-owned total order with the surrogate
+   `id` tiebreak; tied-log-event regression tests (`test_tied_log_events_stable`,
+   `test_tied_log_events_null_meta_tiebreak`) pass. Verified truth 14.
+5. **Rotated/compressed reassembly — RESOLVED.** `discover.order_rotated_set`
+   (`order_key (-index, gz)`) + `decode_member` gzip inflate; the D-45
+   log-completeness finding is surfaced in the report (G-2 closure). The dateext
+   negative-index ordering nit (WR-06) is carried as a non-blocking warning
+   (numeric rotation is correct). Verified truths 2/5/15.
 
 ## Risks / watch-items (carried lessons)
 
