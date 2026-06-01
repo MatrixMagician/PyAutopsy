@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 Phase: Milestone v1.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-01 — Milestone v1.0 completed and archived
+Last activity: 2026-06-01 — v1.0 MVP shipped: main + tag v1.0 pushed to origin (no PR; branching_strategy=none)
 
 ## Performance Metrics
 
