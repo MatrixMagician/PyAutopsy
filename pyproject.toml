@@ -52,6 +52,17 @@ path = "src/pyautopsy/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyautopsy"]
 
+# Keep the sdist lean and distribution-only: ship the package source plus the
+# packaging metadata, NOT the test-fixture disk images (multi-MB binaries) or
+# the internal .planning/ artifacts. Without this, hatchling's default sdist
+# sweeps the whole VCS tree and leaks tests/fixtures/*.img + .planning/ to PyPI.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/pyautopsy",
+    "README.md",
+    "LICENSE",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
