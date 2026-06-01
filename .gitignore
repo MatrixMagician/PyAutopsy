@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# GSD / tooling scratch output (generated, not source of truth)
+.planning/tmp/
+.planning/graphs/
+graphify-out/
