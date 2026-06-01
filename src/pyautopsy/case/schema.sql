@@ -123,6 +123,30 @@ CREATE TABLE IF NOT EXISTS volume_limitations (
 CREATE INDEX IF NOT EXISTS idx_volume_limitations_evidence_source_id
     ON volume_limitations (evidence_source_id);
 
+-- Log honesty-disclosure findings sink (D-44 tamperability / D-45 completeness).
+-- This is the LOG analogue of ``volume_limitations``: an ADDITIVE findings table
+-- (typed core columns + a JSON ``attributes`` blackboard) that lets run_logs
+-- surface the honesty caveats the parsers/discover compute — shell history is
+-- editable by the subject (D-44) and a rotated log set may be incomplete (D-45) —
+-- so they reach the rendered report instead of being dropped before it. Purely
+-- additive: no existing row needs backfill and ``timeline_events`` is UNTOUCHED
+-- (D-47). ``category`` ∈ {tamperability (D-44), completeness (D-45)}; ``subject``
+-- is the history-file path or rotated-set basename the finding is about;
+-- ``detail`` is the neutral observed-fact disclosure text. The finding ordering
+-- lives ONLY in get_log_findings (store-owned ``id`` order, D-41); the index
+-- supports the per-source read.
+CREATE TABLE IF NOT EXISTS log_findings (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_source_id INTEGER NOT NULL REFERENCES evidence_sources (id),
+    category           TEXT    NOT NULL,                 -- tamperability | completeness
+    subject            TEXT,                              -- history path / log-set basename
+    detail             TEXT,                              -- neutral observed-fact disclosure
+    attributes         TEXT    NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_findings_evidence_source_id
+    ON log_findings (evidence_source_id);
+
 -- Neutral known-file annotations from the post-walk filtering pass (FILTER-01,
 -- D-38/D-39). One row per (file, membership-source) match: a file may match the
 -- NSRL RDS AND several custom lists, so this is a dedicated table (FK to

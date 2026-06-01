@@ -340,10 +340,11 @@ def test_get_log_findings_orders_by_id_and_empty_for_none(case_dir: Path) -> Non
                 ]
             )
         ordered = store.get_log_findings(source_id)
+        empty = store.get_log_findings(other_id)
 
     # Insertion (store-owned id) order, NOT category/subject sort (D-41).
     assert [f.category for f in ordered] == ["completeness", "tamperability"]
-    assert store.get_log_findings(other_id) == []
+    assert empty == []
 
 
 def test_insert_log_findings_composes_in_outer_transaction(case_dir: Path) -> None:

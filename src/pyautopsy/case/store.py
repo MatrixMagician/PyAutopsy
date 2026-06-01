@@ -27,6 +27,7 @@ from pyautopsy.case.models import (
     EvidenceSource,
     FileRow,
     KnownMatch,
+    LogFinding,
     SearchHit,
     TimelineEvent,
     VolumeLimitation,
@@ -625,6 +626,58 @@ class CaseStore:
         ).fetchall()
         return [self.get_volume_limitation(row["id"]) for row in rows]
 
+    # -- log findings (D-44 tamperability / D-45 completeness) -------------
+
+    def insert_log_findings(self, rows: Iterable[LogFinding]) -> int:
+        """Bulk-persist :class:`LogFinding` rows in one ``executemany``.
+
+        Like :meth:`insert_timeline_events` this calls
+        :meth:`_commit_unless_in_transaction`, so it composes inside an outer
+        :meth:`transaction` block: ``run_logs`` persists the D-44/D-45 findings
+        in the SAME single transaction as the timeline events (WR-01).
+
+        Args:
+            rows: The log findings to insert (any iterable; materialised once).
+
+        Returns:
+            The number of rows inserted.
+        """
+        params = [_log_finding_params(row) for row in rows]
+        if params:
+            self.connection.executemany(_LOG_FINDING_INSERT_SQL, params)
+        self._commit_unless_in_transaction()
+        return len(params)
+
+    def get_log_findings(self, evidence_source_id: int) -> list[LogFinding]:
+        """Read every log finding for a source in store-owned ``id`` order.
+
+        This is the SINGLE place the log-finding read ordering is defined (no raw
+        SQL outside the store, D-41): insertion-deterministic ``id`` order so the
+        report renders the disclosures in the order ``run_logs`` encountered them.
+
+        Args:
+            evidence_source_id: The owning evidence-source id to filter on.
+
+        Returns:
+            All matching :class:`LogFinding` rows in ``id`` order (possibly empty).
+        """
+        rows = self.connection.execute(
+            "SELECT * FROM log_findings "
+            "WHERE evidence_source_id = ? ORDER BY id",
+            (evidence_source_id,),
+        ).fetchall()
+        return [
+            LogFinding(
+                evidence_source_id=row["evidence_source_id"],
+                category=row["category"],
+                subject=row["subject"],
+                detail=row["detail"],
+                attributes=_load_attributes(row["attributes"]),
+                id=row["id"],
+            )
+            for row in rows
+        ]
+
     # -- timeline events (TIME-01 / D-23/D-24/D-26) -----------------------
 
     def insert_timeline_events(self, rows: Iterable[TimelineEvent]) -> int:
@@ -996,6 +1049,36 @@ def _known_match_params(match: KnownMatch) -> tuple[Any, ...]:
         match.sense,
         match.matched_on,
         json.dumps(match.attributes, sort_keys=True),
+    )
+
+
+# The ``log_findings`` insert column order, kept in lockstep with
+# :func:`_log_finding_params` exactly like ``volume_limitations`` (WR-01).
+_LOG_FINDING_COLUMNS: tuple[str, ...] = (
+    "evidence_source_id",
+    "category",
+    "subject",
+    "detail",
+    "attributes",
+)
+
+_LOG_FINDING_INSERT_SQL = (
+    "INSERT INTO log_findings ("
+    + ", ".join(_LOG_FINDING_COLUMNS)
+    + ") VALUES ("
+    + ", ".join("?" for _ in _LOG_FINDING_COLUMNS)
+    + ")"
+)
+
+
+def _log_finding_params(finding: LogFinding) -> tuple[Any, ...]:
+    """Flatten a :class:`LogFinding` into the :data:`_LOG_FINDING_COLUMNS` tuple."""
+    return (
+        finding.evidence_source_id,
+        finding.category,
+        finding.subject,
+        finding.detail,
+        json.dumps(finding.attributes, sort_keys=True),
     )
 
 

@@ -20,6 +20,7 @@ __all__ = [
     "FileRow",
     "TimelineEvent",
     "VolumeLimitation",
+    "LogFinding",
     "KnownMatch",
     "SearchHit",
     "AuditEvent",
@@ -248,6 +249,41 @@ class VolumeLimitation:
     volume_offset: int
     detected_desc: str | None = None
     reason: str | None = None
+    attributes: dict[str, Any] = field(default_factory=dict)
+    id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LogFinding:
+    """A log honesty-disclosure finding (D-44 tamperability / D-45 completeness).
+
+    The LOG analogue of :class:`VolumeLimitation`: an additive ``log_findings``
+    row that carries an honesty caveat the parsers/discover computed about the
+    image's logs — that shell history is editable by the subject and its order is
+    not chronological truth (``category="tamperability"``, D-44), or that a
+    rotated log set may be incomplete (``category="completeness"``, D-45). It is a
+    NEUTRAL observed-fact disclosure — never an asserted intent or guilt — so it
+    can be surfaced verbatim in the report. A source may carry several findings
+    (one per history file + one per rotated set), one row each, read back in the
+    store's ``id`` order (D-41).
+
+    Args:
+        evidence_source_id: Owning evidence source id (FK into
+            ``evidence_sources``).
+        category: The finding kind — ``"tamperability"`` (D-44) or
+            ``"completeness"`` (D-45).
+        subject: What the finding is about — the shell-history file path or the
+            rotated log-set basename; ``None`` when not applicable.
+        detail: The neutral observed-fact disclosure text (rendered verbatim).
+        attributes: Heterogeneous JSON-serialisable extra data (D-02), e.g. the
+            present/missing rotation indices for a completeness finding.
+        id: Surrogate primary key; ``None`` until persisted.
+    """
+
+    evidence_source_id: int
+    category: str
+    subject: str | None = None
+    detail: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 
