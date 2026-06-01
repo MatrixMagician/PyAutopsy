@@ -4,9 +4,14 @@ Provides:
 
 * ``case_dir`` — a fresh, empty case directory under ``tmp_path`` for each test.
 * ``tiny_raw_image`` — the path to the committed, deterministic tiny raw image.
-* ``tiny_ext4_image`` / ``tiny_ntfs_image`` / ``tiny_fat32_image`` /
-  ``tiny_partitioned_image`` — committed tiny filesystem images for the Phase 2
-  walk (built once with the host mkfs tools; CI needs no ``mkfs``).
+* ``tiny_ext4_image`` / ``tiny_ntfs_image`` — committed tiny filesystem images
+  for the Phase 2 walk (built once with the host mkfs tools; CI needs no
+  ``mkfs``).
+* ``tiny_fat32_image`` / ``tiny_partitioned_image`` — **generated at test time**
+  (session-scoped) rather than committed, because the FAT volume is large
+  (64–74 MiB) and not byte-deterministic (``mkfs.fat`` stamps a wall-clock
+  volume id). Built once per session from the host mkfs/mtools tools; a host
+  lacking those tools ``skip``s the dependent tests rather than failing.
 * per-archive fixtures (``zip_slip_tar``, ``symlink_escape_tar``,
   ``device_file_tar``, ``ratio_bomb_zip``, ``count_bomb_tar``) that build each
   malicious archive into ``tmp_path`` on demand for the safe-extract plan
@@ -17,6 +22,7 @@ Provides:
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +32,25 @@ from tests.fixtures import make_fixtures
 
 # Directory holding committed fixture assets (e.g. tiny_raw.dd).
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+
+def _build_or_skip(builder: Any, dest: Path, *tools: str) -> Path:
+    """Build a generated-at-test-time fixture, or ``skip`` if a tool is missing.
+
+    The large, non-byte-deterministic FAT images (``tiny_fat32`` /
+    ``tiny_partitioned``) are not committed; they are built on demand from the
+    host mkfs/mtools tools. When those tools are absent (e.g. a minimal CI
+    image), the dependent tests are skipped with an actionable message rather
+    than hard-failing.
+    """
+    missing = [t for t in tools if shutil.which(t) is None]
+    if missing:
+        pytest.skip(
+            "generated-at-test-time fixture needs "
+            f"{', '.join(missing)} on PATH (Fedora: dosfstools/mtools/e2fsprogs/"
+            "util-linux). Image is not committed; install the tools to run this test."
+        )
+    return builder(dest)
 
 
 @pytest.fixture
@@ -73,20 +98,37 @@ def tiny_ntfs_image() -> Path:
     return image
 
 
-@pytest.fixture
-def tiny_fat32_image() -> Path:
-    """Path to the committed tiny FAT32 image (FAT local-time test, D-16)."""
-    image = FIXTURES_DIR / make_fixtures.TINY_FAT32_NAME
-    assert image.is_file(), f"committed fixture missing: {image}"
-    return image
+@pytest.fixture(scope="session")
+def tiny_fat32_image(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Generated-at-test-time tiny FAT32 image (FAT local-time test, D-16).
+
+    Built once per session into a session tmp dir (not committed) because the
+    FAT volume is 64 MiB and ``mkfs.fat`` is not byte-deterministic. Skips if the
+    mkfs/mtools tools are absent.
+    """
+    dest = tmp_path_factory.mktemp("fs_fixtures") / make_fixtures.TINY_FAT32_NAME
+    return _build_or_skip(
+        make_fixtures.build_tiny_fat32_image, dest, "mkfs.fat", "mcopy", "mdel"
+    )
 
 
-@pytest.fixture
-def tiny_partitioned_image() -> Path:
-    """Path to the committed partitioned image (FAT + ext4 — volume-offset, D-15)."""
-    image = FIXTURES_DIR / make_fixtures.TINY_PARTITIONED_NAME
-    assert image.is_file(), f"committed fixture missing: {image}"
-    return image
+@pytest.fixture(scope="session")
+def tiny_partitioned_image(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Generated-at-test-time partitioned image (FAT + ext4 — volume-offset, D-15).
+
+    Built once per session into a session tmp dir (not committed) because the
+    image is 74 MiB and its FAT partition is not byte-deterministic. Skips if the
+    sfdisk/mkfs/mtools tools are absent.
+    """
+    dest = tmp_path_factory.mktemp("fs_fixtures") / make_fixtures.TINY_PARTITIONED_NAME
+    return _build_or_skip(
+        make_fixtures.build_partitioned_image,
+        dest,
+        "sfdisk",
+        "mkfs.fat",
+        "mkfs.ext4",
+        "mcopy",
+    )
 
 
 @pytest.fixture

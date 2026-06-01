@@ -221,3 +221,8 @@ __marimo__/
 .planning/tmp/
 .planning/graphs/
 graphify-out/
+
+# Generated-at-test-time FAT fixtures (large + non-byte-deterministic; built by
+# tests/conftest.py session fixtures, regenerable via tests/fixtures/make_fixtures.py).
+tests/fixtures/tiny_fat32.img
+tests/fixtures/tiny_partitioned.img

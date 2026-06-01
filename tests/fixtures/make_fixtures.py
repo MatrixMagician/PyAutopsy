@@ -7,13 +7,17 @@ Three kinds of fixture are produced here:
   ``mkfs``/``mtools`` dependency in CI (01-RESEARCH.md Open Question A3).
 
 * Tiny *filesystem* images for the Phase 2 walk — ext4, NTFS, FAT32 and a
-  partitioned (FAT + ext4) image. Each is built once with the host ``mkfs.*`` /
-  ``debugfs`` / ``mtools`` / ``sfdisk`` tools and **committed** under
-  ``tests/fixtures/`` so CI never needs a privileged ``mkfs`` at test time
-  (02-RESEARCH.md §Environment Availability, mirroring the ``tiny_raw.dd``
-  approach). The exact ground-truth (file names, content, uid/gid/mode, the
-  known deleted entry) is recorded as module constants below so the META tests
-  can assert *exact* counts/values — the Nyquist "every file" signal.
+  partitioned (FAT + ext4) image, built with the host ``mkfs.*`` / ``debugfs`` /
+  ``mtools`` / ``sfdisk`` tools (02-RESEARCH.md §Environment Availability). The
+  byte-deterministic ext4/NTFS images are **committed** under ``tests/fixtures/``
+  so CI never needs a privileged ``mkfs`` for them. The two FAT images
+  (``tiny_fat32.img``, ``tiny_partitioned.img``) are **NOT committed** — they are
+  large (64–74 MiB) and not byte-deterministic (``mkfs.fat`` stamps a wall-clock
+  volume id), so they are **generated at test time** by ``conftest.py``
+  (session-scoped; tests skip when the tools are absent) and gitignored. The
+  exact ground-truth (file names, content, uid/gid/mode, the known deleted entry)
+  is recorded as module constants below so the META tests can assert *exact*
+  counts/values — the Nyquist "every file" signal.
 
 * The malicious-archive builders consumed by the safe-extraction jail tests
   (plan 01-03): zip-slip, symlink-escape, device-file, ratio/size-bomb, and
