@@ -1,9 +1,10 @@
 ---
-status: diagnosed
+status: resolved
 phase: 05-log-parsing-supertimeline-search
 source: [05-VERIFICATION.md, 05-01-SUMMARY.md, 05-02-SUMMARY.md, 05-03-SUMMARY.md, 05-04-SUMMARY.md]
+resolved_by: [05-05-PLAN.md, 05-06-PLAN.md]
 started: 2026-06-01T09:27:10Z
-updated: 2026-06-01T10:05:00Z
+updated: 2026-06-01T12:00:00Z
 ---
 
 <!-- INVOCATION NOTES (all commands are copy-pasteable from the repo root):
@@ -31,7 +32,7 @@ updated: 2026-06-01T10:05:00Z
 ## Current Test
 <!-- OVERWRITE each test - shows where we are -->
 
-[testing complete — 10 pass, 1 issue (G-2, major, diagnosed), 1 advisory (G-1, minor). status: diagnosed → /gsd-plan-phase 05 --gaps]
+[gap closure complete — both gaps resolved. G-2 (major) closed by 05-05, G-1 (advisory) closed by 05-06; re-verification passed (16/16). status: resolved. 11/11 effectively pass.]
 
 ## Tests
 
@@ -176,19 +177,20 @@ verified: "2026-06-01 — PASS. sha256 of tests/fixtures/log_search_ext4.img AFT
 ## Summary
 
 total: 11
-passed: 10
-issues: 1
+passed: 11
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
-advisory_gaps: 1
+advisory_gaps: 0
 
 ## Gaps
 
 <!-- G-1 is an advisory minor gap (test 3 still PASSED on the real requirement); not a failed test. -->
 - id: G-1
   truth: "D-46 year inference, when anchored on file mtime, should produce years matching the test corpus's documented ground truth (log_search_groundtruth.json year=2026/prev_year=2025)."
-  status: noted
+  status: resolved
+  resolution: "Closed by plan 05-06 (commits 5670ccd..dfe2c87, Path B — no image rebuild). The committed fixture image's frozen debugfs clock _EXT4_FAKE_TIME=1700000000 decodes to 2023-11-14T22:13:20+00:00, so D-46 correctly yields year=2023/prev_year=2022. Reconciled the sidecar (log_search_groundtruth.json: year 2026->2023, prev_year 2025->2022) and added make_fixtures.py LOG_SEARCH_YEAR=2023/PREV_YEAR=2022 anchored by comment to that clock, plus regression guard test_groundtruth_year_matches_fixture_mtime. Image sha256 6e41afad...079b0 UNCHANGED (UAT test-11 lockstep preserved). Inference mechanism unchanged."
   reason: "Inferred log events land at 2023/2024/2025, not the sidecar's 2026/2025. Root cause: the committed fixture image (tests/fixtures/log_search_ext4.img) was built with a single ~2023-11-14 fake mtime (all 68 filesystem events at 2023-11-14T22:13:20), so D-46's mtime-anchored inference correctly yields ~2023. The forensic mechanism (inferred + flagged + deterministic + multi-year Dec->Jan rollback) is sound; only the committed fixture's mtime disagrees with the sidecar's intended 2026 anchor. Epoch-anchored shell-history lines DO land correctly at 2025-01-15."
   severity: minor
   test: 3
@@ -202,7 +204,8 @@ advisory_gaps: 1
 
 - id: G-2
   truth: "The shell-history D-44 tamperability finding (and the D-45 log-completeness/rotation finding) must be surfaced in the rendered report so an examiner sees the honesty caveat (LOG-03 requires the tamperability note; D-44 mandates surfacing as a finding, never intent)."
-  status: failed
+  status: resolved
+  resolution: "Closed by plan 05-05 (commits 2c5cfaa..f85f2e2). Added an additive log_findings CaseStore table (schema.sql/models.py/store.py insert_log_findings+get_log_findings), threaded the D-44 shell-history tamperability finding and D-45 log-completeness finding through core/logs.py:run_logs (persisted in the single store.transaction(), CaseStore sole writer), and rendered them in report/assemble.py log_findings.disclosures + report.html.j2. Verified live: analyze --logs -> report.json tamper=1, report.html tamper=4, 6 disclosures (categories completeness+tamperability); neutral observed-fact framing honored (no imputed intent); default analyze path stays byte-identical with disclosures==[]; timeline_events untouched. e2e assertion added (test_reproducibility.py) + 8 new tests; full suite 220 passed."
   reason: "analyze --logs --search produced a report with 0 occurrences of 'tamper' in both report.json and report.html (case /tmp/uat05b). The shell_history parser computes the finding (shell_history.py:180) and returns it on ShellHistoryResult, but core/logs.run_logs never consumes/persists the parser findings, so the mandated tamperability caveat is dropped before assemble_report_body. The D-45 completeness/rotation finding is likewise absent (== verification WR-07, previously user-deferred)."
   severity: major
   test: 9
