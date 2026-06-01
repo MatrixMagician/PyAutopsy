@@ -7,6 +7,10 @@ defensible case directory: integrity hashes, a filesystem inventory (including
 deleted entries), deleted-file recovery, a merged MACB + system-log super-timeline,
 content/IOC search, and byte-deterministic HTML + JSON reports.
 
+> **Status:** `0.1.0` — Development Status: 3 - Alpha. Published on
+> [PyPI](https://pypi.org/project/pyautopsy/) (`pip install pyautopsy`). Requires
+> Python >= 3.11 on Linux.
+
 > **Forensic soundness is non-negotiable.** Evidence is opened read-only at the byte
 > layer via The Sleuth Kit — it is **never mounted** and **never modified**. All
 > output goes to a separate case directory, and the source hash is re-verified at the
@@ -14,10 +18,11 @@ content/IOC search, and byte-deterministic HTML + JSON reports.
 
 ## Installation
 
-The Python bindings wrap native C libraries. `pytsk3` ships binary wheels that bundle
-`libtsk`, so a **raw/dd-only** install usually needs no system packages. The optional
-**E01/EWF** support (`libewf-python`) is sdist-only and **must compile against
-`libewf-dev`**, so it requires the native development headers below.
+The Python bindings wrap native C libraries. `pytsk3` (pinned to `pytsk3==20260520`)
+ships binary wheels that bundle `libtsk`, so a **raw/dd-only** install usually needs no
+system packages. The optional **E01/EWF** support (`libewf-python`, the `[ewf]` extra)
+is sdist-only and **must compile against `libewf-dev`**, so it requires the native
+development headers below.
 
 **Native system dependencies (only needed for the `[ewf]` extra):**
 
@@ -38,13 +43,18 @@ pip install pyautopsy
 
 # With E01/EWF support (requires the native libewf-dev headers above)
 pip install "pyautopsy[ewf]"
-
-# Development (tests, linting, type checking)
-pip install -e ".[dev]"
 ```
 
 If the host lacks `libewf-dev`, the core (raw/dd) install still works; only the `[ewf]`
 extra needs the native library.
+
+**From source (development checkout — tests, linting, type checking):**
+
+```bash
+git clone https://github.com/MatrixMagician/PyAutopsy.git
+cd PyAutopsy
+pip install -e ".[dev]"
+```
 
 ## Quick start
 

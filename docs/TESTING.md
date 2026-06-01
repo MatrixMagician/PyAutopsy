@@ -37,12 +37,17 @@ addopts = "-ra"
 - `addopts = "-ra"` prints a short summary of all non-passing (and xfail/xpass)
   results after the run.
 
-**No native forensic toolchain is required to run the tests.** All disk-image and
-filesystem fixtures are pre-built and committed under `tests/fixtures/`, so the
-suite needs no `mkfs`, `debugfs`, `mtools`, or `mkntfs` at test time. The only
-hard runtime binding is `pytsk3` (a core dependency, bundled with `libtsk`); the
-optional `pyewf` (`[ewf]` extra) is mocked in `tests/test_ewf_adapter.py` rather
-than required.
+**Most of the suite needs no native forensic toolchain.** The deterministic
+ext4 / NTFS / raw / NSRL / log-search fixtures are pre-built and **committed**
+under `tests/fixtures/`, so those tests run with no `mkfs`, `debugfs`, or
+`mkntfs` at test time. The two FAT images, however, are **generated at test time**
+(see [Running tests](#running-tests) and [Fixture and golden-image
+generation](#fixture-and-golden-image-generation)): the tests that depend on
+them need `mkfs.fat`, `mcopy`, `mdel` (and, for the partitioned image, `sfdisk`
+and `mkfs.ext4`) on `PATH`, and **skip gracefully** when those host tools are
+absent. The only hard runtime binding for the rest of the suite is `pytsk3` (a
+core dependency, bundled with `libtsk`); the optional `pyewf` (`[ewf]` extra) is
+mocked in `tests/test_ewf_adapter.py` rather than required.
 
 ## Running tests
 
@@ -80,6 +85,14 @@ pytest "tests/test_filesystem.py::test_fs_type_detection"
 There is no separate `unit`/`integration`/`e2e` split and no watch-mode script
 configured — the entire suite is invoked through plain `pytest`.
 
+**FAT-fixture skips.** The FAT32 and partitioned-disk tests build their images
+on the fly (the images are not committed — see below). On a host without the
+`mkfs.fat` / `mtools` / `sfdisk` toolchain those tests report as **skipped**
+(with an actionable message naming the missing tools) rather than failing, so a
+minimal CI environment still gets a green run for everything else. Install the
+host tools (on Fedora: `dosfstools` / `mtools` / `util-linux` / `e2fsprogs`) to
+exercise them.
+
 ## Writing new tests
 
 ### File and function naming
@@ -104,7 +117,8 @@ packages). Conventions, all enforced by pytest's default collection:
 |---------|----------|
 | `case_dir` | A fresh, empty case-directory path under `tmp_path` (the tool creates `case.db` / `logs/` / `exports/`; the fixture only hands you the isolated root). |
 | `tiny_raw_image` | Path to the committed deterministic 64 KiB raw image (`tiny_raw.dd`). |
-| `tiny_ext4_image` / `tiny_ntfs_image` / `tiny_fat32_image` / `tiny_partitioned_image` | Committed tiny filesystem images for the walk (known file + uid/gid/mode; ext4 also carries a deleted entry). |
+| `tiny_ext4_image` / `tiny_ntfs_image` | Committed tiny filesystem images for the walk (known file + uid/gid/mode; ext4 also carries a deleted entry). |
+| `tiny_fat32_image` / `tiny_partitioned_image` | **Generated at test time** (session-scoped), NOT committed — built once per session into a session `tmp` dir via `make_fixtures.build_tiny_fat32_image` / `build_partitioned_image`. Each `skip`s its dependent tests when the host `mkfs`/`mtools`/`sfdisk` tools are missing (the `_build_or_skip` helper). |
 | `ext4_orphan_image` / `ext4_overwritten_image` / `ntfs_resident_deleted_image` | Committed recovery fixtures (orphan / overwritten / resident-deleted). |
 | `nsrl_minimal_db` / `nsrl_metadata_db` | Committed NSRL-format SQLite hash-set fixtures (`FILE` and `METADATA` table variants). |
 | `log_search_image` | Committed Phase-5 ext4 image carrying the whole log/search corpus (rotated `auth.log` set, `syslog`, shell history, planted needles, timezone symlink). |
@@ -113,7 +127,10 @@ packages). Conventions, all enforced by pytest's default collection:
 
 When you need a new committed evidence fixture, add a deterministic builder to
 `tests/fixtures/make_fixtures.py` and expose its path through a `conftest.py`
-fixture; do not generate disk images inside individual tests.
+fixture; do not generate disk images inside individual tests. The exception is a
+fixture that is large *and* not byte-deterministic (like the FAT images): give
+it a session-scoped builder fixture that goes through `_build_or_skip`, so the
+image stays out of the repo and absent host tools `skip` rather than fail.
 
 ### Fakes for the native seam
 
@@ -126,31 +143,46 @@ so they stay in lock-step with the seam's own constants.
 
 ## Fixture and golden-image generation
 
-Golden disk images are **built once on a host that has the formatting tools, then
-committed** to `tests/fixtures/` so CI never runs a privileged `mkfs`. Everything
-is driven by `tests/fixtures/make_fixtures.py`, which can be re-run as a script to
-regenerate every committed asset:
+Everything is driven by `tests/fixtures/make_fixtures.py`. The
+byte-deterministic golden images are **built once on a host that has the
+formatting tools, then committed** to `tests/fixtures/` so CI never runs a
+privileged `mkfs`. Two FAT images are the exception — they are **generated at
+test time and gitignored** (see below). Re-run the module as a script to
+regenerate every committed *and* generated asset side-by-side:
 
 ```bash
 python tests/fixtures/make_fixtures.py
 ```
 
 Regeneration needs the host formatting toolchain (on Fedora:
-`e2fsprogs` / `dosfstools` / `mtools` / `ntfs-3g` / `util-linux`). The committed
-fixtures are:
+`e2fsprogs` / `dosfstools` / `mtools` / `ntfs-3g` / `util-linux`).
+
+### Committed fixtures
 
 | Fixture file | How it is built | Ground truth it carries |
 |--------------|-----------------|-------------------------|
 | `tiny_raw.dd` | 64 KiB of bytes from a fixed-seed LCG (`tiny_raw_bytes`) — no external tool | Byte-deterministic raw image for read-only open + streaming-hash. |
 | `tiny_ext4.img` | `mkfs.ext4` + `debugfs` | One known file (uid/gid/mode `1000`/`1000`/`0644`) plus a deleted root entry (`deleted.txt`, inode 13). |
-| `tiny_fat32.img` | `mkfs.fat -F 32` + `mcopy`/`mdel` (mtools) | One live file + a root-level FAT deletion; FAT local-time provenance (D-16). |
 | `tiny_ntfs.img` | `mkntfs` (+ `ntfscp` if present) | NTFS system files / one known file with UTC times. |
-| `tiny_partitioned.img` | `sfdisk` + `mkfs.fat` + `mkfs.ext4` | A DOS partition table (FAT + ext4) for the volume-offset path (D-15). |
 | `ext4_orphan.img` | `debugfs` (file + parent dir removed) | An orphan file inode (`EXT4_ORPHAN_META_ADDR = 13`) with recoverable content (RECOV-02). |
 | `ext4_overwritten.img` | `debugfs` (write → rm → reclaim) | A deleted victim whose blocks are reclaimed by an allocated file (RECOV-03 / D-31). |
 | `ntfs_resident_deleted.img` | `mkntfs` + `ntfscp`, then an in-place MFT byte edit | A resident-`$DATA` deleted file at MFT addr 64, recovered from the MFT record (RECOV-01, Pitfall 3). |
 | `nsrl_minimal.db` / `nsrl_metadata.db` | stdlib `sqlite3` (no external tool) | NSRL `FILE` / `METADATA` table variants with UPPERCASE hashes (FILTER-01, Pitfall 4). |
-| `log_search_ext4.img` (+ `log_search_groundtruth.json`) | `mkfs.ext4` + `debugfs` | The whole Phase-5 corpus: rotated `auth.log`/`.1`/`.2.gz` spanning a Dec→Jan year boundary, `syslog`, bash/zsh history, `/etc/localtime` symlink + `/etc/timezone`, allocated + unallocated search needles, an IOC term, a known-bad-hash file, and two tied-second syslog lines. |
+| `log_search_ext4.img` (+ `log_search_groundtruth.json`) | `mkfs.ext4` + `debugfs` | The whole Phase-5 corpus: rotated `auth.log`/`.1`/`.2.gz` spanning a Dec→Jan year boundary (years 2023 / 2022, anchored to the frozen debugfs clock), `syslog`, bash/zsh history, `/etc/localtime` symlink + `/etc/timezone`, allocated + unallocated search needles, an IOC term, a known-bad-hash file, and two tied-second syslog lines. |
+
+### Generated-at-test-time fixtures (not committed, gitignored)
+
+The two FAT images are **not** committed: they are large (64–74 MiB) and not
+byte-deterministic (`mkfs.fat` stamps a wall-clock volume id), so committing them
+would bloat the repo with non-reproducible binaries. Instead the session-scoped
+`tiny_fat32_image` / `tiny_partitioned_image` fixtures build them on demand into
+a session `tmp` dir, and `tests/fixtures/.gitignore` excludes the filenames.
+Tests that need them **skip** (rather than fail) when the host tools are absent.
+
+| Fixture file | How it is built | Required host tools | Ground truth it carries |
+|--------------|-----------------|---------------------|-------------------------|
+| `tiny_fat32.img` | `mkfs.fat -F 32` + `mcopy`/`mdel` (mtools) | `mkfs.fat`, `mcopy`, `mdel` | One live file + a root-level FAT deletion; FAT local-time provenance (D-16). |
+| `tiny_partitioned.img` | `sfdisk` + `mkfs.fat` + `mkfs.ext4` + `mcopy` | `sfdisk`, `mkfs.fat`, `mkfs.ext4`, `mcopy` | A DOS partition table (FAT + ext4) for the volume-offset path (D-15). |
 
 ### Byte-determinism of fixtures
 
@@ -158,12 +190,13 @@ The ext4 and NSRL fixtures are **byte-reproducible**: `mkfs.ext4` is run with a
 pinned filesystem UUID (`_EXT4_FIXED_UUID`), a pinned directory-hash seed, and a
 frozen creation time via `E2FSPROGS_FAKE_TIME`; `debugfs` writes run under the
 same frozen clock; and the NSRL SQLite DBs are built with a fixed `page_size`,
-fixed row order, and a final `VACUUM` for a canonical layout. The FAT32 and NTFS
-fixtures reproduce their *structure and recorded ground truth* but are **not**
-byte-identical (`mkfs.fat` stamps a wall-clock volume id; `mkntfs` offers no
-fixed-UUID/fixed-time option) — these are documented determinism caveats in the
-builders. The gzip member inside the log/search image is written with `mtime=0`
-so its bytes are reproducible.
+fixed row order, and a final `VACUUM` for a canonical layout. The NTFS fixture
+reproduces its *structure and recorded ground truth* but is **not** byte-identical
+(`mkntfs` offers no fixed-UUID/fixed-time option) — a documented determinism
+caveat in the builder. The FAT images share that non-determinism (`mkfs.fat`
+stamps a wall-clock volume id), which is the reason they are generated at test
+time instead of committed. The gzip member inside the log/search image is written
+with `mtime=0` so its bytes are reproducible.
 
 Malicious-archive builders (`build_zip_slip_tar`, `build_symlink_escape_tar`,
 `build_device_file_tar`, `build_ratio_bomb_zip`, `build_count_bomb_tar`) generate
@@ -247,9 +280,8 @@ architecture guards. New tests should preserve these conventions:
 No coverage tool (`pytest-cov`, `coverage`, `c8`) is configured in
 `pyproject.toml`, and there is no coverage threshold. Coverage is instead asserted
 *behaviourally*: the filesystem-walk and recovery tests verify exact file counts
-and exact bytes/inode addresses against the committed fixtures' recorded ground
-truth (the "every file" / Nyquist signal), rather than enforcing a line-coverage
-percentage.
+and exact bytes/inode addresses against the fixtures' recorded ground truth (the
+"every file" / Nyquist signal), rather than enforcing a line-coverage percentage.
 
 ## CI integration
 
@@ -259,7 +291,9 @@ directory). The intended pre-merge gate is the local quality stack declared in
 `pytest`. The reference execution environment for full **E01/EWF** support is the
 `Containerfile` (Fedora-based, bakes `sleuthkit` + `libewf` and their `-dev`
 headers and installs `pyautopsy[ewf]`), since the core wheels cover the
-raw/`dd`-only path without system packages.
+raw/`dd`-only path without system packages. A CI image that also bundles
+`dosfstools` / `mtools` / `util-linux` will run the FAT tests too; one that omits
+them will simply `skip` those tests.
 
 <!-- VERIFY: no CI/CD pipeline is committed; if a CI workflow is added later, document its trigger and test command here -->
 

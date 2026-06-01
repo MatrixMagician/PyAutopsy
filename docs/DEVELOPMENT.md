@@ -3,9 +3,10 @@
 
 This guide covers local development of PyAutopsy: setting up an editable
 environment, running the quality gates, the code conventions the project
-enforces, and how to extend the tool with a new log parser. It complements the
-contributor-facing process in [CONTRIBUTING.md](../CONTRIBUTING.md) and the
-module-level design in [docs/ARCHITECTURE.md](ARCHITECTURE.md).
+enforces, building and publishing a release, and how to extend the tool with a
+new log parser. It complements the contributor-facing process in
+[CONTRIBUTING.md](../CONTRIBUTING.md) and the module-level design in
+[docs/ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Local setup
 
@@ -63,14 +64,64 @@ following locally before opening a pull request.
 | `mypy` | Static typing over `src/` (configured `files = ["src"]`). Strict-leaning: `disallow_untyped_defs`, `warn_unused_ignores`, `warn_redundant_casts`, `no_implicit_optional`. |
 | `pytest` | Full test suite. `pythonpath = ["src"]`, `testpaths = ["tests"]`, `addopts = "-ra"`. |
 
-Building a distribution (rarely needed during development) uses the hatchling
-backend; the wheel packages `src/pyautopsy` and the version is read dynamically
-from `src/pyautopsy/__init__.py` (`[tool.hatch.version]`).
+## Building and publishing a release
 
-```bash
-# Build sdist + wheel (requires the `build` package: pip install build)
-python -m build
-```
+PyAutopsy publishes to PyPI as [`pyautopsy`](https://pypi.org/project/pyautopsy/)
+(version `0.1.0` is live). Distribution uses the hatchling backend; the wheel
+packages `src/pyautopsy` (`[tool.hatch.build.targets.wheel]`) and the version is
+read dynamically from `src/pyautopsy/__init__.py` (`[tool.hatch.version]`).
+
+The sdist is deliberately constrained to source-only via
+`[tool.hatch.build.targets.sdist]`, which sets `include = ["src/pyautopsy",
+"README.md", "LICENSE"]`. Without this allowlist, hatchling's default sdist
+sweeps the whole VCS tree and would leak the multi-MB test-fixture disk images
+(`tests/fixtures/*.img`) and the internal `.planning/` artifacts onto PyPI. Keep
+this allowlist in place; if you add a new top-level file that must ship in the
+sdist, add it here explicitly.
+
+### Cutting a release
+
+1. **Bump the version.** Edit `__version__` in `src/pyautopsy/__init__.py` — this
+   is the single source of truth that hatchling reads at build time. There is no
+   separate version string in `pyproject.toml`.
+
+2. **Build fresh artifacts.** Remove any stale `dist/` first so a re-run never
+   re-uploads an old artifact, then build sdist + wheel:
+
+   ```bash
+   rm -rf dist/
+   python -m build        # or: uv build
+   ```
+
+   Both invoke the hatchling backend; `uv build` does not require the `build`
+   package in the active environment, whereas `python -m build` does
+   (`pip install build`).
+
+3. **Validate the artifacts.** Run `twine check` over the built distributions to
+   catch metadata/README rendering problems before upload:
+
+   ```bash
+   twine check dist/*
+   ```
+
+   Optionally inspect the sdist to confirm the allowlist held — only `src/`,
+   `README.md`, `LICENSE`, `pyproject.toml`, and packaging metadata should be
+   present, with no `tests/`, `*.img`, or `.planning/` entries:
+
+   ```bash
+   tar tzf dist/pyautopsy-*.tar.gz
+   ```
+
+4. **Publish.** Upload to PyPI with either `uv publish` or `twine upload`:
+
+   ```bash
+   uv publish              # or: twine upload dist/*
+   ```
+
+   <!-- VERIFY: PyPI publishing credentials / token source (env var, ~/.pypirc, or CI secret) -->
+
+There is no `.github/` CI workflow in this repository, so releases are cut
+manually from a clean checkout following the steps above.
 
 ## Code conventions
 

@@ -36,7 +36,7 @@ for the full system-package list.
 
 ## Code-quality gates
 
-Every pull request must pass all three gates below. Run them locally before
+Every pull request must pass all four gates below. Run them locally before
 opening a PR; they are configured in `pyproject.toml`.
 
 | Gate | Command | What it enforces |
@@ -127,6 +127,15 @@ the allowlist imports `pytsk3` or `pyewf` (D-06/D-14).
   its baseline and explicitly forbids `python-systemd` / journald bindings in any
   dependency table. New runtime dependencies require an explicit, deliberate
   decision and a baseline update — they are not added silently.
+
+### 5. Honesty over verdicts — describe observed facts, never inferred intent
+
+PyAutopsy reports what the evidence shows; it does not infer motive, attribute
+intent, or render a verdict. A parsed log line that matches no known pattern still
+becomes a record carrying its raw `message` rather than being dropped or
+reinterpreted. Keep derived fields (actions, outcomes, flags) strictly grounded in
+the observed artifact, and keep any uncertainty (e.g. ambiguous timezone or year)
+explicitly flagged rather than silently resolved.
 
 ## Adding a log parser
 

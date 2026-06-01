@@ -23,6 +23,12 @@ The system is organized into three tiers. The **native seam** is the only place
 tiers into auditable operations; the **persistence and reporting tier** owns the
 case database and renders the deliverables.
 
+The CLI (`cli/main.py`) exposes six commands — `ingest`, `walk`, `recover`,
+`logs`, `search`, and the end-to-end `analyze` — each a thin shell over its
+orchestrator in `core/`. Known-file filtering (`core/knownfiles.py:run_filter`)
+has **no standalone command**: it runs as an opt-in sub-pass of `recover` and
+`analyze` when an `--nsrl` DB or a `--hash-set-*` list is supplied.
+
 ```mermaid
 graph TD
     CLI["cli/main.py — Typer app<br/>(ingest · walk · recover · logs · search · analyze)"]
@@ -33,16 +39,17 @@ graph TD
     CLI --> RECOVER["core/recover.py"]
     CLI --> LOGS["core/logs.py"]
     CLI --> SEARCH["core/search.py"]
-    CLI --> FILTER["core/knownfiles.py"]
 
     ANALYZE --> INGEST
     ANALYZE --> WALK
     ANALYZE --> RECOVER
-    ANALYZE --> FILTER
+    ANALYZE --> FILTER["core/knownfiles.py<br/>(sub-pass, not a CLI command)"]
     ANALYZE --> LOGS
     ANALYZE --> SEARCH
     ANALYZE --> TIMELINE["timeline/builder.py<br/>(MACB explosion)"]
     ANALYZE --> REPORT["report/ (assemble · json · html)"]
+
+    RECOVER --> FILTER
 
     INGEST --> SEAM
     WALK --> SEAM
@@ -63,9 +70,9 @@ graph TD
     INGEST --> STORE
     WALK --> STORE
     RECOVER --> STORE
+    FILTER --> STORE
     LOGS --> STORE
     SEARCH --> STORE
-    FILTER --> STORE
     TIMELINE --> STORE
     REPORT --> STORE
 
@@ -86,41 +93,53 @@ events to".
 
 A typical end-to-end run is the `analyze` command, orchestrated by
 `run_analyze` in `core/analyze.py`. It composes the per-stage orchestrators,
-each of which is also independently invocable from the CLI:
+each of which (except the filter sub-pass) is also independently invocable from
+the CLI:
 
 1. **Validate + ingest** (`core/ingest.py:run_ingest`). The case directory is
-   refused if it overlaps the evidence path (`_assert_case_dir_separate`,
-   decision D-01), and the source is refused if it is a mounted filesystem
-   (`integrity.assert_source_not_mounted`). `CaseStore.create` materializes the
-   `<case>/`, `<case>/logs/`, `<case>/exports/` layout and `case.db`. The image
-   is opened read-only through the native seam (`evidence/image.py:open_image`),
-   hashed in a single pass (`integrity.hash_image`, MD5 + SHA-256), optionally
-   compared against a supplied acquisition hash, persisted as `cases` +
-   `evidence_sources` rows in one transaction, and **re-verified at end of run**
-   so any in-run drift is a loud `IntegrityError`.
+   refused if it overlaps the evidence path, and the source is refused if it is a
+   mounted filesystem (`integrity.assert_source_not_mounted`). `CaseStore.create`
+   materializes the `<case>/`, `<case>/logs/`, `<case>/exports/` layout and
+   `case.db`. The image is opened read-only through the native seam
+   (`evidence/image.py:open_image`), hashed in a single pass
+   (`integrity.hash_image`, MD5 + SHA-256), optionally compared against a supplied
+   acquisition hash, persisted as `cases` + `evidence_sources` rows in one
+   transaction, and **re-verified at end of run** so any in-run drift is a loud
+   `IntegrityError`. For `analyze`, a fresh-case guard (A2) refuses to run into a
+   directory that already contains a `case.db` before any work begins.
 2. **Walk** (`core/walk.py:run_walk`). Volumes are enumerated through the FS
-   seam (`evidence/filesystem.py:enumerate_volumes`); each filesystem is opened
-   (`open_fs`) and walked (`walk_fs`), yielding every entry — including deleted
-   ones. Each entry is mapped to a `FileRow`: META-01 spine (path, name, inode/
-   MFT address, allocated status, volume tagging), normalized MACB timestamps
-   (UTC ISO-8601, FAT local-time handling, zero-epoch → `None`), ownership/mode,
-   and — for allocated regular files — MD5/SHA-1/SHA-256 plus a content-signature
-   file type. An encrypted/unsupported volume becomes a `VolumeLimitation`
-   finding and the walk **continues** rather than aborting (decision D-20).
-3. **Optional recovery / filtering** (`core/recover.py`, `core/knownfiles.py`).
-   When requested, recovery writes recovered deleted/orphan `FileRow`s; known-file
-   filtering annotates rows with neutral NSRL / allow-block `KnownMatch`
-   provenance (never a good/bad verdict).
+   seam (`evidence/filesystem.py`); each filesystem is opened and walked, yielding
+   every entry — including deleted ones. Each entry is mapped to a `FileRow`: the
+   META-01 spine (path, name, inode/MFT address, allocated status, volume
+   tagging), normalized MACB timestamps (UTC ISO-8601, FAT local-time handling,
+   zero-epoch → `None`), ownership/mode, and — for allocated regular files —
+   MD5/SHA-1/SHA-256 plus a content-signature file type. An encrypted/unsupported
+   volume becomes a `VolumeLimitation` finding and the walk **continues** rather
+   than aborting (decision D-20).
+3. **Optional recovery / filtering** (`core/recover.py:run_recover`,
+   `core/knownfiles.py:run_filter`). When `--recover` is set, recovery reopens
+   each deleted/orphan entry read-only, writes its surviving bytes under a
+   confined `<case>/recovered/` tree, classifies an honest confidence tier
+   (`intact` vs `partial/overwritten` — data survival only, never intent), and
+   catalogs recovered `FileRow`s. When an `--nsrl` DB or a `--hash-set-*` list is
+   supplied, the filtering sub-pass runs (after recovery, so recovered rows are
+   annotated too) and writes neutral `KnownMatch` provenance rows (membership
+   source + list + sense + matched-on hash — never a good/bad verdict).
 4. **Timeline** (`timeline/builder.py:build_timeline`). Each `files` row is
-   exploded into up to four `TimelineEvent`s — one per populated MACB timestamp
-   — copying the walk's `*_utc` string **verbatim** (timestamps are never
+   exploded into up to four `TimelineEvent`s — one per populated MACB timestamp —
+   copying the walk's `*_utc` string **verbatim** (timestamps are never
    re-derived from an epoch here).
-5. **Optional logs / search** (`core/logs.py`, `core/search.py`). Log parsing
-   discovers rotated/gz log sets, parses each member through the log-parser
-   registry, time-resolves records with honest tz/year flags, and writes
+5. **Optional logs / search** (`core/logs.py:run_logs`,
+   `core/search.py:run_search`). Log parsing discovers rotated/gz log sets
+   (reassembled oldest→newest), parses each member through the `log/` parser
+   registry, time-resolves records with honest tz/year flags, records neutral
+   `LogFinding` honesty disclosures (tamperability / completeness), and writes
    `TimelineEvent`s into the **same** `timeline_events` table — so the existing
-   ordered read becomes the super-timeline with no new ordering code. Content
-   search writes `SearchHit` rows.
+   ordered read becomes the super-timeline with no new ordering code (TIME-02).
+   The log pass runs after `build_timeline`, so its idempotent filesystem-event
+   backfill is a no-op. Content search streams literal/regex/IOC needles over
+   allocated content and unallocated space (and matches known-bad hash lists
+   against the inventory), writing `SearchHit` rows.
 6. **Report** (`report/`). `assemble_report_body` reads the persisted rows back
    through the store into one deterministic body dict; `write_json` and
    `render_html` emit `reports/report.json` and `reports/report.html`. The only
@@ -128,9 +147,11 @@ each of which is also independently invocable from the CLI:
    `reports/run_metadata.json` sidecar so the two reports stay byte-identical
    across runs.
 
-Throughout, every stage appends structured events to `logs/audit.jsonl` via
-`audit/log.py:AuditLog`, and a terminal `*.error` / `*.crashed` FAIL event is
-always written before any exception propagates.
+Recovery, filtering, logs, and search are all **opt-in** (D-40): with none of
+them requested, `analyze` produces a report byte-identical to the Phase-3
+filesystem-only baseline. Throughout, every stage appends structured events to
+`logs/audit.jsonl` via `audit/log.py:AuditLog`, and a terminal `*.error` /
+`*.crashed` FAIL event is always written before any exception propagates.
 
 ## Key abstractions
 
@@ -141,10 +162,10 @@ always written before any exception propagates.
 | `FileEntry` | dataclass | `evidence/filesystem.py` | The plain-Python value object the FS walk yields per entry (primitive fields + a single `read_random` byte-reader closure); no native `File` object escapes the seam. |
 | `CaseStore` | class | `case/store.py` | The sole sanctioned reader/writer of `case.db` — owns the schema, WAL + foreign-key pragmas, transactions, and every typed repository method. |
 | `AuditLog` | class | `audit/log.py` | The append-only JSONL audit writer, confined to `<case>/logs/audit.jsonl` with `O_APPEND` + `fsync`. |
-| `LogParser` / `ParsedRecord` | Protocol / dataclass | `log/registry.py` | The log-format extension contract (`name` + `matches` + `parse`) and its emitted value object; the primary extension point (see below). |
-| `FileRow`, `TimelineEvent`, `EvidenceSource`, `Case`, `VolumeLimitation`, `KnownMatch`, `SearchHit`, `AuditEvent` | dataclasses | `case/models.py` | The frozen value models mirroring the typed columns of each `case.db` table, each carrying a JSON `attributes` blackboard for schema-free extension. |
+| `LogParser` / `ParsedRecord` | Protocol / dataclass | `log/registry.py` | The log-format extension contract (`name` + `matches` + `parse`) and its emitted (not-yet-time-resolved) value object; the primary extension point (see below). |
+| `Case`, `EvidenceSource`, `FileRow`, `TimelineEvent`, `VolumeLimitation`, `LogFinding`, `KnownMatch`, `SearchHit`, `AuditEvent` | dataclasses | `case/models.py` | The frozen value models mirroring the typed columns of each `case.db` table, each carrying a JSON `attributes` blackboard for schema-free extension. |
 | `safe_extract` | function | `util/safe_extract.py` | The only sanctioned archive expander — path-confined, symlink/device-refusing, decompression-bomb-capped jail for untrusted archives. |
-| `run_ingest` / `run_walk` / `run_recover` / `run_logs` / `run_search` / `run_filter` / `run_analyze` | functions | `core/*.py` | The orchestration-tier entry points the CLI commands wrap one-to-one. |
+| `run_ingest` / `run_walk` / `run_recover` / `run_filter` / `run_logs` / `run_search` / `run_analyze` | functions | `core/*.py` | The orchestration-tier entry points; the six CLI commands wrap all but `run_filter` (which runs only as a sub-pass of `recover`/`analyze`). |
 
 ## Forensic-soundness boundaries
 
@@ -187,8 +208,8 @@ constraint. They are not conventions but structural boundaries verified by tests
 - **The `attributes` JSON blackboard.** Every case-store model
   (`case/models.py`) carries a free-form `attributes: dict` mapping to its table's
   JSON column. Later phases attach heterogeneous data (recovery rationale, FAT
-  local-time flags, timestamp-basis honesty flags, encryption hints) without a
-  schema migration.
+  local-time flags, timestamp-basis honesty flags, encryption hints, rotation
+  present/missing indices) without a schema migration.
 - **Injected collaborators for testability.** The walk accepts an injectable
   `typer` callable (content file-typing) and the log orchestrator passes
   reader-closure callbacks for host-timezone resolution, so each tier is unit
@@ -202,16 +223,19 @@ submodules map directly onto the pipeline tiers:
 
 ```
 src/pyautopsy/
-├── cli/          Typer CLI — thin shells over the core orchestrators.
-├── core/         Orchestration tier: ingest, walk, recover, knownfiles (filter),
-│                 logs, search, analyze. Composes lower tiers; imports no native bindings.
+├── cli/          Typer CLI — thin shells over the core orchestrators
+│                 (ingest · walk · recover · logs · search · analyze).
+├── core/         Orchestration tier: ingest, walk, recover, knownfiles (filter
+│                 sub-pass), logs, search, analyze. Composes lower tiers;
+│                 imports no native bindings.
 ├── evidence/     Native seam + integrity: image.py and filesystem.py are the ONLY
 │                 pytsk3/pyewf importers; integrity.py, filetype.py are pure-Python.
 ├── case/         Persistence: CaseStore (store.py), schema.sql, value models (models.py).
 ├── audit/        Append-only JSONL audit log writer.
 ├── timeline/     MACB-explosion timeline producer into timeline_events.
-├── log/          Log-parsing package: parser registry + per-format parsers,
-│                 rotated-set discovery, tz/year resolution, event normalization.
+├── log/          Log-parsing package: parser registry + per-format parsers
+│                 (auth, syslog, shell_history over a shared _grammar), rotated-set
+│                 discovery, tz/year resolution, event normalization.
 ├── filter/       NSRL RDS membership probe + custom allow/block hash-set matching.
 ├── search/       Streaming literal/regex content scanner + IOC / known-bad-hash matching.
 ├── report/       Deterministic body assembly + JSON and HTML report writers.
@@ -219,7 +243,7 @@ src/pyautopsy/
                   safe_extract (hardened archive jail).
 ```
 
-The `case.db` schema defines eight tables — `cases`, `evidence_sources`,
-`run_log`, `files`, `volume_limitations`, `known_file_matches`, `search_hits`,
-and `timeline_events` — each fronted by a `case/models.py` dataclass and accessed
-exclusively through `CaseStore`.
+The `case.db` schema defines nine tables — `cases`, `evidence_sources`,
+`run_log`, `files`, `volume_limitations`, `log_findings`, `known_file_matches`,
+`search_hits`, and `timeline_events` — each fronted by a `case/models.py`
+dataclass and accessed exclusively through `CaseStore`.

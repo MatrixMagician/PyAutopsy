@@ -5,8 +5,8 @@ title: Configuration
 
 # Configuration
 
-PyAutopsy is a single-binary forensic CLI. It has **no environment variables**, **no
-configuration file**, and **no global settings**. Every run is configured entirely by:
+PyAutopsy is a single-binary forensic CLI. It has **no application environment variables**, **no
+runtime configuration file**, and **no global settings**. Every run is configured entirely by:
 
 1. **Command-line options** passed to a `pyautopsy` subcommand.
 2. The **case directory** (`--case`), which is both the configuration target and the output
@@ -20,8 +20,8 @@ is driven by explicit invocation arguments rather than ambient state.
 
 ## Environment variables
 
-PyAutopsy reads **no** environment variables. A search of `src/pyautopsy/` for `os.environ`,
-`os.getenv`, and `environ[...]` returns no matches.
+The PyAutopsy application reads **no** environment variables for configuration. A search of
+`src/pyautopsy/` for `os.environ`, `os.getenv`, and `environ[...]` returns no matches.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -30,6 +30,22 @@ PyAutopsy reads **no** environment variables. A search of `src/pyautopsy/` for `
 Standard Python and system variables that the underlying libraries may honour (for example the
 locale or the C library's behaviour) are outside PyAutopsy's control and are not part of its
 configuration surface.
+
+### Test-fixture build variables (development only)
+
+The **test fixture builder** (`tests/fixtures/make_fixtures.py`) *sets* a few environment
+variables to make the external filesystem tools it shells out to produce byte-deterministic
+images. These are **not read by PyAutopsy**, are not part of the runtime configuration surface,
+and matter only to developers regenerating test fixtures. They are listed here for completeness:
+
+| Variable | Value set | Consumed by | Why |
+|----------|-----------|-------------|-----|
+| `E2FSPROGS_FAKE_TIME` | `1700000000` (`_EXT4_FAKE_TIME`) | `mkfs.ext4` / `mke2fs` | Freezes ext4 superblock creation time so a rebuilt image is byte-identical. |
+| `MTOOLS_SKIP_CHECK` | `1` | `mcopy` / `mdel` (mtools) | Suppresses mtools' interactive geometry check during FAT fixture builds. |
+
+The variable name `_EXT4_FAKE_TIME` in `make_fixtures.py` is the source constant that supplies the
+`E2FSPROGS_FAKE_TIME` value; there is no separate `_EXT4_FAKE_TIME` environment variable. See
+[TESTING.md](TESTING.md) for fixture regeneration details.
 
 ## Config file format
 
@@ -165,3 +181,5 @@ On other distributions install the equivalent `-dev`/`-devel` headers before bui
 - [GETTING-STARTED.md](GETTING-STARTED.md) — prerequisites and first run.
 - [DEVELOPMENT.md](DEVELOPMENT.md) — build, lint, and type-check tooling configured in `pyproject.toml`.
 - Run `pyautopsy --help` or `pyautopsy <command> --help` for the authoritative, version-matched flag list.
+</content>
+</invoke>
