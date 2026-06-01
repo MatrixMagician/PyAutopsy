@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-05-PLAN.md (G-2 gap closure)
-last_updated: "2026-06-01T10:25:00.000Z"
-last_activity: 2026-06-01 -- 05-05 gap closure (G-2) executed
+stopped_at: Completed 05-06-PLAN.md (G-1 gap closure)
+last_updated: "2026-06-01T10:38:15.117Z"
+last_activity: 2026-06-01 -- 05-06 gap closure (G-1) executed
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 25
-  completed_plans: 23
-  percent: 80
+  completed_plans: 25
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-05-30)
 
 ## Current Position
 
-Phase: 05 (log-parsing-supertimeline-search) — EXECUTING
-Plan: 6 of 7 (05-05 G-2 done; 05-06 G-1 remaining)
-Status: Executing Phase 05
-Last activity: 2026-06-01 -- 05-05 gap closure (G-2) executed
+Phase: 05 (log-parsing-supertimeline-search) — all 7 plans complete (incl. G-1/G-2 gap closures)
+Plan: 7 of 7 (05-05 G-2 done; 05-06 G-1 done)
+Status: Phase 05 plans complete — ready for verification / phase close
+Last activity: 2026-06-01 -- 05-06 gap closure (G-1) executed
 
 Progress: [██████████] 100%
 
@@ -74,6 +74,7 @@ Progress: [██████████] 100%
 | Phase 05 P03 | 25min | 2 tasks | 13 files |
 | Phase 05 P04 | 35min | 2 tasks | 5 files |
 | Phase 05 P05 (G-2) | ~22min | 3 tasks | 12 files |
+| Phase 05 P06 (G-1) | ~18min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -122,6 +123,8 @@ Recent decisions affecting current work:
 - [Phase ?]: CR-01 locked via a direct store-level NULL-meta tied-log-event tiebreak test (source/actor/id), since run_logs surfaces only auth events on the current fixture
 - [Phase 05]: 05-05 (G-2): D-44/D-45 honesty findings now reach the report — additive log_findings table (mirrors volume_limitations D-20; timeline_events untouched D-47), threaded through run_logs in the existing single transaction (WR-01), rendered as log_findings.disclosures (json+html); default analyze path empties to [] keeping report bytes identical (D-48)
 - [Phase 05]: 05-05: ShellHistoryParser.findings_for additive accessor reaches the dropped tamperability finding WITHOUT changing the EXT-01 LogParser.parse record-only protocol; tamperability detail persisted verbatim (observed-fact, never intent, D-44)
+- [Phase 05]: 05-06 (G-1): Path B fixture/sidecar reconciliation — retargeted LOG_SEARCH_YEAR/PREV_YEAR + log_search_groundtruth.json to 2023/2022 (the _EXT4_FAKE_TIME=1700000000 mtime anchor D-46 yields); image bytes + sha256 6e41afad...079b0 UNCHANGED so the UAT-test-11 read-only baseline needs no lockstep
+- [Phase 05]: 05-06: regression guard test_groundtruth_year_matches_fixture_mtime pins year_inferred (the D-46 RFC3164 year), NOT the tz-converted ts_utc calendar year — a Dec 31 ET line crosses to 2024-01-01Z, a tz artifact whose year_inferred is correctly 2023
 
 ### Pending Todos
 
@@ -146,6 +149,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T10:25:00.000Z
-Stopped at: Completed 05-05-PLAN.md (G-2 gap closure)
+Last session: 2026-06-01T10:38:15.113Z
+Stopped at: Completed 05-06-PLAN.md (G-1 gap closure)
 Resume file: None
