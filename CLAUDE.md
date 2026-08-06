@@ -1,4 +1,3 @@
-<!-- GSD:project-start source:PROJECT.md -->
 
 ## Project
 
@@ -20,10 +19,6 @@ single automated Python workflow.
 - **Dependencies**: Autopsy / The Sleuth Kit (TSK) and Python bindings (e.g. `pytsk3`) — Required: core forensic primitives come from TSK, not reimplemented
 - **Forensic soundness**: Evidence sources must be treated read-only; findings must be hashable/reproducible — Why: output supports evidence presentation
 - **Reporting**: Report must be both human-readable and structured/exportable — Why: needs to serve both investigators and downstream tooling
-
-<!-- GSD:project-end -->
-
-<!-- GSD:stack-start source:research/STACK.md -->
 
 ## Technology Stack
 
@@ -165,48 +160,33 @@ single automated Python workflow.
 - https://typer.tiangolo.com/alternatives/ + https://codecut.ai/comparing-python-command-line-interface-tools-argparse-click-and-typer/ — Typer (type-hint, on Click) recommended for maintainable CLIs (HIGH)
 - https://packaging.python.org/en/latest/guides/writing-pyproject-toml/ + https://learn.scientific-python.org/development/guides/packaging-simple/ — hatchling + src layout + dependency-groups + pytest `pythonpath=src` (HIGH)
 
-<!-- GSD:stack-end -->
-
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
-
 ## Conventions
 
 Conventions not yet established. Will populate as patterns emerge during development.
-<!-- GSD:conventions-end -->
-
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
 
 ## Architecture
 
 Architecture not yet mapped. Follow existing patterns found in the codebase.
-<!-- GSD:architecture-end -->
-
-<!-- GSD:skills-start source:skills/ -->
 
 ## Project Skills
 
 No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
-<!-- GSD:skills-end -->
 
-<!-- GSD:workflow-start source:GSD defaults -->
+## Workflow
 
-## GSD Workflow Enforcement
+Edit code directly. There is no planning gate to route through.
 
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
-
-Use these entry points:
-
-- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd-debug` for investigation and bug fixing
-- `/gsd-execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-<!-- GSD:profile-start -->
+The durable record of a change is the code, its tests, and the commit message.
+Historical planning documents live in `.planning/` and are read-only history:
+they describe how the project got here, not a process to follow.
 
 ## Developer Profile
 
-> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
+Senior engineer and tool-builder; domain-aware, multi-language (Python, TS/React, Rust, Go).
+
+- **Autonomy between gates.** Drive multi-step work without per-step approval; pause for explicit sign-off at decision and release points.
+- **Precise & reproducible:** detailed repro/test steps, exact commands/paths; honor tightly-scoped requirements without broadening scope.
+- **Protect history & releases:** split/atomic commits, careful tag/deploy handling, security review on changes.
+- **Register:** courteous and direct - plain, decisive; apply restated corrections immediately.
+- **Surface options crisply.** Assume a senior, domain-aware reader; cite evidence where domain specifics matter.
+- **Persist context** (decisions, patterns, bugs) to graphmind memory proactively.
