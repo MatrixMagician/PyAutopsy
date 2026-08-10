@@ -40,21 +40,19 @@ from __future__ import annotations
 
 import json
 import socket
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
+from pyautopsy.core.epilogue import audited_step
 from pyautopsy.core.ingest import IngestError, run_ingest
 from pyautopsy.core.knownfiles import FilterError, run_filter
 from pyautopsy.core.logs import LogsError, run_logs
 from pyautopsy.core.recover import RecoverError, run_recover
 from pyautopsy.core.search import SearchError, run_search
 from pyautopsy.core.walk import WalkError, run_walk
-from pyautopsy.evidence import integrity
-from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.report import (
     assemble_report_body,
     build_run_metadata,
@@ -81,30 +79,6 @@ class AnalyzeError(Exception):
     :class:`~pyautopsy.core.ingest.IngestError` /
     :class:`~pyautopsy.core.walk.WalkError`.
     """
-
-
-# (Mirrors walk's _EXPECTED_WALK_ERRORS, walk.py:225-233.) The operational
-# exception set the analyze pipeline legitimately expects: our own AnalyzeError,
-# an integrity / read-only-boundary failure, an unopenable image, an FS/case-store
-# error, or the composed orchestrators' own errors. These are recorded as an
-# ``analyze.error`` FAIL and re-raised (traceback preserved). Anything OUTSIDE this
-# set is a genuine programming bug, recorded under a DISTINCT ``analyze.crashed``
-# event so the audit trail never conflates a bug with an expected operational
-# failure.
-_EXPECTED_ANALYZE_ERRORS: tuple[type[BaseException], ...] = (
-    AnalyzeError,
-    IngestError,
-    WalkError,
-    RecoverError,
-    FilterError,
-    LogsError,
-    SearchError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,7 +271,18 @@ def run_analyze(
     known_matches = 0
     log_events = 0
     search_hits = 0
-    try:
+    with audited_step(
+        audit,
+        store,
+        "analyze",
+        AnalyzeError,
+        IngestError,
+        WalkError,
+        RecoverError,
+        FilterError,
+        LogsError,
+        SearchError,
+    ):
         # (2) Walk the filesystem into the per-file inventory (META-01).
         walk_result = run_walk(
             image_path,
@@ -415,32 +400,6 @@ def run_analyze(
             log_events=log_events,
             search_hits=search_hits,
         )
-    except _EXPECTED_ANALYZE_ERRORS as exc:
-        # An EXPECTED operational failure: leave a terminal FAIL event before
-        # propagating (the CLI maps it to the integrity exit code), then re-raise
-        # with the traceback preserved (threat T-03-14).
-        audit.write(
-            "analyze.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        # An UNEXPECTED error — a genuine programming bug, not an operational
-        # failure. Record it under a DISTINCT ``analyze.crashed`` event so the
-        # audit trail never conflates a bug with an expected failure, then
-        # re-raise unwrapped so the bug surfaces with its full traceback.
-        audit.write(
-            "analyze.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        if store is not None:
-            store.close()
 
     return AnalyzeResult(
         case_id=ingest_result.case_id,

@@ -42,7 +42,6 @@ It classifies FAT (for downstream local-time handling) via the seam's pytsk3-fre
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -53,6 +52,7 @@ from zoneinfo import ZoneInfo
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import FileRow, VolumeLimitation
+from pyautopsy.core.epilogue import audited_step
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
@@ -61,9 +61,7 @@ from pyautopsy.evidence.filesystem import (
     EXT_FS_TYPES,
     FAT_FS_TYPES,
     NTFS_FS_TYPES,
-    FilesystemError,
 )
-from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
 
 # A read-only content byte-reader as exposed by the FS seam (D-14): the closure
@@ -214,23 +212,6 @@ class WalkError(Exception):
     """
 
 
-# (WR-05) The operational exception set the walk legitimately expects: a
-# read-only/integrity boundary failure, an unopenable image, an FS-seam failure,
-# a case-store/sqlite error, or our own WalkError. These are recorded as a
-# ``walk.error`` FAIL and re-raised. Anything OUTSIDE this set is a genuine
-# programming bug (KeyError/AttributeError/TypeError/...): it is recorded under a
-# DISTINCT ``walk.crashed`` event so the audit trail never conflates a bug with
-# an expected operational failure, then re-raised unwrapped (the traceback is
-# preserved either way — neither path swallows the exception).
-_EXPECTED_WALK_ERRORS: tuple[type[BaseException], ...] = (
-    WalkError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    FilesystemError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,7 +477,7 @@ def run_walk(
     volumes_walked = 0
     limitations_recorded = 0
 
-    try:
+    with audited_step(audit, store, "walk", WalkError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -577,30 +558,6 @@ def run_walk(
             volumes_walked=volumes_walked,
             limitations_recorded=limitations_recorded,
         )
-    except _EXPECTED_WALK_ERRORS as exc:
-        # (CR-03/WR-05) An EXPECTED operational failure: always leave a terminal
-        # FAIL event before propagating, then re-raise (traceback preserved).
-        audit.write(
-            "walk.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        # (WR-05) An UNEXPECTED error — a genuine programming bug, not an
-        # operational failure. Record it under a DISTINCT ``walk.crashed`` event
-        # (so the audit trail never conflates a bug with an expected failure),
-        # then re-raise unwrapped so the bug surfaces with its full traceback.
-        audit.write(
-            "walk.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return WalkResult(
         evidence_source_id=source_id,

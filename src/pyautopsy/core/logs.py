@@ -33,7 +33,6 @@ analytical counts only — never wall-clock (CLI-02).
 from __future__ import annotations
 
 import os
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,11 +40,10 @@ from typing import Any
 
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore, LogFinding, TimelineEvent
+from pyautopsy.core.epilogue import audited_step
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
-from pyautopsy.evidence.filesystem import FilesystemError
-from pyautopsy.evidence.image import ImageOpenError
 
 # Importing the package registers ALL in-scope parsers (auth, syslog,
 # shell-history) via their import-time self-registration — see
@@ -80,20 +78,6 @@ class LogsError(Exception):
     """
 
 
-# The operational exception set log parsing legitimately expects (mirrors
-# recover._EXPECTED_RECOVER_ERRORS). Recorded as ``logs.error`` FAIL and
-# re-raised; anything OUTSIDE this set is a genuine bug recorded under
-# ``logs.crashed``. ``sqlite3.Error`` is listed explicitly because it is NOT an
-# ``OSError`` (BL-02) — a corrupt case DB must exit cleanly, not crash.
-_EXPECTED_LOGS_ERRORS: tuple[type[BaseException], ...] = (
-    LogsError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    FilesystemError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +361,7 @@ def run_logs(
     log_sets = 0
     findings_count = 0
 
-    try:
+    with audited_step(audit, store, "logs", LogsError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -512,24 +496,6 @@ def run_logs(
             log_sets=log_sets,
             findings_count=findings_count,
         )
-    except _EXPECTED_LOGS_ERRORS as exc:
-        audit.write(
-            "logs.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "logs.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return LogsResult(
         evidence_source_id=source_id,

@@ -319,8 +319,8 @@ def recover(
         except (FilterError, OSError, sqlite3.Error) as exc:
             # BL-02: sqlite3.Error is NOT an OSError, so a corrupt examiner-
             # supplied --nsrl DB would otherwise escape this handler and crash
-            # with a raw traceback. run_filter lists sqlite3.Error in
-            # _EXPECTED_FILTER_ERRORS and re-raises it; map it here to the clean
+            # with a raw traceback. run_filter treats sqlite3.Error as an
+            # expected operational error and re-raises it; map it here to the clean
             # non-zero integrity exit + audit FAIL.
             typer.echo(f"recover filtering failed: {exc}", err=True)
             raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
@@ -385,8 +385,8 @@ def logs(
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
     except sqlite3.Error as exc:
         # BL-02: sqlite3.Error is NOT an OSError — a corrupt case DB would
-        # otherwise escape with a raw traceback. run_logs lists it in
-        # _EXPECTED_LOGS_ERRORS and re-raises; map it to the clean integrity exit.
+        # otherwise escape with a raw traceback. run_logs treats it as an
+        # expected operational error and re-raises; map it to the integrity exit.
         typer.echo(f"logs failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
@@ -555,8 +555,8 @@ def analyze(
         ImageOpenError,
         MountedSourceError,
         IntegrityError,
-        # BL-02: sqlite3.Error is not an OSError; run_analyze lists it in
-        # _EXPECTED_ANALYZE_ERRORS and re-raises a corrupt --nsrl DB failure, so
+        # BL-02: sqlite3.Error is not an OSError; run_analyze treats it as an
+        # expected operational error and re-raises a corrupt --nsrl DB failure, so
         # map it to the clean integrity exit instead of crashing with a traceback.
         sqlite3.Error,
     ) as exc:
@@ -674,8 +674,8 @@ def search(
         ImageOpenError,
         MountedSourceError,
         IntegrityError,
-        # BL-02: sqlite3.Error is NOT an OSError; run_search lists it in
-        # _EXPECTED_SEARCH_ERRORS and re-raises a corrupt case DB failure, so map
+        # BL-02: sqlite3.Error is NOT an OSError; run_search treats it as an
+        # expected operational error and re-raises a corrupt case DB failure, so map
         # it to the clean integrity exit instead of crashing with a traceback.
         sqlite3.Error,
     ) as exc:

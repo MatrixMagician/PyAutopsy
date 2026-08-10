@@ -32,6 +32,7 @@ from pathlib import Path
 
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore, KnownMatch
+from pyautopsy.core.epilogue import audited_step
 from pyautopsy.filter import hashsets, nsrl
 
 __all__ = ["FilterError", "FilterResult", "run_filter"]
@@ -66,15 +67,6 @@ class FilterResult:
     custom_matches: int
 
 
-# The operational exception set filtering legitimately expects (mirrors
-# recover._EXPECTED_RECOVER_ERRORS). Recorded as a ``filter.error`` FAIL and
-# re-raised; anything OUTSIDE this set is a genuine bug recorded under
-# ``filter.crashed``.
-_EXPECTED_FILTER_ERRORS: tuple[type[BaseException], ...] = (
-    FilterError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -150,7 +142,7 @@ def run_filter(
     custom_matches = 0
     matched_file_ids: set[int] = set()
 
-    try:
+    with audited_step(audit, store, "filter", FilterError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -162,8 +154,8 @@ def run_filter(
         for raw_path, sense in hash_sets:
             list_path = Path(raw_path)
             # WR-01: a binary / non-UTF-8 custom list makes read_text raise
-            # UnicodeDecodeError (a ValueError subclass) which is NOT in
-            # _EXPECTED_FILTER_ERRORS, so it would be mis-recorded as a
+            # UnicodeDecodeError (a ValueError subclass) which is NOT an
+            # expected operational error, so it would be mis-recorded as a
             # filter.crashed "programming bug". It is actually operator bad
             # input — convert it to a FilterError naming the offending list so
             # it surfaces as a clean filter.error + handled exit.
@@ -248,24 +240,6 @@ def run_filter(
             nsrl_matches=nsrl_matches,
             custom_matches=custom_matches,
         )
-    except _EXPECTED_FILTER_ERRORS as exc:
-        audit.write(
-            "filter.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "filter.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return FilterResult(
         evidence_source_id=source_id,

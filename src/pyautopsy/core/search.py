@@ -26,15 +26,14 @@ list is a clean :class:`SearchError` (operator error), never a ``.crashed`` bug
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore, KnownMatch, SearchHit
+from pyautopsy.core.epilogue import audited_step
 from pyautopsy.evidence import integrity
-from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.search import content as content_mod
 from pyautopsy.search import ioc as ioc_mod
 
@@ -70,17 +69,6 @@ class SearchResult:
     hash_hits: int
 
 
-# The operational exception set search legitimately expects (mirrors
-# recover/knownfiles). Recorded as a ``search.error`` FAIL and re-raised; anything
-# OUTSIDE this set is a genuine bug recorded under ``search.crashed``.
-_EXPECTED_SEARCH_ERRORS: tuple[type[BaseException], ...] = (
-    SearchError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -201,7 +189,7 @@ def run_search(
     unallocated_hits = 0
     hash_hits = 0
 
-    try:
+    with audited_step(audit, store, "search", SearchError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -281,24 +269,6 @@ def run_search(
             unallocated_hits=unallocated_hits,
             hash_hits=hash_hits,
         )
-    except _EXPECTED_SEARCH_ERRORS as exc:
-        audit.write(
-            "search.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "search.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return SearchResult(
         evidence_source_id=source_id,

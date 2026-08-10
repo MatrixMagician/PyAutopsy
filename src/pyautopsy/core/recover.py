@@ -40,7 +40,6 @@ by the recovery tests.
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +48,7 @@ from typing import Any
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import FileRow
+from pyautopsy.core.epilogue import audited_step
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
@@ -57,9 +57,7 @@ from pyautopsy.evidence.filesystem import (
     EXT_FS_TYPES,
     FAT_FS_TYPES,
     NTFS_FS_TYPES,
-    FilesystemError,
 )
-from pyautopsy.evidence.image import ImageOpenError
 from pyautopsy.util.confine import confined_target, sanitize_name
 
 __all__ = [
@@ -256,18 +254,6 @@ class RecoverError(Exception):
     """
 
 
-# The operational exception set recovery legitimately expects (mirrors
-# walk._EXPECTED_WALK_ERRORS). Recorded as a ``recover.error`` FAIL and re-raised;
-# anything OUTSIDE this set is a genuine bug recorded under ``recover.crashed``.
-_EXPECTED_RECOVER_ERRORS: tuple[type[BaseException], ...] = (
-    RecoverError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    FilesystemError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -399,7 +385,7 @@ def run_recover(
     intact_count = 0
     overwritten_count = 0
 
-    try:
+    with audited_step(audit, store, "recover", RecoverError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -541,24 +527,6 @@ def run_recover(
             overwritten_count=overwritten_count,
             orphan_count=len(orphan_list),
         )
-    except _EXPECTED_RECOVER_ERRORS as exc:
-        audit.write(
-            "recover.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "recover.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return RecoverResult(
         evidence_source_id=source_id,
