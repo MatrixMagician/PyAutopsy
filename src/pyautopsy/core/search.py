@@ -33,6 +33,7 @@ from pathlib import Path
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore, KnownMatch, SearchHit
 from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import integrity
 from pyautopsy.search import content as content_mod
 from pyautopsy.search import ioc as ioc_mod
@@ -40,7 +41,7 @@ from pyautopsy.search import ioc as ioc_mod
 __all__ = ["SearchError", "SearchResult", "run_search"]
 
 
-class SearchError(Exception):
+class SearchError(PyAutopsyError):
     """Raised when search cannot proceed for a non-integrity reason.
 
     Chiefly: the case has no ``case.db`` (ingest was never run) or no evidence
@@ -138,6 +139,15 @@ def run_search(
     # rejection is recorded as a FAIL event (WR-03), honoring the D-08 "record
     # FAIL before non-zero exit" contract. ``run_search`` requires a prior ingest,
     # so the case dir already exists; AuditLog creates the journal lazily on write.
+    # The audit log lives inside the case directory, so a case that does not
+    # exist has nowhere to record a FAIL event. Check for it BEFORE binding the
+    # log, otherwise the audit write's own OSError masks this actionable message
+    # with a raw traceback (``run_search`` requires a prior ingest).
+    if not CaseStore.exists(case_path):
+        raise SearchError(
+            f"no case database under {case_path}; run `pyautopsy ingest` first"
+        )
+
     audit = AuditLog(case_path)
 
     # (1) Re-assert the read-only / not-mounted guard before any access (D-42/P1).

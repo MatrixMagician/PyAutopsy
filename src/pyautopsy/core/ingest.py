@@ -39,6 +39,7 @@ from pathlib import Path
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import Case, EvidenceSource
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
 from pyautopsy.evidence.integrity import IntegrityError
@@ -47,7 +48,7 @@ from pyautopsy.util.timeutil import iso_utc
 __all__ = ["IngestError", "IngestResult", "run_ingest"]
 
 
-class IngestError(Exception):
+class IngestError(PyAutopsyError):
     """Raised when ingest cannot proceed for a non-integrity reason.
 
     Used for input-validation failures the CLI turns into a non-zero exit —

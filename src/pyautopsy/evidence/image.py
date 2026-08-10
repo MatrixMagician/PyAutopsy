@@ -33,6 +33,8 @@ from typing import TYPE_CHECKING, Protocol
 
 import pytsk3
 
+from pyautopsy.errors import PyAutopsyError
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pyewf
 
@@ -52,7 +54,7 @@ __all__ = [
 _EWF_SUFFIXES: frozenset[str] = frozenset({".e01", ".ex01", ".s01", ".l01"})
 
 
-class ImageOpenError(Exception):
+class ImageOpenError(PyAutopsyError):
     """Raised when an evidence image cannot be opened read-only.
 
     Carries an actionable, examiner-facing message (e.g. a missing file, or the

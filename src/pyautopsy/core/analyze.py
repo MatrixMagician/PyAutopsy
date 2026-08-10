@@ -53,6 +53,7 @@ from pyautopsy.core.logs import LogsError, run_logs
 from pyautopsy.core.recover import RecoverError, run_recover
 from pyautopsy.core.search import SearchError, run_search
 from pyautopsy.core.walk import WalkError, run_walk
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.report import (
     assemble_report_body,
     build_run_metadata,
@@ -66,7 +67,7 @@ from pyautopsy.util.timeutil import iso_utc, utc_now
 __all__ = ["AnalyzeError", "AnalyzeResult", "run_analyze"]
 
 
-class AnalyzeError(Exception):
+class AnalyzeError(PyAutopsyError):
     """Raised when the pipeline cannot proceed for a non-integrity reason.
 
     Chiefly: ``case_dir/case.db`` already exists, which would make ``analyze``

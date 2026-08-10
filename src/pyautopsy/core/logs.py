@@ -41,6 +41,7 @@ from typing import Any
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore, LogFinding, TimelineEvent
 from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
@@ -68,7 +69,7 @@ __all__ = ["LogsError", "LogsResult", "run_logs"]
 _UNDATED_SORT_LAST_ISO = "9999-12-31T23:59:59+00:00"
 
 
-class LogsError(Exception):
+class LogsError(PyAutopsyError):
     """Raised when log parsing cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest was never run) or no
@@ -325,6 +326,15 @@ def run_logs(
     # ingest, so the case dir already exists; AuditLog creates the journal lazily
     # on first write. The D-08 contract is "record FAIL before non-zero exit" — the
     # pre-open guard must not be able to raise past the audit trail.
+    # The audit log lives inside the case directory, so a case that does not
+    # exist has nowhere to record a FAIL event. Check for it BEFORE binding the
+    # log, otherwise the audit write's own OSError masks this actionable message
+    # with a raw traceback (``run_logs`` requires a prior ingest).
+    if not CaseStore.exists(case_path):
+        raise LogsError(
+            f"no case database under {case_path}; run `pyautopsy ingest` first"
+        )
+
     audit = AuditLog(case_path)
 
     # (1) Re-assert the read-only / not-mounted guard before any access (D-05/P1).

@@ -130,6 +130,22 @@ class CaseStore:
         return cls(case_dir, cls._connect(db_path))
 
     @staticmethod
+    def exists(case_dir: Path | str) -> bool:
+        """Return True if ``case_dir`` holds a case database.
+
+        Lets a caller check for a case *before* it needs the store — notably
+        before binding an audit log, which lives inside the case directory and
+        so cannot record a failure about the directory being absent.
+
+        Args:
+            case_dir: Root directory to check.
+
+        Returns:
+            ``True`` if the case database is present and a regular file.
+        """
+        return (Path(case_dir) / _DB_NAME).is_file()
+
+    @staticmethod
     def _connect(db_path: Path) -> sqlite3.Connection:
         """Open a SQLite connection configured WAL + foreign keys (D-03)."""
         conn = sqlite3.connect(db_path)

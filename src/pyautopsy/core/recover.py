@@ -49,6 +49,7 @@ from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import FileRow
 from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
@@ -244,7 +245,7 @@ class RecoverResult:
     orphans: tuple[RecoveredFile, ...] = field(default_factory=tuple)
 
 
-class RecoverError(Exception):
+class RecoverError(PyAutopsyError):
     """Raised when recovery cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest/walk was never run) or

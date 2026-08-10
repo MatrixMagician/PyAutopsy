@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 
 import pytsk3
 
+from pyautopsy.errors import PyAutopsyError
+
 __all__ = [
     "EXT_FS_TYPES",
     "FAT_FS_TYPES",
@@ -147,7 +149,7 @@ _NAME_TYPE_LABELS: dict[int, str] = {
 }
 
 
-class FilesystemError(Exception):
+class FilesystemError(PyAutopsyError):
     """Raised when the FS-layer seam cannot enumerate or walk a filesystem.
 
     Mirrors :class:`pyautopsy.evidence.image.ImageOpenError`: it carries an

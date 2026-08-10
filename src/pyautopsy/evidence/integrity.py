@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from pyautopsy.errors import PyAutopsyError
+
 __all__ = [
     "EMPTY",
     "IntegrityError",
@@ -84,7 +86,7 @@ _LEN_TO_ALGO: dict[int, str] = {32: "md5", 64: "sha256"}
 _OCTAL_ESCAPE = re.compile(rb"\\([0-7]{3})")
 
 
-class IntegrityError(Exception):
+class IntegrityError(PyAutopsyError):
     """Raised when an integrity check fails (acquisition mismatch or re-verify).
 
     This is the loud, non-zero-exit-worthy failure the orchestrator turns into a
@@ -93,7 +95,7 @@ class IntegrityError(Exception):
     """
 
 
-class MountedSourceError(Exception):
+class MountedSourceError(PyAutopsyError):
     """Raised when the evidence source path is (under) a mounted filesystem.
 
     Operating on a mounted source risks journal replay, atime updates, and mount

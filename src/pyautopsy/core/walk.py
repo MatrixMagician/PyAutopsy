@@ -53,6 +53,7 @@ from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import FileRow, VolumeLimitation
 from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
@@ -202,7 +203,7 @@ def _macb_fields(
     return (macb, timestamp_source, attributes)
 
 
-class WalkError(Exception):
+class WalkError(PyAutopsyError):
     """Raised when the walk cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest was never run) or no

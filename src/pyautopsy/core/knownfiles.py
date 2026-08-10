@@ -33,12 +33,13 @@ from pathlib import Path
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore, KnownMatch
 from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.filter import hashsets, nsrl
 
 __all__ = ["FilterError", "FilterResult", "run_filter"]
 
 
-class FilterError(Exception):
+class FilterError(PyAutopsyError):
     """Raised when filtering cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest/walk was never run) or
