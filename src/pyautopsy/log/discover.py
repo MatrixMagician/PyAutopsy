@@ -21,7 +21,7 @@ import io
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 __all__ = [
     "LogMember",
@@ -73,16 +73,6 @@ SHELL_HISTORY_BASENAMES: frozenset[str] = frozenset(
 # of the same index (it is the older, already-rotated copy).
 _NUMERIC_SUFFIX = re.compile(r"^(?P<base>.+?)\.(?P<idx>\d+)(?P<gz>\.gz)?$")
 _DATEEXT_SUFFIX = re.compile(r"^(?P<base>.+?)[.\-](?P<date>\d{8})(?P<gz>\.gz)?$")
-
-
-class _SeamRow(Protocol):
-    """The minimal FS-seam row shape discover consumes (a ``FileEntry`` subset)."""
-
-    path: str
-
-    @property
-    def read_random(self) -> Any:  # (offset, size) -> bytes | None
-        ...
 
 
 @dataclass(frozen=True, slots=True)

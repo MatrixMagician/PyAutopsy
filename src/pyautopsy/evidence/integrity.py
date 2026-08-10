@@ -34,9 +34,9 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from pyautopsy.errors import PyAutopsyError
+from pyautopsy.evidence.byteio import ReadableBytes
 
 __all__ = [
     "EMPTY",
@@ -102,16 +102,6 @@ class MountedSourceError(PyAutopsyError):
     counter bumps — all evidence-altering side effects (PITFALLS P1). The tool
     refuses to proceed.
     """
-
-
-class ReadableSource(Protocol):
-    """The minimal byte-source interface :func:`hash_image` consumes."""
-
-    def read(self, offset: int, size: int) -> bytes:
-        """Read ``size`` bytes starting at ``offset``."""
-
-    def get_size(self) -> int:
-        """Return the total size in bytes."""
 
 
 # A read-only ``(offset, size) -> bytes`` callable :func:`hash_file` consumes.
@@ -196,7 +186,7 @@ class VerifyResult:
 
 
 def hash_image(
-    source: ReadableSource, chunk: int = _DEFAULT_CHUNK
+    source: ReadableBytes, chunk: int = _DEFAULT_CHUNK
 ) -> dict[str, str]:
     """Compute MD5 + SHA-256 over a byte source in a single streaming pass.
 
@@ -339,7 +329,7 @@ def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
     )
 
 
-def reverify(source: ReadableSource, baseline: dict[str, str]) -> None:
+def reverify(source: ReadableBytes, baseline: dict[str, str]) -> None:
     """Re-hash the source and assert it still matches the ingest-time baseline.
 
     Called at end of run: re-streams the source and compares both digests to the

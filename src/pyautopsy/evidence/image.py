@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Protocol
 import pytsk3
 
 from pyautopsy.errors import PyAutopsyError
+from pyautopsy.evidence.byteio import ReadableBytes
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pyewf
@@ -70,19 +71,17 @@ class ImageFormat(StrEnum):
     EWF = "ewf"
 
 
-class ReadableImage(Protocol):
-    """The byte-layer read interface every image handle exposes.
+class ReadableImage(ReadableBytes, Protocol):
+    """A :class:`ReadableBytes` source that also owns releasable resources.
+
+    An opened image holds a native handle, so unlike a plain byte source it must
+    be closed. That single extra method is the whole difference — the read/size
+    half is inherited rather than restated.
 
     Both :class:`pytsk3.Img_Info` (raw) and :class:`EWFImgInfo` (E01) satisfy
     this, so downstream tiers depend on this structural contract — never on a
     concrete native type.
     """
-
-    def read(self, offset: int, size: int) -> bytes:
-        """Read ``size`` bytes starting at ``offset``."""
-
-    def get_size(self) -> int:
-        """Return the total image size in bytes."""
 
     def close(self) -> None:
         """Release the underlying native resources."""

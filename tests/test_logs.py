@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from pyautopsy.case import TimelineEvent  # the LOG-04 model already exists
+from pyautopsy.log.registry import ParsedRecord
 
 
 def test_rfc3164_grammar() -> None:
@@ -135,7 +136,7 @@ def test_normalize_to_timeline_event() -> None:
     from pyautopsy.log import normalize  # noqa: PLC0415 (RED stub)
 
     event = normalize.to_event(
-        _FakeRecord(
+        ParsedRecord(
             action="ssh-login",
             outcome="success",
             actor="user=alice",
@@ -528,18 +529,6 @@ def _naive(month_day_time: str, *, year: int) -> Any:
     from datetime import datetime  # noqa: PLC0415
 
     return datetime.strptime(f"{year} {month_day_time}", "%Y %b %d %H:%M:%S")
-
-
-class _FakeRecord:
-    """A minimal parsed-record stand-in for the LOG-04 normalize contract."""
-
-    def __init__(self, **kw: Any) -> None:
-        self.action = kw.get("action")
-        self.outcome = kw.get("outcome")
-        self.actor = kw.get("actor")
-        self.message = kw.get("message")
-        self.volume_id = 0
-        self.volume_offset = 0
 
 
 def test_parser_order_is_declared_explicitly() -> None:

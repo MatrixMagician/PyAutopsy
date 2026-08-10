@@ -157,7 +157,7 @@ filesystem-only baseline. Throughout, every stage appends structured events to
 
 | Abstraction | Kind | File | Role |
 |-------------|------|------|------|
-| `ReadableImage` | Protocol | `evidence/image.py` | The byte-layer `read`/`get_size`/`close` contract every image handle satisfies; downstream tiers depend on this, never on a concrete native type. |
+| `ReadableBytes` / `ReadableImage` | Protocols | `evidence/byteio.py`, `evidence/image.py` | `ReadableBytes` is the `read`/`get_size` byte-source contract (shared by the byte and integrity layers); `ReadableImage` adds `close` for a handle that owns native resources. Downstream tiers depend on these, never on a concrete native type. |
 | `ImageHandle` | dataclass | `evidence/image.py` | Read-only, plain-Python handle over an opened image (raw `Img_Info` or the `EWFImgInfo` adapter) plus size/format/path. |
 | `FileEntry` | dataclass | `evidence/filesystem.py` | The plain-Python value object the FS walk yields per entry (primitive fields + a single `read_random` byte-reader closure); no native `File` object escapes the seam. |
 | `CaseStore` | class | `case/store.py` | The sole sanctioned reader/writer of `case.db` — owns the schema, WAL + foreign-key pragmas, transactions, and every typed repository method. |
