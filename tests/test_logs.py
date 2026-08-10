@@ -24,6 +24,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pyautopsy.case import TimelineEvent  # the LOG-04 model already exists
 
 
@@ -266,11 +268,12 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     from pyautopsy.core.ingest import run_ingest  # noqa: PLC0415
     from pyautopsy.core.logs import run_logs  # noqa: PLC0415
     from pyautopsy.core.walk import run_walk  # noqa: PLC0415
-    from pyautopsy.log.registry import iter_parsers  # noqa: PLC0415
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
 
-    # The orchestrated registry must carry the full declared-order set, NOT just
-    # auth — without importing the parser modules here (that is the masking bug).
-    names = {p.name for p in iter_parsers()}
+    # The orchestrated parser set must carry the full declared-order set, NOT
+    # just auth — without importing the parser modules here (that is the
+    # masking bug the old import-time registry allowed).
+    names = {p.name for p in PARSERS}
     assert {"auth", "syslog", "shell-history"} <= names, (
         f"orchestrated registry missing parsers: {names}"
     )
@@ -537,3 +540,61 @@ class _FakeRecord:
         self.message = kw.get("message")
         self.volume_id = 0
         self.volume_offset = 0
+
+
+def test_parser_order_is_declared_explicitly() -> None:
+    """The parser order is stated, not emergent (EXT-01 / CR-01).
+
+    This order fixes which parser claims a basename, hence the per-line parse
+    order, hence the ``insert_timeline_events`` order, hence the store's
+    surrogate-id tiebreak — the deterministic-tied-order guarantee. It used to
+    be a side effect of which module got imported first; asserting it here
+    means a reorder is a visible, deliberate change.
+    """
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
+
+    assert [p.name for p in PARSERS] == ["auth", "shell-history", "syslog"]
+
+
+@pytest.mark.parametrize(
+    ("basename", "expected"),
+    [
+        ("auth.log", "auth"),
+        ("secure", "auth"),
+        ("syslog", "syslog"),
+        ("messages", "syslog"),
+        (".bash_history", "shell-history"),
+        (".zsh_history", "shell-history"),
+        ("kern.log", None),
+        ("dpkg.log", None),
+        ("random.txt", None),
+    ],
+)
+def test_parser_selection_per_basename(basename: str, expected: str | None) -> None:
+    """Selection is first-match in declared order, unchanged per basename."""
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
+
+    chosen = next((p for p in PARSERS if p.matches(basename)), None)
+    assert (chosen.name if chosen else None) == expected
+
+
+def test_importing_a_parser_module_mutates_no_global_state() -> None:
+    """Importing a parser module has no side effect on parser selection.
+
+    The old registry was populated by import-time ``register()`` calls, so what
+    the orchestrator saw depended on what had been imported. Re-importing a
+    parser module must now change nothing.
+    """
+    import importlib  # noqa: PLC0415
+
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
+
+    before = list(PARSERS)
+    for module in ("pyautopsy.log.auth", "pyautopsy.log.syslog",
+                   "pyautopsy.log.shell_history"):
+        importlib.reload(importlib.import_module(module))
+
+    from pyautopsy.log import PARSERS as after  # noqa: PLC0415
+
+    assert [p.name for p in after] == [p.name for p in before]
+    assert len(after) == 3

@@ -45,13 +45,8 @@ from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
-
-# Importing the package registers ALL in-scope parsers (auth, syslog,
-# shell-history) via their import-time self-registration — see
-# ``pyautopsy/log/__init__.py``. The orchestrated ``iter_parsers()`` therefore
-# yields the full declared-order registry, not just ``auth`` (CR-01).
-from pyautopsy.log import discover, normalize, timeresolve
-from pyautopsy.log.registry import ParsedRecord, iter_parsers
+from pyautopsy.log import PARSERS, discover, normalize, timeresolve
+from pyautopsy.log.registry import ParsedRecord
 from pyautopsy.timeline.builder import explode
 from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
 
@@ -542,7 +537,7 @@ def _parse_log_set(
     the store's surrogate-id tiebreak stays insertion-deterministic (Pitfall 3).
     """
     parser = next(
-        (p for p in iter_parsers() if p.matches(log_set.basename)), None
+        (p for p in PARSERS if p.matches(log_set.basename)), None
     )
     if parser is None:
         return [], []

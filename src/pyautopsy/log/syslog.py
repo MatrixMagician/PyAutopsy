@@ -24,9 +24,10 @@ For RFC3164 lines the naive wall-clock head is carried verbatim as
 (D-46 tz/year inference, flagged per event); RFC5424 lines already carry a UTC
 offset and are flagged ``rfc5424`` for the resolver.
 
-The parser registers itself in the EXT-01 declared-order registry at import time
-(after :class:`~pyautopsy.log.auth.AuthParser`) so
-:func:`pyautopsy.core.logs.run_logs` discovers it with NO orchestrator change.
+The parser is listed in the EXT-01 declared-order tuple
+(:data:`pyautopsy.log.registry.PARSERS`), after
+:class:`~pyautopsy.log.auth.AuthParser`, so
+:func:`pyautopsy.core.logs.run_logs` selects it with NO orchestrator change.
 
 Pure stdlib ``re`` on decoded text (Security V5 — DATA only): no native bindings
 (D-14), no new runtime dependency (D-43).
@@ -39,7 +40,7 @@ from collections.abc import Iterable, Iterator
 from typing import Any
 
 from pyautopsy.log._grammar import SyslogLine, parse_line
-from pyautopsy.log.registry import ParsedRecord, register
+from pyautopsy.log.registry import ParsedRecord
 
 __all__ = ["SyslogLine", "SyslogParser", "parse", "parse_line", "syslog_parser"]
 
@@ -135,5 +136,6 @@ class SyslogParser:
         return parse(text, ctx)
 
 
-# Register the singleton in declared order at import time, after AuthParser (EXT-01).
-syslog_parser = register(SyslogParser())
+# The module's parser singleton. Importing this module has no side effect:
+# the parser takes effect only by being listed in ``registry.PARSERS`` (EXT-01).
+syslog_parser = SyslogParser()

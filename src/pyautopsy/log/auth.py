@@ -9,8 +9,9 @@ taxonomy pattern still becomes a record (``action=None``) carrying its raw
 message; a line that matches no grammar at all is likewise emitted with the raw
 text — nothing is silently dropped.
 
-The parser registers itself in the EXT-01 declared-order registry at import time
-so :func:`pyautopsy.core.logs.run_logs` discovers it without special-casing.
+The parser is listed in the EXT-01 declared-order tuple
+(:data:`pyautopsy.log.registry.PARSERS`) so
+:func:`pyautopsy.core.logs.run_logs` selects it without special-casing.
 
 Pure stdlib ``re`` on decoded text (Security V5 — DATA only): no native bindings
 (D-14), no new runtime dependency (D-43).
@@ -23,7 +24,7 @@ from collections.abc import Iterable, Iterator
 from typing import Any
 
 from pyautopsy.log._grammar import parse_line
-from pyautopsy.log.registry import ParsedRecord, register
+from pyautopsy.log.registry import ParsedRecord
 
 __all__ = ["AuthParser", "AUTH_PATTERNS", "parse", "auth_parser"]
 
@@ -132,5 +133,6 @@ class AuthParser:
         return parse(text, ctx)
 
 
-# Register the singleton in declared order at import time (EXT-01).
-auth_parser = register(AuthParser())
+# The module's parser singleton. Importing this module has no side effect:
+# the parser takes effect only by being listed in ``registry.PARSERS`` (EXT-01).
+auth_parser = AuthParser()
