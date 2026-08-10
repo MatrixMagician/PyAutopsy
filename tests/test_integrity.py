@@ -24,6 +24,7 @@ from pyautopsy.evidence.integrity import (
     MountedSourceError,
     VerifyResult,
     assert_source_not_mounted,
+    hash_file,
     hash_image,
     reverify,
     verify_acquisition,
@@ -108,6 +109,50 @@ def test_hash_image_short_read_raises_loudly() -> None:
     handle = _TruncatedImage(b"\x00" * 100, reported_size=1000)
     with pytest.raises(IntegrityError, match="short read"):
         hash_image(handle)
+
+
+def test_short_read_policies_diverge_between_image_and_file() -> None:
+    """The two callers of the shared digest loop keep opposite short-read policies.
+
+    ``hash_image`` and ``hash_file`` stream through one chunked-digest routine,
+    but what they do when the source runs out early must stay different, and
+    the sharing is what makes that fragile:
+
+    * a short *image* read is a hard integrity failure — a digest must never
+      silently cover less than the whole acquisition, so it raises and records
+      nothing (INGEST-02/D-08);
+    * a short *file* read is a skip — the walk records null hashes plus a
+      reason and carries on rather than aborting the whole inventory over one
+      unreadable entry (D-17).
+
+    Both uphold the same underlying rule: a partial digest is never returned.
+    """
+    truncated = _TruncatedImage(b"\x00" * 100, reported_size=1000)
+    with pytest.raises(IntegrityError, match="short read"):
+        hash_image(truncated)
+
+    def short_reader(offset: int, size: int) -> bytes:
+        """Yield only the first 100 bytes, then EOF — the file's `_TruncatedImage`."""
+        available = max(0, 100 - offset)
+        return b"\x00" * min(size, available)
+
+    assert hash_file(short_reader, 1000) is None
+
+
+def test_shared_digest_loop_is_chunk_invariant_for_files() -> None:
+    """Per-file digests do not depend on the chunk size the loop reads in."""
+    data = bytes(range(256)) * 41
+    reference = {
+        "md5": hashlib.md5(data).hexdigest(),
+        "sha1": hashlib.sha1(data).hexdigest(),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+    def reader(offset: int, size: int) -> bytes:
+        return data[offset : offset + size]
+
+    for chunk in (1, 7, 512, 4096, 1 << 20):
+        assert hash_file(reader, len(data), chunk=chunk) == reference
 
 
 def test_reverify_short_read_raises_loudly() -> None:
