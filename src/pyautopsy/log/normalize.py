@@ -1,6 +1,6 @@
 """Parsed-record → :class:`TimelineEvent` transform (LOG-04).
 
-The log-side mirror of :func:`pyautopsy.timeline.builder._explode`: a pure
+The log-side mirror of :func:`pyautopsy.timeline.builder.explode`: a pure
 transform that maps one parsed-and-time-resolved log record onto the shared
 :class:`~pyautopsy.case.TimelineEvent` model so log events sit in the SAME
 ``timeline_events`` table — and therefore the SAME D-26 total order — as

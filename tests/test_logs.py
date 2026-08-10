@@ -128,7 +128,7 @@ def test_normalize_to_timeline_event() -> None:
     The produced ``TimelineEvent`` must carry source/event-type/actor/action/
     outcome/file_id (the reserved Phase-5 columns) and a verbatim UTC ts_utc; the
     actor is honest (``user=alice``, never ``user=None``). Mirrors
-    ``timeline/builder._explode`` purity.
+    ``timeline/builder.explode`` purity.
     """
     from pyautopsy.log import normalize  # noqa: PLC0415 (RED stub)
 
