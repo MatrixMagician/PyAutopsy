@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import pytsk3
 
 from pyautopsy.evidence.image import (
     ImageFormat,
@@ -115,3 +116,28 @@ def test_tsk_version_string_exposed() -> None:
     version = tsk_version()
     assert isinstance(version, str)
     assert version  # non-empty
+
+
+def test_tsk_version_reads_the_documented_attribute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The version comes from ``pytsk3.TSK_VERSION_STR``, not a name scan.
+
+    The recorded tool version must be deterministic: it goes into the
+    evidence-source row and the audit trail. Pinning it to the one documented
+    attribute means a binding that grows another version-ish name cannot change
+    what gets recorded.
+    """
+    monkeypatch.setattr(pytsk3, "TSK_VERSION_STR", "9.9.9-test", raising=False)
+    # A decoy the old dir()-scan would have been free to pick up.
+    monkeypatch.setattr(pytsk3, "OTHER_VERSION_STR", "0.0.0-decoy", raising=False)
+    assert tsk_version() == "9.9.9-test"
+
+
+def test_tsk_version_falls_back_to_unknown_when_attribute_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A binding without the attribute records ``"unknown"``, never a decoy."""
+    monkeypatch.delattr(pytsk3, "TSK_VERSION_STR", raising=False)
+    monkeypatch.setattr(pytsk3, "OTHER_VERSION_STR", "0.0.0-decoy", raising=False)
+    assert tsk_version() == "unknown"

@@ -194,23 +194,18 @@ def detect_format(path: Path) -> ImageFormat:
 def tsk_version() -> str:
     """Return the libtsk version string for the chain-of-custody record.
 
-    Probes ``pytsk3`` for a ``*VERSION*`` attribute rather than asserting a
-    hard-coded name (01-RESEARCH.md A1), so a recorded version survives minor
-    binding changes. Falls back to ``"unknown"`` only if nothing is exposed.
+    Reads ``pytsk3.TSK_VERSION_STR``, the documented and stable name on the
+    binding. This value is recorded in the evidence-source row and the audit
+    trail, so it must be deterministic: a binding that grows a second
+    version-ish attribute must not be able to change what gets recorded.
 
     Returns:
-        A non-empty version string (e.g. ``"4.15.0"``), or ``"unknown"``.
+        A non-empty version string (e.g. ``"4.15.0"``), or ``"unknown"`` when
+        the binding does not expose one.
     """
-    for attr in ("TSK_VERSION_STR",):
-        value = getattr(pytsk3, attr, None)
-        if isinstance(value, str) and value:
-            return value
-    # Fall back to probing for any VERSION-ish string attribute (A1).
-    for attr in dir(pytsk3):
-        if "VERSION" in attr.upper():
-            value = getattr(pytsk3, attr, None)
-            if isinstance(value, str) and value:
-                return value
+    value = getattr(pytsk3, "TSK_VERSION_STR", None)
+    if isinstance(value, str) and value:
+        return value
     return "unknown"
 
 
