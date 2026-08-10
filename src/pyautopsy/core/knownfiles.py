@@ -7,9 +7,10 @@ hashes, asking two neutral membership questions:
 
 * is this hash in the examiner-supplied **NSRL RDS**? (via
   :func:`pyautopsy.filter.nsrl.open_nsrl` + :func:`~pyautopsy.filter.nsrl.nsrl_match`)
-* is it in any supplied **custom allow/block list**? (via
-  :func:`pyautopsy.filter.hashsets.parse_hash_set` +
-  :func:`~pyautopsy.filter.hashsets.custom_match`)
+* is it in any supplied **custom allow/block list**? (via the shared known-hash
+  path: :func:`pyautopsy.filter.hashsets.parse_hash_set` +
+  :func:`~pyautopsy.filter.hashsets.probe_hash_set` +
+  :func:`~pyautopsy.filter.hashsets.to_known_match`)
 
 Every match becomes a NEUTRAL :class:`~pyautopsy.case.KnownMatch` annotation —
 source + list + sense + matched_on, never a good/bad/clean/malicious verdict
@@ -167,7 +168,7 @@ def run_filter(
                     f"hash-set list {list_path} is not valid UTF-8 text "
                     f"(binary or wrong encoding?): {exc}"
                 ) from exc
-            parsed = hashsets.parse_hash_set(list_text)
+            parsed = hashsets.parse_hash_set(list_text.splitlines())
             parsed_lists.append((list_path.stem, sense, parsed))
 
         # Open the NSRL DB once (read-only), reused for every probe.
@@ -206,20 +207,17 @@ def run_filter(
                         matched_file_ids.add(file_row.id)
 
                 for list_name, sense, parsed in parsed_lists:
-                    custom_hit = hashsets.custom_match(
+                    matched_on = hashsets.probe_hash_set(
                         parsed,
-                        sense,
-                        list_name,
                         md5=file_row.md5,
                         sha1=file_row.sha1,
                         sha256=file_row.sha256,
                     )
-                    if custom_hit is not None:
+                    if matched_on is not None:
                         matches.append(
-                            KnownMatch(
-                                file_id=file_row.id,
-                                source="custom",
-                                matched_on=custom_hit["matched_on"],
+                            hashsets.to_known_match(
+                                file_row.id,
+                                matched_on,
                                 list_name=list_name,
                                 sense=sense,
                             )

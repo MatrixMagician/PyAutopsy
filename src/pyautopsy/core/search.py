@@ -35,6 +35,7 @@ from pyautopsy.case import CaseStore, KnownMatch, SearchHit
 from pyautopsy.core.epilogue import audited_step
 from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import integrity
+from pyautopsy.filter import hashsets
 from pyautopsy.search import content as content_mod
 from pyautopsy.search import ioc as ioc_mod
 
@@ -182,7 +183,8 @@ def run_search(
     if ioc_file is not None:
         ioc_all.extend(_read_ioc_file(Path(ioc_file)))
 
-    bad_set = ioc_mod.build_bad_hash_set(bad_hashes)
+    # The hash-list parser takes lines directly — no join/split round-trip.
+    bad_set = hashsets.parse_hash_set(bad_hashes)
 
     audit.write(
         "search.start",
