@@ -487,6 +487,11 @@ def run_logs(
                 # transaction (CaseStore sole writer / WR-01) so the report can
                 # surface them; no second transaction is opened.
                 store.insert_log_findings(all_findings)
+                # Recorded even when a log set yielded no events: the pass still
+                # covered the image's logs (D-40 honesty).
+                store.record_stage(
+                    store.get_evidence_source(source_id).case_id, "logs"
+                )
             events_parsed = len(all_events)
             findings_count = len(all_findings)
         finally:

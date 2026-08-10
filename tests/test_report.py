@@ -147,9 +147,9 @@ def test_log_findings_disclosures_in_body(
     )
 
     with CaseStore.open(case_dir) as store:
-        body = assemble_report_body(
-            store, ingested.evidence_source_id, logs_ran=True
-        )
+        # No logs_ran flag: the body reads the coverage from the case, where
+        # the real run_logs pass above recorded it.
+        body = assemble_report_body(store, ingested.evidence_source_id)
         html = render_html(body, case_dir)
 
     disclosures = body["log_findings"]["disclosures"]
@@ -246,3 +246,64 @@ def test_versions_recorded(tiny_ext4_image: Path, case_dir: Path) -> None:
     methodology = body["methodology"]
     assert methodology.get("pyautopsy_version")
     assert "tsk_version" in methodology
+
+
+def test_coverage_is_reported_for_a_pass_that_found_nothing(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """A search that matched nothing is still reported as having run (D-40).
+
+    This is why coverage is recorded by each pass rather than inferred from
+    whether it produced rows. "We searched and found nothing" and "we never
+    searched" are different statements about the evidence, and a report whose
+    job is honest disclosure must not collapse them.
+    """
+    from pyautopsy.core.search import run_search  # noqa: PLC0415
+
+    ingested = run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    result = run_search(
+        tiny_ext4_image,
+        case_dir,
+        terms=[b"a-term-that-does-not-occur-anywhere-in-this-image"],
+    )
+    assert result.hits == 0, "fixture unexpectedly matched; test needs a rarer term"
+
+    with CaseStore.open(case_dir) as store:
+        body = assemble_report_body(store, ingested.evidence_source_id)
+
+    disclaimer = body["limitations"]["mvp_disclaimer"]
+    assert "content search" in disclaimer
+    assert "It does NOT include" not in disclaimer.split("content search")[0][-60:]
+    # The closing honesty sentence survives every combination.
+    assert disclaimer.endswith(
+        "Absence of a finding here does not mean absence of evidence."
+    )
+
+
+def test_coverage_flags_cannot_drift_from_what_ran(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """The report derives coverage from the case, so no caller can misreport it.
+
+    Previously four booleans were threaded down from the orchestrator, and a
+    caller that forgot one produced a report that under-claimed its own
+    coverage. The parameters are gone; this pins that the only input is the
+    case data.
+    """
+    import inspect  # noqa: PLC0415
+
+    signature = inspect.signature(assemble_report_body)
+    assert not (
+        {"recovery_ran", "filtering_ran", "logs_ran", "search_ran"}
+        & set(signature.parameters)
+    )
+
+    ingested = run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        bare = assemble_report_body(store, ingested.evidence_source_id)
+    # A walk-only case honestly reports every opt-in pass as not covered.
+    disclaimer = bare["limitations"]["mvp_disclaimer"]
+    for absent in ("deleted-file recovery", "known-file (NSRL) filtering"):
+        assert absent in disclaimer

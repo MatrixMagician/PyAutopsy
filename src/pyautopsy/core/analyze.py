@@ -359,18 +359,13 @@ def run_analyze(
         # renders an honest integrity state (verified-pass / not-compared / fail)
         # instead of a hardcoded PASS: None = no acquisition hash supplied,
         # True = supplied and matched (a FAIL would have raised in ingest).
-        # (D-40 honesty) Tell the body what ACTUALLY ran so the MVP-limitations
-        # disclaimer neither denies a capability that ran nor claims one that
-        # did not. With both False the body is byte-identical to the Phase-3
-        # baseline (test_default_analyze_unchanged).
+        # (D-40 honesty) The body reads what ACTUALLY ran from the case store —
+        # each pass records its own stage — so the MVP-limitations disclaimer
+        # cannot drift from the run it describes.
         body = assemble_report_body(
             store,
             source_id,
             acquisition_verified=ingest_result.acquisition_verified,
-            recovery_ran=recover,
-            filtering_ran=filter_requested,
-            logs_ran=logs,
-            search_ran=search_requested,
         )
         json_path = write_json(body, case_path)
         # (W-1) render_html takes NO run_metadata argument — report.html carries

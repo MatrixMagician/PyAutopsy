@@ -515,6 +515,11 @@ def run_recover(
 
             with store.transaction():
                 store.insert_recovered_files(recovered_rows)
+                # Record that recovery covered this case, so the report can
+                # state its own coverage from the case data (D-40 honesty).
+                store.record_stage(
+                    store.get_evidence_source(source_id).case_id, "recover"
+                )
         finally:
             handle.close()
 

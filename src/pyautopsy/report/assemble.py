@@ -271,10 +271,6 @@ def assemble_report_body(
     evidence_source_id: int,
     *,
     acquisition_verified: bool | None = None,
-    recovery_ran: bool = False,
-    filtering_ran: bool = False,
-    logs_ran: bool = False,
-    search_ran: bool = False,
 ) -> dict[str, Any]:
     """Assemble the deterministic report body for one evidence source.
 
@@ -295,18 +291,6 @@ def assemble_report_body(
             report renders three honest states and NEVER claims a hash match that
             did not happen (WR-02 / D-28). Defaults to ``None`` (not compared) so
             a caller without the ingest result never overclaims a PASS.
-        recovery_ran: Whether deleted/orphan-file recovery actually ran for this
-            report. Drives the honest MVP-limitations disclaimer (D-40): with
-            both this and ``filtering_ran`` ``False`` (default), the disclaimer
-            is byte-identical to the Phase-3 baseline.
-        filtering_ran: Whether the known-file filtering pass actually ran. Same
-            honesty contract as ``recovery_ran``.
-        logs_ran: Whether log parsing ran (``--logs``). Drives the honest
-            disclaimer and is independent of the log-findings section, which is
-            derived from the persisted events. Default ``False`` keeps the
-            disclaimer byte-identical to the Phase-4 baseline (D-48).
-        search_ran: Whether content search ran (``--search``). Same honesty
-            contract as ``logs_ran``.
 
     Returns:
         The analytical report body. Notable keys: ``case``, ``evidence``,
@@ -342,6 +326,13 @@ def assemble_report_body(
     # disclosures sub-block renders as [] and the section stays byte-identical to
     # the Phase-4/05 baseline (D-48).
     log_findings_rows = store.get_log_findings(evidence_source_id)
+    # (D-40 honesty) What this run actually covered, read from the case itself
+    # rather than from caller-supplied flags. Each pass records its own stage as
+    # it runs, so the report cannot under-claim (a caller forgetting a flag) or
+    # over-claim (a caller passing one for a pass that did not run). Crucially
+    # this is NOT inferred from whether a pass produced rows: a search that ran
+    # and matched nothing still covered the image, and must be reported as such.
+    stages = store.stages_run(evidence.case_id)
 
     # -- Inventory aggregation set (BL-01): exclude recovered rows ---------------
     # The walk records every deleted inode as a ``files`` row (allocated=False,
@@ -732,10 +723,10 @@ def assemble_report_body(
         "limitations": {
             "volumes": limitation_rows,
             "mvp_disclaimer": _mvp_limitations(
-                recovery_ran=recovery_ran,
-                filtering_ran=filtering_ran,
-                logs_ran=logs_ran,
-                search_ran=search_ran,
+                recovery_ran="recover" in stages,
+                filtering_ran="filter" in stages,
+                logs_ran="logs" in stages,
+                search_ran="search" in stages,
             ),
         },
     }

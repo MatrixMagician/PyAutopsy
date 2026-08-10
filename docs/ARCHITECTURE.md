@@ -244,5 +244,16 @@ src/pyautopsy/
 
 The `case.db` schema defines nine tables — `cases`, `evidence_sources`,
 `run_log`, `files`, `volume_limitations`, `log_findings`, `known_file_matches`,
-`search_hits`, and `timeline_events` — each fronted by a `case/models.py`
-dataclass and accessed exclusively through `CaseStore`.
+`search_hits`, and `timeline_events` — accessed exclusively through `CaseStore`.
+All but `run_log` are fronted by a `case/models.py` dataclass; `run_log` records
+which analysis stages ran for a case (`CaseStore.record_stage` /
+`stages_run`), which is how the report states its own coverage without a caller
+having to tell it (see below).
+
+**Report coverage is derived, not declared.** `assemble_report_body` reads which
+passes ran from `run_log` rather than taking booleans from its caller. Each pass
+records its own stage inside the same transaction as its writes, so coverage
+cannot drift from what happened. It is deliberately *not* inferred from whether a
+pass produced rows: a search that ran and matched nothing still covered the
+image, and "we searched and found nothing" must not be reported as "we never
+searched".

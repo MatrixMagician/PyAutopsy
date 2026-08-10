@@ -913,6 +913,50 @@ class CaseStore:
         ]
 
 
+    # -- run stages --------------------------------------------------------
+
+    def record_stage(self, case_id: int, stage: str) -> None:
+        """Record that an analysis stage ran for this case (``run_log``).
+
+        This is what makes "did search run?" answerable from the case itself
+        rather than from a caller's memory. It is deliberately not derived from
+        whether a stage produced findings: a search that ran and matched nothing
+        is a real, reportable outcome, and inferring coverage from row counts
+        would report it as never having run — the report would under-claim what
+        was examined.
+
+        Recording is idempotent per stage, so re-running a pass does not
+        multiply rows.
+
+        Args:
+            case_id: The owning case.
+            stage: The stage name (e.g. ``"recover"``, ``"filter"``,
+                ``"logs"``, ``"search"``).
+        """
+        self.connection.execute(
+            "INSERT INTO run_log (case_id, stage) "
+            "SELECT ?, ? WHERE NOT EXISTS ("
+            "  SELECT 1 FROM run_log WHERE case_id = ? AND stage = ?"
+            ")",
+            (case_id, stage, case_id, stage),
+        )
+        self._commit_unless_in_transaction()
+
+    def stages_run(self, case_id: int) -> frozenset[str]:
+        """Return the set of analysis stages recorded for this case.
+
+        Args:
+            case_id: The case to report on.
+
+        Returns:
+            The recorded stage names.
+        """
+        rows = self.connection.execute(
+            "SELECT DISTINCT stage FROM run_log WHERE case_id = ?", (case_id,)
+        ).fetchall()
+        return frozenset(row["stage"] for row in rows)
+
+
 # The ``files`` insert column order, used by both insert_file and the bulk
 # insert_files ``executemany`` so the single SQL statement and the parameter
 # tuple stay in lockstep.
