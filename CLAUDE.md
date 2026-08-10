@@ -51,7 +51,7 @@ single automated Python workflow.
 | **WeasyPrint** | 63+ | HTML/CSS → PDF | Best HTML-to-PDF path: write one Jinja2 HTML/CSS report, render to both HTML and PDF. Excellent CSS (incl. flexbox) for evidence-presentation layout. (HIGH) |
 | **pydantic** | 2.x | Typed models for findings + structured JSON export | Models for files, timeline events, hashes, chain-of-custody. `.model_dump_json()` gives the structured/exportable output PROJECT.md requires, with validation. (HIGH) |
 | **Typer** | 0.12+ | CLI framework | Type-hint-driven CLI, built on Click; minimal boilerplate, auto help/validation, subcommands (`ingest`, `recover`, `timeline`, `report`). Matches the project's type-hint + modern-Python posture. (HIGH) |
-| **Rich** | 13+ | Terminal progress/output | Progress bars over large images, readable status. Pairs natively with Typer. (HIGH) |
+| **Rich** | 13+ | Terminal progress/output | *Not a declared dependency.* Arrives transitively via Typer, which renders `--help` through it. PyAutopsy imports it nowhere and declares it nowhere: CLI output is plain `typer.echo` (issue #1). |
 | **hashlib** | stdlib | Evidence integrity (MD5/SHA-1/SHA-256) | Image + file hashing for chain of custody. SHA-256 primary; MD5/SHA-1 also computed because NSRL and legacy evidence indexes use them. (HIGH) |
 
 ### Hashing / integrity specifics

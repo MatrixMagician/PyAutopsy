@@ -24,15 +24,18 @@ from pathlib import Path
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
-# The Phase-4 baseline runtime dependency set (the `[project.dependencies]`
-# array as of the close of Phase 4). Stored as the normalized requirement
-# strings; D-43 forbids adding to this set during Phase 5.
-_PHASE4_BASELINE_DEPENDENCIES: frozenset[str] = frozenset(
+# The declared runtime dependency set. Started as the Phase-4 baseline; D-43
+# forbids adding to it without an explicit decision recorded here.
+#
+# ``rich`` was removed by a deliberate baseline update (issue #1): it was
+# declared but never imported — CLI output is plain ``typer.echo`` — and every
+# runtime dependency is something an examiner may have to justify in an
+# evidence context.
+_BASELINE_DEPENDENCIES: frozenset[str] = frozenset(
     {
         "pytsk3==20260520",
         "python-magic==0.4.27",
         "typer>=0.12,<1",
-        "rich>=13",
         "jinja2>=3.1,<4",
     }
 )
@@ -51,9 +54,9 @@ def _declared_runtime_dependencies() -> frozenset[str]:
 
 
 def test_no_new_runtime_dependency_added() -> None:
-    """`[project.dependencies]` is byte-equivalent to the Phase-4 baseline (D-43)."""
+    """`[project.dependencies]` is byte-equivalent to the declared baseline (D-43)."""
     declared = _declared_runtime_dependencies()
-    baseline = frozenset(_normalize(d) for d in _PHASE4_BASELINE_DEPENDENCIES)
+    baseline = frozenset(_normalize(d) for d in _BASELINE_DEPENDENCIES)
 
     added = declared - baseline
     removed = baseline - declared
@@ -66,7 +69,7 @@ def test_no_new_runtime_dependency_added() -> None:
     )
     assert not removed, (
         "An existing runtime dependency disappeared from pyproject.toml "
-        f"[project.dependencies]: {sorted(removed)}. Update the Phase-4 baseline "
+        f"[project.dependencies]: {sorted(removed)}. Update the declared baseline "
         "deliberately if this removal is intended."
     )
 

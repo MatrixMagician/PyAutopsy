@@ -167,7 +167,7 @@ objects.
 ### No silent dependency creep
 
 `tests/test_no_new_deps.py` pins `[project.dependencies]` to its baseline set
-(`pytsk3`, `python-magic`, `typer`, `rich`, `jinja2`) and forbids
+(`pytsk3`, `python-magic`, `typer`, `jinja2`) and forbids
 `python-systemd` / journald bindings in any dependency table (decision **D-43**).
 New runtime dependencies require a deliberate decision and an explicit baseline
 update — they are not added silently.

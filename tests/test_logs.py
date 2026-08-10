@@ -427,7 +427,8 @@ def test_groundtruth_year_matches_fixture_mtime(
     stray = sorted({y for y in inferred_years if y not in allowed})
     assert not stray, (
         f"inferred years {stray} not in the sidecar-documented "
-        f"{{prev_year={gt['prev_year']}, year={gt['year']}}} — fixture/sidecar drift (G-1)"
+        f"{{prev_year={gt['prev_year']}, year={gt['year']}}} — "
+        "fixture/sidecar drift (G-1)"
     )
     assert gt["year"] in inferred_years, (
         f"sidecar year {gt['year']} is not produced by the fixture's mtime anchor; "
