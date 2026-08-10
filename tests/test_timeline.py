@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pyautopsy.case import CaseStore, FileRow, TimelineEvent
-from pyautopsy.case.store import _timeline_event_params  # ordering helper proximity
+from pyautopsy.case.store import _TIMELINE_MAPPER  # ordering helper proximity
 from pyautopsy.core.ingest import run_ingest
 from pyautopsy.core.walk import run_walk
 from pyautopsy.timeline.builder import build_timeline
@@ -247,5 +247,5 @@ def test_ext4_timeline(tiny_ext4_image: Path, case_dir: Path) -> None:
     }
     # ts_utc is copied verbatim as a UTC ISO-8601 string (D-10).
     assert all(e.ts_utc.endswith("+00:00") for e in events)
-    # The ordering helper exists and round-trips an event (keeps it imported).
-    assert _timeline_event_params(events[0])
+    # The insert mapping round-trips an event (keeps the mapper exercised).
+    assert _TIMELINE_MAPPER.to_params(events[0])

@@ -20,6 +20,7 @@ from pyautopsy.case import (
     EvidenceSource,
     FileRow,
     LogFinding,
+    SearchHit,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -616,3 +617,150 @@ def test_transaction_rejects_nesting(case_dir: Path) -> None:
             with store.transaction():
                 with store.transaction():
                     pass
+
+
+def test_schema_dataclass_mismatch_fails_loudly(tmp_path: Path) -> None:
+    """A model/table drift is refused at the seam, not silently absorbed.
+
+    The mapping is derived from the dataclasses, so a table missing a column
+    the model declares must fail where it is detectable. Silently dropping the
+    column would mean every row the store returns is quietly incomplete — the
+    worst possible failure mode for an evidence store.
+    """
+    from pyautopsy.case.mapping import RowMapper, validate_mapping  # noqa: PLC0415
+    from pyautopsy.case.models import KnownMatch  # noqa: PLC0415
+
+    case_dir = tmp_path / "case"
+    CaseStore.create(case_dir).close()
+    conn = sqlite3.connect(case_dir / "case.db")
+    try:
+        # A table that has lost a column the dataclass still declares.
+        conn.execute("CREATE TABLE drifted (file_id INTEGER, source TEXT)")
+        mapper: RowMapper[KnownMatch] = RowMapper(KnownMatch, "drifted")
+        with pytest.raises(ValueError, match="mapping drift"):
+            validate_mapping(mapper, conn)
+
+        # And a table that does not exist at all.
+        missing: RowMapper[KnownMatch] = RowMapper(KnownMatch, "no_such_table")
+        with pytest.raises(ValueError, match="no table"):
+            validate_mapping(missing, conn)
+    finally:
+        conn.close()
+
+
+def test_allocated_distinguishes_none_from_false(case_dir: Path) -> None:
+    """``allocated`` round-trips ``None`` (unknown) separately from ``False``.
+
+    A deleted entry (``False``) and an entry whose allocation state could not be
+    determined (``None``) are different forensic statements; storing a nullable
+    bool as an integer must not collapse them.
+    """
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        source_id = store.insert_evidence_source(
+            EvidenceSource(
+                case_id=case_id,
+                evidence_id="E1",
+                path="/x.dd",
+                image_type="raw",
+                attributes={},
+            )
+        )
+        for index, allocated in enumerate((True, False, None)):
+            store.insert_file(
+                FileRow(
+                    evidence_source_id=source_id,
+                    volume_id=0,
+                    volume_offset=0,
+                    path=f"/f{index}",
+                    name=f"f{index}",
+                    allocated=allocated,
+                )
+            )
+        rows = store.get_files(source_id)
+        assert [r.allocated for r in rows] == [True, False, None]
+        # Not merely falsy-equal: the None must still BE None.
+        assert rows[2].allocated is None
+        assert rows[1].allocated is False
+    finally:
+        store.close()
+
+
+def test_attributes_json_round_trips_with_sorted_keys(case_dir: Path) -> None:
+    """``attributes`` serialises with sorted keys, so equal data is equal bytes.
+
+    The reproducibility guarantee rests on this: two runs over the same image
+    must produce byte-identical stored JSON regardless of dict insertion order.
+    """
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        source_id = store.insert_evidence_source(
+            EvidenceSource(
+                case_id=case_id,
+                evidence_id="E1",
+                path="/x.dd",
+                image_type="raw",
+                attributes={},
+            )
+        )
+        payload = {"zebra": 1, "alpha": {"nested": True}, "middle": [1, 2, 3]}
+        reordered = {"middle": [1, 2, 3], "zebra": 1, "alpha": {"nested": True}}
+        ids = [
+            store.insert_file(
+                FileRow(
+                    evidence_source_id=source_id,
+                    volume_id=0,
+                    volume_offset=0,
+                    path=f"/f{i}",
+                    name=f"f{i}",
+                    attributes=attrs,
+                )
+            )
+            for i, attrs in enumerate((payload, reordered))
+        ]
+        stored = [
+            row["attributes"]
+            for row in store.connection.execute(
+                "SELECT attributes FROM files WHERE id IN (?, ?) ORDER BY id", ids
+            )
+        ]
+        assert stored[0] == stored[1], "key order leaked into the stored JSON"
+        assert stored[0] == json.dumps(payload, sort_keys=True)
+        assert store.get_file(ids[0]).attributes == payload
+    finally:
+        store.close()
+
+
+def test_search_hit_term_round_trips_non_utf8_bytes(case_dir: Path) -> None:
+    """A non-UTF-8 search needle survives storage byte-for-byte."""
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        source_id = store.insert_evidence_source(
+            EvidenceSource(
+                case_id=case_id,
+                evidence_id="E1",
+                path="/x.dd",
+                image_type="raw",
+                attributes={},
+            )
+        )
+        needle = b"\xff\xfe\x00binary-needle\x80"
+        store.insert_search_hits(
+            [
+                SearchHit(
+                    evidence_source_id=source_id,
+                    region="unallocated",
+                    term=needle,
+                    term_kind="literal",
+                    volume_id=0,
+                    volume_offset=0,
+                    byte_offset=512,
+                )
+            ]
+        )
+        assert store.get_search_hits(source_id)[0].term == needle
+    finally:
+        store.close()
