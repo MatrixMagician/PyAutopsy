@@ -132,11 +132,6 @@ for transparency and auditability.
 
 | Constant | Value | Where | Purpose |
 |----------|-------|-------|---------|
-| `_DEFAULT_MAX_TOTAL_UNCOMPRESSED` | 1 GiB | `util/safe_extract.py` | Cap on total uncompressed bytes from an archive. |
-| `_DEFAULT_MAX_ENTRY_SIZE` | 256 MiB | `util/safe_extract.py` | Cap on a single extracted entry. |
-| `_DEFAULT_MAX_RATIO` | 100 | `util/safe_extract.py` | Max uncompressed/compressed ratio (bomb guard). |
-| `_DEFAULT_MAX_ENTRIES` | 10,000 | `util/safe_extract.py` | Max number of archive entries. |
-| `_DEFAULT_MAX_DEPTH` | 3 | `util/safe_extract.py` | Max nested-archive depth. |
 | `MAX_GZ_UNCOMPRESSED` | 256 MiB | `log/discover.py` | Cap on inflating a single rotated `.gz` log member. |
 | `DEFAULT_CHUNK_SIZE` | 1 MiB (`1 << 20`) | `search/content.py` | Streaming read chunk size for content search. |
 | `MAX_REGEX_MATCH_LEN` | 4096 | `search/content.py` | Caps regex match length (`re` has no timeout; bounds ReDoS exposure). |

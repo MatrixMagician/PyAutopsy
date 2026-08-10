@@ -60,7 +60,7 @@ pytest
 Run a single test file:
 
 ```bash
-pytest tests/test_safe_extract.py
+pytest tests/test_confine.py
 ```
 
 Run a single test by node ID:
@@ -101,7 +101,7 @@ Tests live directly under `tests/` (a flat layout — there are no nested test
 packages). Conventions, all enforced by pytest's default collection:
 
 - Test files are named `test_*.py` (e.g. `tests/test_walk.py`,
-  `tests/test_safe_extract.py`).
+  `tests/test_confine.py`).
 - Test functions are named `test_*` with type-hinted signatures and a one-line
   (or paragraph) docstring stating the requirement and the decision/pitfall ID it
   guards (e.g. `D-14`, `RECOV-02`, `CR-01`, `Pitfall 3`).
@@ -123,7 +123,6 @@ packages). Conventions, all enforced by pytest's default collection:
 | `nsrl_minimal_db` / `nsrl_metadata_db` | Committed NSRL-format SQLite hash-set fixtures (`FILE` and `METADATA` table variants). |
 | `log_search_image` | Committed Phase-5 ext4 image carrying the whole log/search corpus (rotated `auth.log` set, `syslog`, shell history, planted needles, timezone symlink). |
 | `log_search_groundtruth` | The committed ground-truth constants for `log_search_image`, loaded from `log_search_groundtruth.json`. |
-| `zip_slip_tar` / `symlink_escape_tar` / `device_file_tar` / `ratio_bomb_zip` / `count_bomb_tar` | Malicious archives built lazily into `tmp_path` for the safe-extract jail tests (live bombs are never committed to disk). |
 
 When you need a new committed evidence fixture, add a deterministic builder to
 `tests/fixtures/make_fixtures.py` and expose its path through a `conftest.py`
@@ -254,7 +253,7 @@ architecture guards. New tests should preserve these conventions:
 | `tests/test_ewf_adapter.py` | `EWFImgInfo` adapter over a mocked pyewf handle (INGEST-01, E01 path). |
 | `tests/test_integrity.py` | Single-pass MD5/SHA-1/SHA-256 hashing, acquisition compare, short-read/mount guards (INGEST-02). |
 | `tests/test_readonly_guarantee.py` | Source-never-modified + mounted-source refusal across all paths (INGEST-03). |
-| `tests/test_safe_extract.py` | The `safe_extract` archive jail: zip-slip, symlink/absolute/device escapes, ratio/size/count bombs (INGEST-04, D-11). |
+| `tests/test_confine.py` | Path confinement for evidence-controlled names: absolute paths, `..` traversal, backslash separators, symlink escapes, name sanitization (D-33, P6). |
 | `tests/test_seam_allowlist.py` | D-14 native-binding allowlist gate. |
 | `tests/test_case_store.py` | SQLite case store: schema, WAL/foreign-keys, round-trips, total-order timeline reads, transactions (REPORT-01). |
 | `tests/test_store_latest_source.py` | CaseStore boundary reads used by orchestrators (WR-02/WR-06). |

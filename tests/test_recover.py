@@ -243,3 +243,40 @@ def test_no_overclaiming_copy() -> None:
         assert forbidden not in haystack, (
             f"forbidden intent/good-bad copy present: {forbidden!r}"
         )
+
+
+def test_evidence_controlled_filename_cannot_escape_the_case_directory(
+    case_dir: Path,
+) -> None:
+    """A deleted entry's own filename can never place bytes outside the case dir.
+
+    The name on a deleted directory entry is attacker-controllable: on a
+    crafted image it can be ``../../../etc/cron.d/x``, carry a backslash
+    separator, or be nothing but traversal. Recovery derives its write path
+    from that name, so this pins the D-33 confinement at the orchestrator's own
+    path-resolution helper — the level where the escape would actually happen.
+    """
+    from pyautopsy.core.recover import _recovered_target  # noqa: PLC0415
+
+    case_root = case_dir.resolve()
+    hostile_names = (
+        "../../../etc/cron.d/pwned",
+        "/etc/passwd",
+        "..\\..\\windows\\system32\\evil.dll",
+        "../..",
+        "normal\nname.txt",
+    )
+    for hostile in hostile_names:
+        target, case_relative = _recovered_target(
+            case_root, volume_id=0, volume_offset=0, meta_addr=12, name=hostile
+        )
+        assert target.resolve().is_relative_to(case_root), (
+            f"recovered target escaped the case directory for {hostile!r}: {target}"
+        )
+        assert not case_relative.startswith(".."), (
+            f"case-relative path escapes the case directory: {case_relative!r}"
+        )
+        # The deterministic meta_addr key still leads the written name: a
+        # hostile name may sanitize to a nested path, but it is always rooted
+        # at ``<meta_addr>-`` inside the volume's recovered directory (D-34).
+        assert target.relative_to(case_root).parts[2].startswith("12-")

@@ -18,8 +18,8 @@ and cataloged as ``files`` rows. In order:
    is False``) entry reopen the inode via
    :func:`filesystem.recover_meta`, re-check the Pitfall-5 reallocation hazard,
    classify the tier (:func:`classify_tier`), write the recovered bytes through
-   the :mod:`pyautopsy.util.safe_extract` confinement jail with a deterministic
-   ``vol/off/meta_addr`` name (D-33/D-34), hash the written bytes via
+   the :mod:`pyautopsy.util.confine` path-confinement helpers with a
+   deterministic ``vol/off/meta_addr`` name (D-33/D-34), hash the written bytes via
    :func:`integrity.hash_file` (single pass, D-37), and build a recovered
    :class:`~pyautopsy.case.models.FileRow` (``allocated=False``, ``recovered=1``).
 4. **Catalog** all recovered rows via :meth:`CaseStore.insert_recovered_files`
@@ -60,7 +60,7 @@ from pyautopsy.evidence.filesystem import (
     FilesystemError,
 )
 from pyautopsy.evidence.image import ImageOpenError
-from pyautopsy.util.safe_extract import _confined_target, _sanitize_name
+from pyautopsy.util.confine import confined_target, sanitize_name
 
 __all__ = [
     "RECOVERY_REPORT_COPY",
@@ -289,8 +289,8 @@ def _recovered_target(
 ) -> tuple[Path, str]:
     """Resolve the confined, deterministic write path for a recovered entry.
 
-    Routes through the :mod:`safe_extract` confinement jail (``_sanitize_name`` +
-    ``_confined_target`` realpath confinement, D-33) with a deterministic name
+    Routes through the :mod:`pyautopsy.util.confine` helpers (``sanitize_name``
+    + ``confined_target`` realpath confinement, D-33) with a deterministic name
     keyed by ``vol<id>-off<off>/<meta_addr>-<safe_name>`` (D-34) — NEVER the raw
     deleted filename (which is adversarial: it may contain ``../``, control
     chars, FAT ``?``/``_``). The deterministic key makes recovered names
@@ -301,10 +301,10 @@ def _recovered_target(
     """
     dest = (case_path / "recovered" / f"vol{volume_id}-off{volume_offset}").resolve()
     dest.mkdir(parents=True, exist_ok=True)
-    safe_name = _sanitize_name(name) or "unnamed"
+    safe_name = sanitize_name(name) or "unnamed"
     rel = f"{meta_addr}-{safe_name}"
     dest_real = os.path.realpath(dest)
-    target = Path(_confined_target(dest_real, rel))
+    target = Path(confined_target(dest_real, rel))
     case_relative = os.path.relpath(target, case_path)
     return target, case_relative
 
@@ -314,9 +314,9 @@ def _write_recovered_bytes(
 ) -> None:
     """Stream the recovered content to ``target`` (read-only over the seam).
 
-    Honors ``max_hash_size`` as a write cap too (the ``ExtractionLimits`` ethos
-    against a recovered-content size bomb, T-04-01-BOMB): a logical size over the
-    cap is not written. The source is never written — only the case-dir target.
+    Honors ``max_hash_size`` as a write cap too (a size-bomb guard against
+    crafted recovered content, T-04-01-BOMB): a logical size over the cap is
+    not written. The source is never written — only the case-dir target.
     """
     if max_hash_size is not None and size > max_hash_size:
         # Size bomb guard: do not materialise an oversize recovered blob.

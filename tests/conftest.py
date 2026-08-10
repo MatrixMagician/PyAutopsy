@@ -12,11 +12,6 @@ Provides:
   (64–74 MiB) and not byte-deterministic (``mkfs.fat`` stamps a wall-clock
   volume id). Built once per session from the host mkfs/mtools tools; a host
   lacking those tools ``skip``s the dependent tests rather than failing.
-* per-archive fixtures (``zip_slip_tar``, ``symlink_escape_tar``,
-  ``device_file_tar``, ``ratio_bomb_zip``, ``count_bomb_tar``) that build each
-  malicious archive into ``tmp_path`` on demand for the safe-extract plan
-  (01-03) to consume. Building them lazily keeps live bombs off disk except for
-  the test that needs them.
 """
 
 from __future__ import annotations
@@ -203,33 +198,3 @@ def log_search_groundtruth() -> dict[str, Any]:
     sidecar = FIXTURES_DIR / make_fixtures.LOG_SEARCH_GROUNDTRUTH_NAME
     assert sidecar.is_file(), f"committed ground-truth sidecar missing: {sidecar}"
     return json.loads(sidecar.read_text(encoding="utf-8"))
-
-
-@pytest.fixture
-def zip_slip_tar(tmp_path: Path) -> Path:
-    """Build a Zip-Slip tar (``../../escape.txt``) into tmp_path."""
-    return make_fixtures.build_zip_slip_tar(tmp_path / "zip_slip.tar")
-
-
-@pytest.fixture
-def symlink_escape_tar(tmp_path: Path) -> Path:
-    """Build a symlink-escape tar (``link -> /etc/passwd``) into tmp_path."""
-    return make_fixtures.build_symlink_escape_tar(tmp_path / "symlink_escape.tar")
-
-
-@pytest.fixture
-def device_file_tar(tmp_path: Path) -> Path:
-    """Build a tar containing a character-device member into tmp_path."""
-    return make_fixtures.build_device_file_tar(tmp_path / "device_file.tar")
-
-
-@pytest.fixture
-def ratio_bomb_zip(tmp_path: Path) -> Path:
-    """Build a high-ratio/size-bomb zip into tmp_path."""
-    return make_fixtures.build_ratio_bomb_zip(tmp_path / "ratio_bomb.zip")
-
-
-@pytest.fixture
-def count_bomb_tar(tmp_path: Path) -> Path:
-    """Build a count-bomb tar (very many tiny members) into tmp_path."""
-    return make_fixtures.build_count_bomb_tar(tmp_path / "count_bomb.tar")

@@ -164,7 +164,7 @@ filesystem-only baseline. Throughout, every stage appends structured events to
 | `AuditLog` | class | `audit/log.py` | The append-only JSONL audit writer, confined to `<case>/logs/audit.jsonl` with `O_APPEND` + `fsync`. |
 | `LogParser` / `ParsedRecord` | Protocol / dataclass | `log/registry.py` | The log-format extension contract (`name` + `matches` + `parse`) and its emitted (not-yet-time-resolved) value object; the primary extension point (see below). |
 | `Case`, `EvidenceSource`, `FileRow`, `TimelineEvent`, `VolumeLimitation`, `LogFinding`, `KnownMatch`, `SearchHit`, `AuditEvent` | dataclasses | `case/models.py` | The frozen value models mirroring the typed columns of each `case.db` table, each carrying a JSON `attributes` blackboard for schema-free extension. |
-| `safe_extract` | function | `util/safe_extract.py` | The only sanctioned archive expander — path-confined, symlink/device-refusing, decompression-bomb-capped jail for untrusted archives. |
+| `sanitize_name` / `confined_target` | functions | `util/confine.py` | Path confinement for evidence-controlled names: `sanitize_name` produces the safe on-disk write-name, `confined_target` proves via `realpath` that a resolved target stays inside the case directory. Used by recovery to place recovered bytes. |
 | `run_ingest` / `run_walk` / `run_recover` / `run_filter` / `run_logs` / `run_search` / `run_analyze` | functions | `core/*.py` | The orchestration-tier entry points; the six CLI commands wrap all but `run_filter` (which runs only as a sub-pass of `recover`/`analyze`). |
 
 ## Forensic-soundness boundaries
@@ -240,7 +240,7 @@ src/pyautopsy/
 ├── search/       Streaming literal/regex content scanner + IOC / known-bad-hash matching.
 ├── report/       Deterministic body assembly + JSON and HTML report writers.
 └── util/         Cross-cutting helpers: timeutil (single timestamp source),
-                  safe_extract (hardened archive jail).
+                  confine (path confinement for evidence-controlled names).
 ```
 
 The `case.db` schema defines nine tables — `cases`, `evidence_sources`,

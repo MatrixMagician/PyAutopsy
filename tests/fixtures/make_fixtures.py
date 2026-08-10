@@ -34,15 +34,12 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import io
 import json
 import os
 import shutil
 import sqlite3
 import subprocess
-import tarfile
 import tempfile
-import zipfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -1068,82 +1065,6 @@ def build_log_search_image(dest: Path) -> Path:
         json.dumps(_groundtruth_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    return dest
-
-
-# ---------------------------------------------------------------------------
-# Malicious-archive builders (consumed by the safe_extract jail tests, plan 01-03)
-# ---------------------------------------------------------------------------
-
-# Caps so the builders themselves never become bombs (threat T-1-00-B).
-_BOMB_FILLER_SIZE = 1 * 1024 * 1024  # 1 MiB of highly compressible zeros
-_COUNT_BOMB_ENTRIES = 20_000
-
-
-def build_zip_slip_tar(dest: Path) -> Path:
-    """Build a tar whose member name escapes the destination (Zip Slip).
-
-    The member name ``../../escape.txt`` must be REJECTED by the jail
-    (``OutsideDestinationError`` under ``filter='data'``).
-    """
-    with tarfile.open(dest, "w") as tar:
-        payload = b"escaped!\n"
-        info = tarfile.TarInfo(name="../../escape.txt")
-        info.size = len(payload)
-        tar.addfile(info, io.BytesIO(payload))
-    return dest
-
-
-def build_symlink_escape_tar(dest: Path) -> Path:
-    """Build a tar containing an absolute symlink escape (``link -> /etc/passwd``).
-
-    Must be REJECTED by the jail (``AbsoluteLinkError`` / special-file refusal).
-    """
-    with tarfile.open(dest, "w") as tar:
-        info = tarfile.TarInfo(name="link")
-        info.type = tarfile.SYMTYPE
-        info.linkname = "/etc/passwd"
-        tar.addfile(info)
-    return dest
-
-
-def build_device_file_tar(dest: Path) -> Path:
-    """Build a tar containing a character-device member.
-
-    Must be REJECTED by the jail (``SpecialFileError`` under ``filter='data'``).
-    """
-    with tarfile.open(dest, "w") as tar:
-        info = tarfile.TarInfo(name="dev/null")
-        info.type = tarfile.CHRTYPE
-        info.devmajor = 1
-        info.devminor = 3
-        tar.addfile(info)
-    return dest
-
-
-def build_ratio_bomb_zip(dest: Path) -> Path:
-    """Build a zip with a tiny compressed / huge uncompressed ratio (size bomb).
-
-    1 MiB of zeros compresses to a few hundred bytes — a high compression ratio
-    the jail's ratio/size caps must REJECT. Capped at :data:`_BOMB_FILLER_SIZE`
-    so the builder itself is bounded.
-    """
-    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("bomb.bin", b"\x00" * _BOMB_FILLER_SIZE)
-    return dest
-
-
-def build_count_bomb_tar(dest: Path) -> Path:
-    """Build a tar with a very large number of tiny members (count bomb).
-
-    Exceeds a sane ``max_entries`` cap so the jail must REJECT on entry count.
-    """
-    with tarfile.open(dest, "w") as tar:
-        empty = io.BytesIO(b"")
-        for i in range(_COUNT_BOMB_ENTRIES):
-            info = tarfile.TarInfo(name=f"f{i:06d}.txt")
-            info.size = 0
-            tar.addfile(info, empty)
     return dest
 
 

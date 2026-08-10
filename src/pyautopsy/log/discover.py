@@ -39,12 +39,10 @@ __all__ = [
 # Hard cap on the DECOMPRESSED size of a single rotated ``.gz`` log member
 # (WR-05). A ``.gz`` member's on-disk (compressed) size does NOT bound its
 # inflated size, so a small crafted member can expand to a memory-exhausting
-# blob — exactly the decompression-bomb case ``util.safe_extract``'s caps exist
-# to stop. The log path never routes through ``safe_extract`` (it inflates one
-# in-memory member directly), so we enforce the same class of cap here: the
-# inflate is read in bounded chunks and refused once it crosses this limit. The
-# value mirrors ``safe_extract._DEFAULT_MAX_ENTRY_SIZE`` (256 MiB) — far larger
-# than any real rotated log, small enough to stop a bomb.
+# blob. The log path inflates one in-memory member directly, so the cap is
+# enforced right here: the inflate is read in bounded chunks and refused once it
+# crosses this limit. 256 MiB is far larger than any real rotated log, and small
+# enough to stop a bomb.
 MAX_GZ_UNCOMPRESSED = 256 * 1024 * 1024
 
 # The /var/log base names the rotated-set discovery collects. These are the
@@ -340,10 +338,10 @@ def decode_member(raw: bytes, *, is_gz: bool) -> str:
                         break
                     total += len(chunk)
                     if total > MAX_GZ_UNCOMPRESSED:
-                        # Decompression-bomb cap breached: refuse this member,
-                        # like safe_extract aborts a bomb mid-stream. The rest of
-                        # the rotated set is unaffected (a single bad member must
-                        # not lose the others).
+                        # Decompression-bomb cap breached: refuse this member
+                        # mid-stream, before the inflated bytes are retained. The
+                        # rest of the rotated set is unaffected (a single bad
+                        # member must not lose the others).
                         return ""
                     chunks.append(chunk)
                 raw = b"".join(chunks)
