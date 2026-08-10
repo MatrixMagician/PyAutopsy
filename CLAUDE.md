@@ -172,6 +172,20 @@ Architecture not yet mapped. Follow existing patterns found in the codebase.
 
 No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
 
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `MatrixMagician/PyAutopsy`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, used verbatim as label strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (neither exists yet; created lazily). See `docs/agents/domain.md`.
+
 ## Workflow
 
 Edit code directly. There is no planning gate to route through.
