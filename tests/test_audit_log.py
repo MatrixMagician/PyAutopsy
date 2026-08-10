@@ -97,3 +97,54 @@ def test_reserved_ts_field_rejected(case_dir: Path) -> None:
     log = AuditLog(case_dir)
     with pytest.raises(ValueError):
         log.write("x", ts="not-a-utc-stamp")
+
+
+@pytest.mark.parametrize("reserved", ["action", "ts"])
+def test_reserved_key_rejected_by_the_shared_write_path(
+    case_dir: Path, reserved: str
+) -> None:
+    """A fully-formed event cannot carry a forged action or timestamp.
+
+    ``write`` builds an event and hands it to ``write_event``, so a single
+    guard on ``write_event`` covers every write path.
+    """
+    (case_dir / "logs").mkdir(parents=True)
+    log = AuditLog(case_dir)
+
+    with pytest.raises(ValueError) as excinfo:
+        log.write_event(AuditEvent(action="x", fields={reserved: "forged"}))
+    assert reserved in str(excinfo.value)
+
+    # Nothing was written by a rejected call.
+    assert not log.path.exists() or log.path.read_text(encoding="utf-8") == ""
+
+
+def test_reserved_ts_rejected_identically_through_both_entry_points(
+    case_dir: Path,
+) -> None:
+    """``write`` and ``write_event`` reject a forged ``ts`` the same way."""
+    (case_dir / "logs").mkdir(parents=True)
+    log = AuditLog(case_dir)
+
+    with pytest.raises(ValueError) as via_write:
+        log.write("x", ts="forged")
+    with pytest.raises(ValueError) as via_write_event:
+        log.write_event(AuditEvent(action="x", fields={"ts": "forged"}))
+
+    assert str(via_write.value) == str(via_write_event.value)
+
+
+def test_action_cannot_be_smuggled_through_write_at_all(case_dir: Path) -> None:
+    """``write`` cannot even express an ``action`` field — Python binds it.
+
+    ``write(self, action, **fields)`` binds the name ``action`` to the
+    positional parameter, so ``fields`` can never contain that key: a caller
+    attempting it gets ``TypeError`` from the call itself, before any guard
+    runs. This is why the reserved-key check needs to live only on the shared
+    ``write_event`` path.
+    """
+    (case_dir / "logs").mkdir(parents=True)
+    log = AuditLog(case_dir)
+
+    with pytest.raises(TypeError):
+        log.write("x", **{"action": "forged"})
