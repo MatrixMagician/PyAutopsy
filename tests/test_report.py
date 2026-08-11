@@ -345,3 +345,63 @@ def test_unknown_stage_rows_do_not_break_the_report(case_dir: Path) -> None:
         assert store.stages_run(case_id) == frozenset({Stage.LOGS})
     finally:
         store.close()
+
+
+def test_a_case_without_recorded_stages_still_reports_its_findings_honestly(
+    log_search_image: Path, case_dir: Path
+) -> None:
+    """A case predating stage recording must not deny work its own data proves.
+
+    Coverage is normally read from ``run_log``. A case written before those rows
+    existed has none — and reporting "this does NOT include log analysis" over a
+    case full of parsed log events would be the report lying about its own
+    coverage, which is the single thing this report must never do.
+
+    Findings therefore act as an honest floor: a pass that left rows behind is
+    reported as having run regardless of ``run_log``.
+    """
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415
+    from pyautopsy.core.search import run_search  # noqa: PLC0415
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir)
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
+    run_search(log_search_image, case_dir, terms=[b"root"])
+
+    # Simulate the older case: findings present, no stage rows.
+    with CaseStore.open(case_dir) as store:
+        store.connection.execute("DELETE FROM run_log")
+        store.connection.commit()
+        assert store.get_log_findings(ingested.evidence_source_id)
+        assert store.get_search_hits(ingested.evidence_source_id)
+        body = assemble_report_body(store, ingested.evidence_source_id)
+
+    disclaimer = body["limitations"]["mvp_disclaimer"]
+    excluded = disclaimer.split("It does NOT include")[-1]
+    assert "log analysis" not in excluded
+    assert "content search" not in excluded
+    assert "log analysis merged into the super-timeline" in disclaimer
+    assert "content search" in disclaimer
+
+
+def test_recorded_stage_still_wins_when_a_pass_found_nothing(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """Findings are a floor, not the whole answer.
+
+    A search that ran and matched nothing leaves no rows, so inferring coverage
+    from findings alone would report it as never having run. The recorded stage
+    covers that direction; this pins that the union keeps both.
+    """
+    from pyautopsy.core.search import run_search  # noqa: PLC0415
+
+    ingested = run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    result = run_search(tiny_ext4_image, case_dir, terms=[b"no-such-needle-anywhere"])
+    assert result.hits == 0
+
+    with CaseStore.open(case_dir) as store:
+        assert not store.get_search_hits(ingested.evidence_source_id)
+        body = assemble_report_body(store, ingested.evidence_source_id)
+
+    assert "content search" in body["limitations"]["mvp_disclaimer"]

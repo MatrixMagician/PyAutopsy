@@ -38,6 +38,21 @@ __all__ = ["OPERATIONAL_ERRORS", "audited_step"]
 #
 # ``sqlite3.Error`` is listed explicitly because it is NOT an ``OSError``
 # (BL-02) — a corrupt case DB must exit cleanly rather than read as a crash.
+#
+# This one shared set is deliberately the union of what the steps previously
+# listed individually, which widens two of them on paper. Neither widening is
+# reachable, so no failure changes which audit action it lands under:
+#
+# * ``FilesystemError`` is added to ``search`` and ``filter`` — but it is raised
+#   nowhere in the codebase at all, so nothing can hit it.
+# * the image-layer errors are added to ``filter`` — but known-file filtering
+#   never opens an evidence image: it reads the case database and the supplied
+#   hash lists, and nothing else.
+#
+# If a future change makes either reachable, the widening becomes real and the
+# affected failure would move from ``<step>.crashed`` to ``<step>.error``. That
+# is the right classification for a genuine operational failure, but it is a
+# deliberate decision rather than an accident, so it is recorded here.
 OPERATIONAL_ERRORS: tuple[type[BaseException], ...] = (
     MountedSourceError,
     IntegrityError,

@@ -104,6 +104,11 @@ class AuditLog:
         record: dict[str, Any] = dict(event.fields)
         for reserved in _RESERVED_FIELDS:
             if reserved in record:
+                # One guard means one message, so the two entry points can no
+                # longer word this differently. This is ``write``'s original
+                # wording, kept because it names the offending key; the version
+                # that lived here listed both reserved names without saying
+                # which one the caller actually passed.
                 raise ValueError(
                     f"{reserved!r} is a reserved audit field and is set "
                     "automatically; do not pass it explicitly"

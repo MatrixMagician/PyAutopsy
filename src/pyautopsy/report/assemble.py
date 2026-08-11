@@ -271,6 +271,37 @@ def _surface_provenance(file_row: FileRow) -> dict[str, str]:
     return surfaced
 
 
+def _stages_evidenced_by_findings(
+    store: CaseStore, evidence_source_id: int
+) -> frozenset[Stage]:
+    """Return the stages whose own findings prove they ran.
+
+    A pass that persisted rows demonstrably covered the evidence, whether or not
+    it recorded itself in ``run_log``. This is the honest floor on coverage; it
+    can never be the whole answer, because a pass that ran and found nothing
+    leaves no rows and must still be reported as covered.
+
+    Args:
+        store: The open case store.
+        evidence_source_id: The evidence source being reported on.
+
+    Returns:
+        The stages with persisted findings.
+    """
+    evidenced: set[Stage] = set()
+    if store.get_recovered_files(evidence_source_id) or store.get_orphan_files(
+        evidence_source_id
+    ):
+        evidenced.add(Stage.RECOVER)
+    if store.get_known_matches(evidence_source_id):
+        evidenced.add(Stage.FILTER)
+    if store.get_log_findings(evidence_source_id):
+        evidenced.add(Stage.LOGS)
+    if store.get_search_hits(evidence_source_id):
+        evidenced.add(Stage.SEARCH)
+    return frozenset(evidenced)
+
+
 def assemble_report_body(
     store: CaseStore,
     evidence_source_id: int,
@@ -338,6 +369,14 @@ def assemble_report_body(
     # this is NOT inferred from whether a pass produced rows: a search that ran
     # and matched nothing still covered the image, and must be reported as such.
     stages = store.stages_run(evidence.case_id)
+    # A pass that left findings behind demonstrably ran, whatever ``run_log``
+    # says. That matters for a case written before stages were recorded: its
+    # run_log is empty, and reporting "this does NOT include log analysis" over
+    # a case full of parsed log events would be the report lying about its own
+    # coverage. Recorded stages remain authoritative for the other direction —
+    # a pass that ran and found nothing is still reported as covered — so the
+    # two sources are unioned, never substituted.
+    stages = stages | _stages_evidenced_by_findings(store, evidence_source_id)
 
     # -- Inventory aggregation set (BL-01): exclude recovered rows ---------------
     # The walk records every deleted inode as a ``files`` row (allocated=False,

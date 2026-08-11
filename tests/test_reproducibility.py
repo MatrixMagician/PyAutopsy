@@ -18,10 +18,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from pyautopsy.case import CaseStore
 from pyautopsy.cli.main import app
+from pyautopsy.core.analyze import run_analyze
 from tests.fixtures import make_fixtures
 
 runner = CliRunner()
@@ -478,3 +480,57 @@ def test_default_analyze_unchanged(tiny_ext4_image: Path, tmp_path: Path) -> Non
     # disclosures slice empties to [] so the section adds no noise and stays
     # byte-identical to the Phase-4/05 baseline (D-48).
     assert body_a["log_findings"]["disclosures"] == []
+
+
+@pytest.mark.parametrize(
+    "combination",
+    [
+        pytest.param({}, id="bare-walk"),
+        pytest.param({"recover": True}, id="walk+recover"),
+        pytest.param({"nsrl_db": True}, id="walk+filter"),
+        pytest.param({"logs": True}, id="walk+logs"),
+        pytest.param({"search": "root"}, id="walk+search"),
+        pytest.param(
+            {"recover": True, "nsrl_db": True, "logs": True, "search": "root"},
+            id="full-run",
+        ),
+    ],
+)
+def test_reports_are_byte_identical_for_each_coverage_combination(
+    log_search_image: Path,
+    nsrl_minimal_db: Path,
+    tmp_path: Path,
+    combination: dict,
+) -> None:
+    """Each coverage combination reproduces byte-for-byte across two runs.
+
+    The report derives which passes ran from the case database rather than from
+    caller-supplied flags, and each combination emits different limitations
+    prose. This runs every combination twice and compares the report bytes, so a
+    change to how coverage is derived cannot silently perturb any of them.
+    """
+    kwargs = dict(combination)
+    if kwargs.pop("nsrl_db", None):
+        kwargs["nsrl_db"] = nsrl_minimal_db
+
+    outputs = []
+    for run in ("first", "second"):
+        case = tmp_path / f"{run}-{abs(hash(tuple(sorted(combination))))}"
+        run_analyze(
+            log_search_image,
+            case,
+            examiner="X",
+            evidence_id="E1",
+            **kwargs,
+        )
+        outputs.append(
+            {
+                name: (case / "reports" / name).read_bytes()
+                for name in ("report.json", "report.html")
+            }
+        )
+
+    for name in ("report.json", "report.html"):
+        assert outputs[0][name] == outputs[1][name], (
+            f"{name} differs between runs for this coverage combination"
+        )

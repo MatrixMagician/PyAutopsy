@@ -186,19 +186,19 @@ def run_filter(
                     continue
 
                 if nsrl_conn is not None:
-                    nsrl_hit = nsrl.nsrl_match(
+                    nsrl_matched_on = nsrl.nsrl_match(
                         nsrl_conn,
                         nsrl_table,
                         md5=file_row.md5,
                         sha1=file_row.sha1,
                         sha256=file_row.sha256,
                     )
-                    if nsrl_hit is not None:
+                    if nsrl_matched_on is not None:
                         matches.append(
                             KnownMatch(
                                 file_id=file_row.id,
                                 source="nsrl",
-                                matched_on=nsrl_hit["matched_on"],
+                                matched_on=nsrl_matched_on,
                             )
                         )
                         nsrl_matches += 1

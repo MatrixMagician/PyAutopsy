@@ -171,3 +171,46 @@ def test_operational_set_includes_sqlite_error_which_is_not_an_oserror() -> None
     """
     assert sqlite3.Error in OPERATIONAL_ERRORS
     assert not issubclass(sqlite3.Error, OSError)
+
+
+def test_shared_operational_set_does_not_reclassify_any_reachable_failure() -> None:
+    """The one shared error set widens two steps only where nothing can reach.
+
+    Collapsing five per-module tuples into one shared set means ``filter`` and
+    ``search`` now nominally expect errors they did not list before. That is
+    only safe while those errors cannot occur in those steps — otherwise a
+    failure silently moves from ``<step>.crashed`` to ``<step>.error``, which is
+    a change in what the audit trail claims happened.
+
+    Two facts keep it safe, and both are asserted here rather than assumed:
+    ``FilesystemError`` is raised nowhere at all, and known-file filtering never
+    opens an evidence image.
+    """
+    import ast  # noqa: PLC0415
+    import pathlib  # noqa: PLC0415
+
+    src_root = pathlib.Path(__file__).resolve().parent.parent / "src" / "pyautopsy"
+
+    raisers = [
+        py
+        for py in src_root.rglob("*.py")
+        if "raise FilesystemError" in py.read_text(encoding="utf-8")
+    ]
+    assert not raisers, (
+        "FilesystemError is now raised somewhere; the widened operational set "
+        f"has become reachable in filter/search: {raisers}"
+    )
+
+    # Known-file filtering must not reach the evidence/image layer at all.
+    filtering = (src_root / "core" / "knownfiles.py").read_text(encoding="utf-8")
+    tree = ast.parse(filtering)
+    imported = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    evidence_imports = {mod for mod in imported if mod.startswith("pyautopsy.evidence")}
+    assert not evidence_imports, (
+        "known-file filtering now reaches the evidence layer, so the image-layer "
+        f"errors in the shared operational set became reachable: {evidence_imports}"
+    )

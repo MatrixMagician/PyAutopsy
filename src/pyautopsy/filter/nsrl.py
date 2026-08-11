@@ -102,7 +102,7 @@ def nsrl_match(
     md5: str | None,
     sha1: str | None,
     sha256: str | None,
-) -> dict[str, str] | None:
+) -> str | None:
     """Probe NSRL membership for a file's hashes (md5 → sha1 → sha256, D-37).
 
     For each supplied hash (in NSRL-keying order) the value is ``.upper()``-folded
@@ -120,9 +120,10 @@ def nsrl_match(
         sha256: The file's lowercase SHA-256 hex, or ``None``.
 
     Returns:
-        A NEUTRAL match dict ``{"source": "nsrl", "matched_on": col}`` on the
-        first hash found in the set, else ``None``. Carries no good/bad/verdict
-        key (D-38).
+        The hash column that matched (``"md5"``/``"sha1"``/``"sha256"``), else
+        ``None``. Membership is all this reports: turning a hit into a persisted
+        record — and the D-38 neutrality that goes with it — belongs to the
+        caller, exactly as it does for the custom-list probe.
 
     Raises:
         ValueError: If ``table`` is not an allowlisted NSRL table name.
@@ -143,5 +144,5 @@ def nsrl_match(
             (val.upper(),),
         ).fetchone()
         if hit is not None:
-            return {"source": "nsrl", "matched_on": col}
+            return col
     return None
