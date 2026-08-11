@@ -206,6 +206,11 @@ def hash_image(source: ReadableBytes, chunk: int = _DEFAULT_CHUNK) -> dict[str, 
             digest must never silently cover less than the whole image
             (INGEST-02/D-08), so a short read is a loud failure.
     """
+    # Validate the argument BEFORE touching the source: a caller error should be
+    # reported as one, not masked by whatever the evidence read happens to do.
+    if chunk <= 0:
+        raise ValueError(f"chunk must be positive, got {chunk}")
+
     total = source.get_size()
     digests, consumed = _stream_digests(source.read, total, _IMAGE_ALGORITHMS, chunk)
     if consumed != total:

@@ -264,3 +264,30 @@ def test_reverify_raises_on_altered_baseline() -> None:
     tampered = {**baseline, "sha256": "0" * 64}
     with pytest.raises(IntegrityError):
         reverify(handle, tampered)
+
+
+def test_chunk_validation_precedes_any_evidence_read() -> None:
+    """A bad chunk size is a caller error, reported before the source is touched.
+
+    Both hashers validate before reading. Otherwise an unreadable source would
+    surface its read failure first, and the caller would be told the evidence is
+    broken when in fact the call was.
+    """
+
+    class ExplodingSource:
+        """Fails on any access, so a read before validation is unmistakable."""
+
+        def read(self, offset: int, size: int) -> bytes:
+            raise AssertionError("source was read before the chunk was validated")
+
+        def get_size(self) -> int:
+            raise AssertionError("source was sized before the chunk was validated")
+
+    with pytest.raises(ValueError, match="chunk must be positive"):
+        hash_image(ExplodingSource(), chunk=0)
+
+    def exploding_reader(offset: int, size: int) -> bytes:
+        raise AssertionError("content was read before the chunk was validated")
+
+    with pytest.raises(ValueError, match="chunk must be positive"):
+        hash_file(exploding_reader, 10, chunk=-1)

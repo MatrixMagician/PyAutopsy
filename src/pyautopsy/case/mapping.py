@@ -108,29 +108,26 @@ _CODECS: dict[str, ColumnCodec] = {
 }
 
 
+# The surrogate primary key: assigned by SQLite, never by the caller, so it is
+# excluded from every INSERT.
+_DB_ASSIGNED = ("id",)
+
+
 class RowMapper(Generic[T]):
     """Maps one dataclass to and from its table, deriving the column names.
 
     Args:
         model: The dataclass modelling one row.
         table: The table name.
-        skip_on_insert: Fields the database assigns rather than the caller —
-            the surrogate ``id``. Excluded from the INSERT so SQLite assigns it.
     """
 
     __slots__ = ("_columns", "_model", "_table", "insert_sql")
 
-    def __init__(
-        self,
-        model: type[T],
-        table: str,
-        *,
-        skip_on_insert: tuple[str, ...] = ("id",),
-    ) -> None:
+    def __init__(self, model: type[T], table: str) -> None:
         self._model = model
         self._table = table
         self._columns = tuple(
-            f.name for f in dataclasses.fields(model) if f.name not in skip_on_insert
+            f.name for f in dataclasses.fields(model) if f.name not in _DB_ASSIGNED
         )
         self.insert_sql = (
             f"INSERT INTO {table} ("
@@ -139,11 +136,6 @@ class RowMapper(Generic[T]):
             + ", ".join("?" for _ in self._columns)
             + ")"
         )
-
-    @property
-    def columns(self) -> tuple[str, ...]:
-        """The INSERT column order, derived from the dataclass field order."""
-        return self._columns
 
     @property
     def model(self) -> type[T]:
@@ -189,8 +181,20 @@ def validate_mapping(mapper: RowMapper[Any], connection: sqlite3.Connection) -> 
     Raises:
         ValueError: If the model and the table disagree on any name.
     """
+    # PRAGMA does not accept a bound parameter for its table, so the name is
+    # interpolated. It is safe here for a structural reason, not a hopeful one:
+    # every mapper is a module-level constant in ``store.py`` built from a
+    # literal table name, so this value can never come from evidence, an
+    # examiner-supplied file, or the CLI. The assertion below makes that a
+    # checked property rather than a convention (cf. the NSRL probe's
+    # T-04-02-SQLI allowlist, which faces genuinely external input).
+    if not mapper.table.isidentifier():
+        raise ValueError(
+            f"refusing to inspect a non-identifier table name: {mapper.table!r}"
+        )
     table_columns = {
-        str(row[1]) for row in connection.execute(f"PRAGMA table_info({mapper.table})")
+        str(row[1])
+        for row in connection.execute(f"PRAGMA table_info({mapper.table})")  # noqa: S608
     }
     if not table_columns:
         raise ValueError(f"case database has no table {mapper.table!r}")
