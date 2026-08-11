@@ -18,6 +18,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from pyautopsy.cli.main import app
@@ -81,9 +82,7 @@ def test_ingest_wrong_acquisition_hash_exits_nonzero(
         for line in log.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    compare = next(
-        e for e in events if e["action"] == "ingest.acquisition_compare"
-    )
+    compare = next(e for e in events if e["action"] == "ingest.acquisition_compare")
     assert compare["outcome"] == "FAIL"
 
 
@@ -114,17 +113,13 @@ def test_walk_smoke_inventories_into_case(
     ingest = runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
     assert ingest.exit_code == 0, ingest.output
 
-    result = runner.invoke(
-        app, ["walk", str(tiny_ext4_image), "--case", str(case_dir)]
-    )
+    result = runner.invoke(app, ["walk", str(tiny_ext4_image), "--case", str(case_dir)])
     assert result.exit_code == 0, result.output
     assert "walk complete" in result.output
     assert "files inventoried:" in result.output
 
 
-def test_walk_rejects_invalid_timezone(
-    tiny_ext4_image: Path, case_dir: Path
-) -> None:
+def test_walk_rejects_invalid_timezone(tiny_ext4_image: Path, case_dir: Path) -> None:
     """An invalid ``--timezone`` exits non-zero (Security V5 validation)."""
     runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
     result = runner.invoke(
@@ -185,3 +180,67 @@ def test_version_flag() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert pyautopsy.__version__ in result.output
+
+
+def test_programming_bug_is_not_swallowed_by_the_base_exception_catch(
+    tiny_ext4_image: Path, case_dir: Path, monkeypatch
+) -> None:
+    """A bug still propagates: it is not a ``PyAutopsyError``, so it is not caught.
+
+    Each command catches one base class instead of a hand-listed tuple. That is
+    only safe while the base stays narrow — it must cover errors this project
+    raises deliberately and nothing else. A ``KeyError`` escaping from the
+    orchestrator must reach the caller with its traceback, not be reported as a
+    clean operational failure.
+    """
+    from pyautopsy.cli import main as cli_main
+
+    runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise KeyError("simulated programming bug")
+
+    monkeypatch.setattr(cli_main, "run_walk", boom)
+
+    result = runner.invoke(app, ["walk", str(tiny_ext4_image), "--case", str(case_dir)])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, KeyError)
+    assert "walk failed" not in result.output
+
+
+def test_shared_image_argument_validates_identically_across_commands(
+    case_dir: Path,
+) -> None:
+    """Every command's IMAGE argument rejects a missing path the same way.
+
+    The argument is declared once and reused, so this pins that the reuse
+    actually reaches each command rather than silently dropping the
+    ``exists=True`` validation on some of them.
+    """
+    missing = str(case_dir / "no-such-image.dd")
+    for command in ("ingest", "walk", "recover", "logs", "analyze", "search"):
+        args = [command, missing, "--case", str(case_dir)]
+        if command in ("ingest", "analyze"):
+            args += ["--examiner", "X", "--evidence-id", "E1"]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 2, f"{command}: {result.output}"
+        assert "does not exist" in result.output, f"{command}: {result.output}"
+
+
+@pytest.mark.parametrize("command", ["walk", "recover", "logs", "search"])
+def test_missing_case_directory_exits_cleanly_not_with_a_traceback(
+    tiny_ext4_image: Path, tmp_path: Path, command: str
+) -> None:
+    """Pointing a command at a nonexistent case dir is operator error, not a crash.
+
+    Every command that requires a prior ``ingest`` must say so and exit with the
+    integrity code. ``logs`` and ``search`` used to dump a raw traceback here:
+    they try to record the failure in the case's audit log first, and when the
+    case directory does not exist there is nowhere to write it, so the OSError
+    from the audit write masked the actionable message.
+    """
+    missing = tmp_path / "no-such-case"
+    result = runner.invoke(app, [command, str(tiny_ext4_image), "--case", str(missing)])
+    assert result.exit_code == 1, result.output
+    assert "no case database under" in result.output
+    assert "run `pyautopsy ingest`" in result.output

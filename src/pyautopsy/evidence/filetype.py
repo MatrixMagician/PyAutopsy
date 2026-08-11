@@ -33,11 +33,14 @@ if not hasattr(magic, "from_buffer"):
         "install python-magic==0.4.27 (the two collide on the 'magic' name)."
     )
 
-__all__ = ["HEAD_BYTES", "HeadReader", "file_type"]
+# ``HeadReader`` stays exported: it is the parameter type of the public
+# ``file_type``, so a caller needs to be able to name it. ``_HEAD_BYTES`` is an
+# internal read-size tuning constant and is private.
+__all__ = ["HeadReader", "file_type"]
 
 # Number of leading content bytes sampled for the signature lookup. libmagic only
 # needs the head of the file; reading more would waste evidence-read bandwidth.
-HEAD_BYTES = 4096
+_HEAD_BYTES = 4096
 
 # libmagic's MIME label for a zero-length file. Returned for empties without
 # touching the binding (an empty buffer would otherwise type as
@@ -69,7 +72,7 @@ def file_type(read_head: HeadReader, size: int) -> str | None:
     """
     if size == 0:
         return EMPTY_TYPE
-    head = read_head(0, min(HEAD_BYTES, size))
+    head = read_head(0, min(_HEAD_BYTES, size))
     if not head:
         return None
     return magic.from_buffer(head, mime=True)

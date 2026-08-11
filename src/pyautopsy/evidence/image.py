@@ -33,6 +33,9 @@ from typing import TYPE_CHECKING, Protocol
 
 import pytsk3
 
+from pyautopsy.errors import PyAutopsyError
+from pyautopsy.evidence.byteio import ReadableBytes
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pyewf
 
@@ -52,7 +55,7 @@ __all__ = [
 _EWF_SUFFIXES: frozenset[str] = frozenset({".e01", ".ex01", ".s01", ".l01"})
 
 
-class ImageOpenError(Exception):
+class ImageOpenError(PyAutopsyError):
     """Raised when an evidence image cannot be opened read-only.
 
     Carries an actionable, examiner-facing message (e.g. a missing file, or the
@@ -68,19 +71,17 @@ class ImageFormat(StrEnum):
     EWF = "ewf"
 
 
-class ReadableImage(Protocol):
-    """The byte-layer read interface every image handle exposes.
+class ReadableImage(ReadableBytes, Protocol):
+    """A :class:`ReadableBytes` source that also owns releasable resources.
+
+    An opened image holds a native handle, so unlike a plain byte source it must
+    be closed. That single extra method is the whole difference — the read/size
+    half is inherited rather than restated.
 
     Both :class:`pytsk3.Img_Info` (raw) and :class:`EWFImgInfo` (E01) satisfy
     this, so downstream tiers depend on this structural contract — never on a
     concrete native type.
     """
-
-    def read(self, offset: int, size: int) -> bytes:
-        """Read ``size`` bytes starting at ``offset``."""
-
-    def get_size(self) -> int:
-        """Return the total image size in bytes."""
 
     def close(self) -> None:
         """Release the underlying native resources."""
@@ -194,23 +195,18 @@ def detect_format(path: Path) -> ImageFormat:
 def tsk_version() -> str:
     """Return the libtsk version string for the chain-of-custody record.
 
-    Probes ``pytsk3`` for a ``*VERSION*`` attribute rather than asserting a
-    hard-coded name (01-RESEARCH.md A1), so a recorded version survives minor
-    binding changes. Falls back to ``"unknown"`` only if nothing is exposed.
+    Reads ``pytsk3.TSK_VERSION_STR``, the documented and stable name on the
+    binding. This value is recorded in the evidence-source row and the audit
+    trail, so it must be deterministic: a binding that grows a second
+    version-ish attribute must not be able to change what gets recorded.
 
     Returns:
-        A non-empty version string (e.g. ``"4.15.0"``), or ``"unknown"``.
+        A non-empty version string (e.g. ``"4.15.0"``), or ``"unknown"`` when
+        the binding does not expose one.
     """
-    for attr in ("TSK_VERSION_STR",):
-        value = getattr(pytsk3, attr, None)
-        if isinstance(value, str) and value:
-            return value
-    # Fall back to probing for any VERSION-ish string attribute (A1).
-    for attr in dir(pytsk3):
-        if "VERSION" in attr.upper():
-            value = getattr(pytsk3, attr, None)
-            if isinstance(value, str) and value:
-                return value
+    value = getattr(pytsk3, "TSK_VERSION_STR", None)
+    if isinstance(value, str) and value:
+        return value
     return "unknown"
 
 
@@ -219,9 +215,7 @@ def _open_raw(path: Path) -> ImageHandle:
     try:
         img = pytsk3.Img_Info(os.fspath(path))
     except OSError as exc:
-        raise ImageOpenError(
-            f"could not open raw image {path!s}: {exc}"
-        ) from exc
+        raise ImageOpenError(f"could not open raw image {path!s}: {exc}") from exc
     return ImageHandle(
         image=img,
         size=img.get_size(),
@@ -250,9 +244,7 @@ def _open_ewf(path: Path) -> ImageHandle:
         handle = pyewf.handle()
         handle.open(filenames)  # read-only
     except OSError as exc:
-        raise ImageOpenError(
-            f"could not open E01/EWF image {path!s}: {exc}"
-        ) from exc
+        raise ImageOpenError(f"could not open E01/EWF image {path!s}: {exc}") from exc
 
     img = EWFImgInfo(handle)
     return ImageHandle(

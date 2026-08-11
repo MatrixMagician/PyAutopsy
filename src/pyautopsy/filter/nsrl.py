@@ -31,13 +31,13 @@ import sqlite3
 from pathlib import Path
 from urllib.request import pathname2url
 
-__all__ = ["NSRL_TABLE_ALLOWLIST", "nsrl_match", "open_nsrl"]
+__all__ = ["nsrl_match", "open_nsrl"]
 
 # The fixed set of NSRL RDSv3 hash-table names we will query. The "minimal"
 # variant exposes a ``FILE`` table; the "modern/full" variant exposes
 # ``METADATA``. The table name is ONLY ever chosen from this allowlist — it is
 # never interpolated from arbitrary user input (T-04-02-SQLI).
-NSRL_TABLE_ALLOWLIST: tuple[str, ...] = ("FILE", "METADATA")
+_NSRL_TABLE_ALLOWLIST: tuple[str, ...] = ("FILE", "METADATA")
 
 # Hash columns probed in NSRL-keying order: md5 → sha1 → sha256 (D-37). NSRL is
 # keyed on md5/sha1, so those resolve first; sha256 is the fall-through.
@@ -50,7 +50,7 @@ def open_nsrl(path: str) -> tuple[sqlite3.Connection, str]:
     Opens ``path`` with the ``?mode=ro`` URI (read-only — the file is never
     written or mounted) and asserts ``PRAGMA query_only=ON`` as defence in depth
     (T-04-02-DBRO). The hash table is then discovered from ``sqlite_master`` and
-    chosen from the fixed :data:`NSRL_TABLE_ALLOWLIST` — ``FILE`` (minimal
+    chosen from the fixed :data:`_NSRL_TABLE_ALLOWLIST` — ``FILE`` (minimal
     variant) is preferred, else ``METADATA`` (modern variant). The table name is
     never taken from arbitrary input.
 
@@ -59,7 +59,7 @@ def open_nsrl(path: str) -> tuple[sqlite3.Connection, str]:
 
     Returns:
         ``(connection, table_name)`` where ``table_name`` is one of
-        :data:`NSRL_TABLE_ALLOWLIST`. The caller owns the connection and must
+        :data:`_NSRL_TABLE_ALLOWLIST`. The caller owns the connection and must
         ``close()`` it.
 
     Raises:
@@ -86,13 +86,12 @@ def open_nsrl(path: str) -> tuple[sqlite3.Connection, str]:
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
-    for candidate in NSRL_TABLE_ALLOWLIST:
+    for candidate in _NSRL_TABLE_ALLOWLIST:
         if candidate in tables:
             return conn, candidate
     conn.close()
     raise ValueError(
-        "no NSRL hash table found: expected one of "
-        f"{NSRL_TABLE_ALLOWLIST} in {path!r}"
+        f"no NSRL hash table found: expected one of {_NSRL_TABLE_ALLOWLIST} in {path!r}"
     )
 
 
@@ -103,14 +102,14 @@ def nsrl_match(
     md5: str | None,
     sha1: str | None,
     sha256: str | None,
-) -> dict[str, str] | None:
+) -> str | None:
     """Probe NSRL membership for a file's hashes (md5 → sha1 → sha256, D-37).
 
     For each supplied hash (in NSRL-keying order) the value is ``.upper()``-folded
     to match RDSv3's UPPERCASE storage (Pitfall 4) and looked up with a
     ``?``-parameterized ``SELECT`` — the hash is NEVER string-formatted into SQL
     (T-04-02-SQLI). ``table`` must be an allowlisted name from
-    :func:`open_nsrl`; a name outside :data:`NSRL_TABLE_ALLOWLIST` is rejected so
+    :func:`open_nsrl`; a name outside :data:`_NSRL_TABLE_ALLOWLIST` is rejected so
     the interpolated identifier can only ever be ``FILE`` or ``METADATA``.
 
     Args:
@@ -121,17 +120,18 @@ def nsrl_match(
         sha256: The file's lowercase SHA-256 hex, or ``None``.
 
     Returns:
-        A NEUTRAL match dict ``{"source": "nsrl", "matched_on": col}`` on the
-        first hash found in the set, else ``None``. Carries no good/bad/verdict
-        key (D-38).
+        The hash column that matched (``"md5"``/``"sha1"``/``"sha256"``), else
+        ``None``. Membership is all this reports: turning a hit into a persisted
+        record — and the D-38 neutrality that goes with it — belongs to the
+        caller, exactly as it does for the custom-list probe.
 
     Raises:
         ValueError: If ``table`` is not an allowlisted NSRL table name.
     """
-    if table not in NSRL_TABLE_ALLOWLIST:
+    if table not in _NSRL_TABLE_ALLOWLIST:
         raise ValueError(
             f"refusing to query non-allowlisted NSRL table {table!r}; "
-            f"expected one of {NSRL_TABLE_ALLOWLIST}"
+            f"expected one of {_NSRL_TABLE_ALLOWLIST}"
         )
     for col, val in zip(_HASH_COLUMNS, (md5, sha1, sha256), strict=True):
         if not val:
@@ -144,5 +144,5 @@ def nsrl_match(
             (val.upper(),),
         ).fetchone()
         if hit is not None:
-            return {"source": "nsrl", "matched_on": col}
+            return col
     return None

@@ -23,8 +23,9 @@ The owning user is derived from the ``/home/<user>`` path when known and encoded
 as ``actor="user=<name>"`` — never the literal ``"user=None"`` (WR-05); an unknown
 owner yields ``actor=None``.
 
-The parser registers itself in the EXT-01 declared-order registry at import time
-so :func:`pyautopsy.core.logs.run_logs` discovers it with NO orchestrator change.
+The parser is listed in the EXT-01 declared-order tuple
+(:data:`pyautopsy.log.registry.PARSERS`) so
+:func:`pyautopsy.core.logs.run_logs` selects it with NO orchestrator change.
 
 Pure stdlib ``re`` on decoded text (Security V5 — DATA only): no native bindings
 (D-14), no new runtime dependency (D-43).
@@ -37,7 +38,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from pyautopsy.log.registry import ParsedRecord, register
+from pyautopsy.log.registry import ParsedRecord
 
 __all__ = [
     "ShellHistoryParser",
@@ -206,9 +207,7 @@ class ShellHistoryParser:
         path = (ctx or {}).get("path", "")
         return parse(text, ctx, kind=self._kind_for(path)).records
 
-    def findings_for(
-        self, text: str, ctx: dict[str, Any] | None = None
-    ) -> list[str]:
+    def findings_for(self, text: str, ctx: dict[str, Any] | None = None) -> list[str]:
         """Return this history file's honesty findings (D-44 tamperability).
 
         An additive concrete accessor that reaches the ``ShellHistoryResult.findings``
@@ -221,5 +220,6 @@ class ShellHistoryParser:
         return parse(text, ctx, kind=self._kind_for(path)).findings
 
 
-# Register the singleton in declared order at import time (EXT-01).
-shell_history_parser = register(ShellHistoryParser())
+# The module's parser singleton. Importing this module has no side effect:
+# the parser takes effect only by being listed in ``registry.PARSERS`` (EXT-01).
+shell_history_parser = ShellHistoryParser()

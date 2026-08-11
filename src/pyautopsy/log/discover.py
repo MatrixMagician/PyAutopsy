@@ -21,38 +21,38 @@ import io
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
+# ``LogMember`` / ``LogSet`` / ``CompletenessFinding`` are the value types the
+# public functions here return, so they stay exported even though no caller
+# imports them by name today — a caller cannot annotate a result it cannot name.
+# The basename lists and the inflation cap are internal policy constants
+# (documented in docs/CONFIGURATION.md) and are private.
 __all__ = [
+    "CompletenessFinding",
     "LogMember",
     "LogSet",
-    "CompletenessFinding",
-    "MAX_GZ_UNCOMPRESSED",
-    "order_rotated_set",
+    "decode_member",
     "discover_log_sets",
     "discover_shell_histories",
-    "decode_member",
-    "DEFAULT_LOG_BASENAMES",
-    "SHELL_HISTORY_BASENAMES",
+    "order_rotated_set",
 ]
 
 # Hard cap on the DECOMPRESSED size of a single rotated ``.gz`` log member
 # (WR-05). A ``.gz`` member's on-disk (compressed) size does NOT bound its
 # inflated size, so a small crafted member can expand to a memory-exhausting
-# blob — exactly the decompression-bomb case ``util.safe_extract``'s caps exist
-# to stop. The log path never routes through ``safe_extract`` (it inflates one
-# in-memory member directly), so we enforce the same class of cap here: the
-# inflate is read in bounded chunks and refused once it crosses this limit. The
-# value mirrors ``safe_extract._DEFAULT_MAX_ENTRY_SIZE`` (256 MiB) — far larger
-# than any real rotated log, small enough to stop a bomb.
-MAX_GZ_UNCOMPRESSED = 256 * 1024 * 1024
+# blob. The log path inflates one in-memory member directly, so the cap is
+# enforced right here: the inflate is read in bounded chunks and refused once it
+# crosses this limit. 256 MiB is far larger than any real rotated log, and small
+# enough to stop a bomb.
+_MAX_GZ_UNCOMPRESSED = 256 * 1024 * 1024
 
 # The /var/log base names the rotated-set discovery collects. These are the
 # RFC3164/RFC5424 system logs (auth + syslog) the auth/syslog parsers handle.
 # Order is the declared scan order. Shell history is NOT here — it lives at
-# per-user dotfile paths (see :data:`SHELL_HISTORY_BASENAMES` /
+# per-user dotfile paths (see :data:`_SHELL_HISTORY_BASENAMES` /
 # :func:`discover_shell_histories`), not under /var/log, and does not rotate.
-DEFAULT_LOG_BASENAMES: tuple[str, ...] = (
+_DEFAULT_LOG_BASENAMES: tuple[str, ...] = (
     "auth.log",
     "secure",
     "syslog",
@@ -65,7 +65,7 @@ DEFAULT_LOG_BASENAMES: tuple[str, ...] = (
 # suffix, and must each be parsed as its own standalone "set" so the per-user
 # actor (``/home/<user>``) and the no-chronology tamperability finding (D-44)
 # stay attached. Matches :meth:`ShellHistoryParser.matches`.
-SHELL_HISTORY_BASENAMES: frozenset[str] = frozenset(
+_SHELL_HISTORY_BASENAMES: frozenset[str] = frozenset(
     {".bash_history", ".zsh_history", ".history"}
 )
 
@@ -75,16 +75,6 @@ SHELL_HISTORY_BASENAMES: frozenset[str] = frozenset(
 # of the same index (it is the older, already-rotated copy).
 _NUMERIC_SUFFIX = re.compile(r"^(?P<base>.+?)\.(?P<idx>\d+)(?P<gz>\.gz)?$")
 _DATEEXT_SUFFIX = re.compile(r"^(?P<base>.+?)[.\-](?P<date>\d{8})(?P<gz>\.gz)?$")
-
-
-class _SeamRow(Protocol):
-    """The minimal FS-seam row shape discover consumes (a ``FileEntry`` subset)."""
-
-    path: str
-
-    @property
-    def read_random(self) -> Any:  # (offset, size) -> bytes | None
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +216,7 @@ def _completeness(basename: str, members: Sequence[LogMember]) -> CompletenessFi
 
 
 def discover_log_sets(
-    rows: Iterable[Any], *, basenames: Sequence[str] = DEFAULT_LOG_BASENAMES
+    rows: Iterable[Any], *, basenames: Sequence[str] = _DEFAULT_LOG_BASENAMES
 ) -> list[LogSet]:
     """Group FS-seam rows into rotated log sets, ordered oldest→newest (D-45).
 
@@ -266,7 +256,7 @@ def discover_log_sets(
 
 
 def discover_shell_histories(
-    rows: Iterable[Any], *, basenames: frozenset[str] = SHELL_HISTORY_BASENAMES
+    rows: Iterable[Any], *, basenames: frozenset[str] = _SHELL_HISTORY_BASENAMES
 ) -> list[LogSet]:
     """Find per-user shell-history files as standalone single-member sets (LOG-03).
 
@@ -325,7 +315,7 @@ def decode_member(raw: bytes, *, is_gz: bool) -> str:
         try:
             with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
                 # Bounded inflate (WR-05): read in chunks and stop once the
-                # decompressed size crosses MAX_GZ_UNCOMPRESSED, so a small
+                # decompressed size crosses _MAX_GZ_UNCOMPRESSED, so a small
                 # crafted gz member cannot expand into a memory-exhausting blob.
                 # ``gz.read(n)`` is the decompression-bomb-safe counterpart of an
                 # unbounded ``gz.read()``. We read one chunk past the cap to
@@ -339,11 +329,11 @@ def decode_member(raw: bytes, *, is_gz: bool) -> str:
                     if not chunk:
                         break
                     total += len(chunk)
-                    if total > MAX_GZ_UNCOMPRESSED:
-                        # Decompression-bomb cap breached: refuse this member,
-                        # like safe_extract aborts a bomb mid-stream. The rest of
-                        # the rotated set is unaffected (a single bad member must
-                        # not lose the others).
+                    if total > _MAX_GZ_UNCOMPRESSED:
+                        # Decompression-bomb cap breached: refuse this member
+                        # mid-stream, before the inflated bytes are retained. The
+                        # rest of the rotated set is unaffected (a single bad
+                        # member must not lose the others).
                         return ""
                     chunks.append(chunk)
                 raw = b"".join(chunks)

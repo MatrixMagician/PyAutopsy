@@ -26,22 +26,23 @@ list is a clean :class:`SearchError` (operator error), never a ``.crashed`` bug
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, KnownMatch, SearchHit
+from pyautopsy.case import CaseStore, KnownMatch, SearchHit, Stage
+from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import integrity
-from pyautopsy.evidence.image import ImageOpenError
+from pyautopsy.filter import hashsets
 from pyautopsy.search import content as content_mod
 from pyautopsy.search import ioc as ioc_mod
 
 __all__ = ["SearchError", "SearchResult", "run_search"]
 
 
-class SearchError(Exception):
+class SearchError(PyAutopsyError):
     """Raised when search cannot proceed for a non-integrity reason.
 
     Chiefly: the case has no ``case.db`` (ingest was never run) or no evidence
@@ -68,19 +69,6 @@ class SearchResult:
     hits: int
     unallocated_hits: int
     hash_hits: int
-
-
-# The operational exception set search legitimately expects (mirrors
-# recover/knownfiles). Recorded as a ``search.error`` FAIL and re-raised; anything
-# OUTSIDE this set is a genuine bug recorded under ``search.crashed``.
-_EXPECTED_SEARCH_ERRORS: tuple[type[BaseException], ...] = (
-    SearchError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -150,6 +138,19 @@ def run_search(
     # rejection is recorded as a FAIL event (WR-03), honoring the D-08 "record
     # FAIL before non-zero exit" contract. ``run_search`` requires a prior ingest,
     # so the case dir already exists; AuditLog creates the journal lazily on write.
+    # The audit log lives inside the case directory, so a case that does not
+    # exist has nowhere to record a FAIL event. Check for it BEFORE binding the
+    # log, otherwise the audit write's own OSError masks this actionable message
+    # with a raw traceback (``run_search`` requires a prior ingest).
+    #
+    # No audit record is lost by checking early: the FAIL write this replaces
+    # could never succeed, because the directory it writes into is precisely the
+    # one that does not exist.
+    if not CaseStore.exists(case_path):
+        raise SearchError(
+            f"no case database under {case_path}; run `pyautopsy ingest` first"
+        )
+
     audit = AuditLog(case_path)
 
     # (1) Re-assert the read-only / not-mounted guard before any access (D-42/P1).
@@ -184,7 +185,8 @@ def run_search(
     if ioc_file is not None:
         ioc_all.extend(_read_ioc_file(Path(ioc_file)))
 
-    bad_set = ioc_mod.build_bad_hash_set(bad_hashes)
+    # The hash-list parser takes lines directly — no join/split round-trip.
+    bad_set = hashsets.parse_hash_set(bad_hashes)
 
     audit.write(
         "search.start",
@@ -201,7 +203,7 @@ def run_search(
     unallocated_hits = 0
     hash_hits = 0
 
-    try:
+    with audited_step(audit, store, "search", SearchError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -272,6 +274,10 @@ def run_search(
         with store.transaction():
             store.insert_search_hits(hits)
             store.insert_known_matches(matches)
+            # Recorded even when nothing matched: a search that found nothing is
+            # a real outcome, and the report must not report it as never having
+            # run (D-40 honesty).
+            store.record_stage_for_source(source_id, Stage.SEARCH)
 
         audit.write(
             "search.end",
@@ -281,24 +287,6 @@ def run_search(
             unallocated_hits=unallocated_hits,
             hash_hits=hash_hits,
         )
-    except _EXPECTED_SEARCH_ERRORS as exc:
-        audit.write(
-            "search.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "search.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return SearchResult(
         evidence_source_id=source_id,

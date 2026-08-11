@@ -33,26 +33,20 @@ analytical counts only — never wall-clock (CLI-02).
 from __future__ import annotations
 
 import os
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, LogFinding, TimelineEvent
+from pyautopsy.case import CaseStore, LogFinding, Stage, TimelineEvent
+from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
-from pyautopsy.evidence.filesystem import FilesystemError
-from pyautopsy.evidence.image import ImageOpenError
-
-# Importing the package registers ALL in-scope parsers (auth, syslog,
-# shell-history) via their import-time self-registration — see
-# ``pyautopsy/log/__init__.py``. The orchestrated ``iter_parsers()`` therefore
-# yields the full declared-order registry, not just ``auth`` (CR-01).
-from pyautopsy.log import discover, normalize, timeresolve
-from pyautopsy.log.registry import ParsedRecord, iter_parsers
+from pyautopsy.log import PARSERS, discover, normalize, timeresolve
+from pyautopsy.log.registry import ParsedRecord
 from pyautopsy.timeline.builder import explode
 from pyautopsy.util.timeutil import from_epoch_utc, iso_utc
 
@@ -70,7 +64,7 @@ __all__ = ["LogsError", "LogsResult", "run_logs"]
 _UNDATED_SORT_LAST_ISO = "9999-12-31T23:59:59+00:00"
 
 
-class LogsError(Exception):
+class LogsError(PyAutopsyError):
     """Raised when log parsing cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest was never run) or no
@@ -78,22 +72,6 @@ class LogsError(Exception):
     surface as :class:`~pyautopsy.evidence.integrity.MountedSourceError` /
     :class:`~pyautopsy.evidence.integrity.IntegrityError` instead.
     """
-
-
-# The operational exception set log parsing legitimately expects (mirrors
-# recover._EXPECTED_RECOVER_ERRORS). Recorded as ``logs.error`` FAIL and
-# re-raised; anything OUTSIDE this set is a genuine bug recorded under
-# ``logs.crashed``. ``sqlite3.Error`` is listed explicitly because it is NOT an
-# ``OSError`` (BL-02) — a corrupt case DB must exit cleanly, not crash.
-_EXPECTED_LOGS_ERRORS: tuple[type[BaseException], ...] = (
-    LogsError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    FilesystemError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,6 +319,19 @@ def run_logs(
     # ingest, so the case dir already exists; AuditLog creates the journal lazily
     # on first write. The D-08 contract is "record FAIL before non-zero exit" — the
     # pre-open guard must not be able to raise past the audit trail.
+    # The audit log lives inside the case directory, so a case that does not
+    # exist has nowhere to record a FAIL event. Check for it BEFORE binding the
+    # log, otherwise the audit write's own OSError masks this actionable message
+    # with a raw traceback (``run_logs`` requires a prior ingest).
+    #
+    # No audit record is lost by checking early: the FAIL write this replaces
+    # could never succeed, because the directory it writes into is precisely the
+    # one that does not exist.
+    if not CaseStore.exists(case_path):
+        raise LogsError(
+            f"no case database under {case_path}; run `pyautopsy ingest` first"
+        )
+
     audit = AuditLog(case_path)
 
     # (1) Re-assert the read-only / not-mounted guard before any access (D-05/P1).
@@ -377,7 +368,7 @@ def run_logs(
     log_sets = 0
     findings_count = 0
 
-    try:
+    with audited_step(audit, store, "logs", LogsError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -416,9 +407,7 @@ def run_logs(
                     read_text=_text,
                 )
 
-                rows = list(
-                    fs_seam.walk_fs(fs, vol.volume_id, vol.offset)
-                )
+                rows = list(fs_seam.walk_fs(fs, vol.volume_id, vol.offset))
                 rows_by_path = {r.path: r for r in rows}
 
                 # Rotated /var/log sets (auth/syslog) THEN per-user shell-history
@@ -498,6 +487,9 @@ def run_logs(
                 # transaction (CaseStore sole writer / WR-01) so the report can
                 # surface them; no second transaction is opened.
                 store.insert_log_findings(all_findings)
+                # Recorded even when a log set yielded no events: the pass still
+                # covered the image's logs (D-40 honesty).
+                store.record_stage_for_source(source_id, Stage.LOGS)
             events_parsed = len(all_events)
             findings_count = len(all_findings)
         finally:
@@ -512,24 +504,6 @@ def run_logs(
             log_sets=log_sets,
             findings_count=findings_count,
         )
-    except _EXPECTED_LOGS_ERRORS as exc:
-        audit.write(
-            "logs.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "logs.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return LogsResult(
         evidence_source_id=source_id,
@@ -565,9 +539,7 @@ def _parse_log_set(
     (D-44 tamperability) the matched parser exposes — both in encounter order so
     the store's surrogate-id tiebreak stays insertion-deterministic (Pitfall 3).
     """
-    parser = next(
-        (p for p in iter_parsers() if p.matches(log_set.basename)), None
-    )
+    parser = next((p for p in PARSERS if p.matches(log_set.basename)), None)
     if parser is None:
         return [], []
 

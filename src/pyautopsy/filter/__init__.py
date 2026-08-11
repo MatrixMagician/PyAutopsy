@@ -19,12 +19,19 @@ writer remains :class:`pyautopsy.case.CaseStore`).
 
 from __future__ import annotations
 
-from pyautopsy.filter.hashsets import custom_match, parse_hash_set
+from pyautopsy.filter.hashsets import (
+    HashSet,
+    parse_hash_set,
+    probe_hash_set,
+    to_known_match,
+)
 from pyautopsy.filter.nsrl import nsrl_match, open_nsrl
 
 __all__ = [
-    "custom_match",
+    "HashSet",
     "nsrl_match",
     "open_nsrl",
     "parse_hash_set",
+    "probe_hash_set",
+    "to_known_match",
 ]

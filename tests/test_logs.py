@@ -24,7 +24,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pyautopsy.case import TimelineEvent  # the LOG-04 model already exists
+from pyautopsy.log.registry import ParsedRecord
 
 
 def test_rfc3164_grammar() -> None:
@@ -128,12 +131,12 @@ def test_normalize_to_timeline_event() -> None:
     The produced ``TimelineEvent`` must carry source/event-type/actor/action/
     outcome/file_id (the reserved Phase-5 columns) and a verbatim UTC ts_utc; the
     actor is honest (``user=alice``, never ``user=None``). Mirrors
-    ``timeline/builder._explode`` purity.
+    ``timeline/builder.explode`` purity.
     """
     from pyautopsy.log import normalize  # noqa: PLC0415 (RED stub)
 
     event = normalize.to_event(
-        _FakeRecord(
+        ParsedRecord(
             action="ssh-login",
             outcome="success",
             actor="user=alice",
@@ -266,11 +269,12 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     from pyautopsy.core.ingest import run_ingest  # noqa: PLC0415
     from pyautopsy.core.logs import run_logs  # noqa: PLC0415
     from pyautopsy.core.walk import run_walk  # noqa: PLC0415
-    from pyautopsy.log.registry import iter_parsers  # noqa: PLC0415
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
 
-    # The orchestrated registry must carry the full declared-order set, NOT just
-    # auth — without importing the parser modules here (that is the masking bug).
-    names = {p.name for p in iter_parsers()}
+    # The orchestrated parser set must carry the full declared-order set, NOT
+    # just auth — without importing the parser modules here (that is the
+    # masking bug the old import-time registry allowed).
+    names = {p.name for p in PARSERS}
     assert {"auth", "syslog", "shell-history"} <= names, (
         f"orchestrated registry missing parsers: {names}"
     )
@@ -290,9 +294,9 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
 
     # CR-01 core: syslog AND shell-history events are present on the REAL path.
     assert by_source.get("syslog"), "orchestrated run_logs produced no syslog events"
-    assert by_source.get(
-        "shell-history"
-    ), "orchestrated run_logs produced no shell-history events"
+    assert by_source.get("shell-history"), (
+        "orchestrated run_logs produced no shell-history events"
+    )
     assert by_source.get("auth"), "orchestrated run_logs produced no auth events"
 
     # The fixture's tied-second syslog pair must BOTH be merged (05-04 gap closed).
@@ -308,9 +312,9 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     assert {e.ts_utc for e in tied} == {tied[0].ts_utc}, "tied lines must share ts_utc"
 
     # Shell history carries the per-user actor derived from /home/<user>.
-    assert any(
-        e.actor == "user=alice" for e in by_source["shell-history"]
-    ), "shell-history events missing the per-user actor"
+    assert any(e.actor == "user=alice" for e in by_source["shell-history"]), (
+        "shell-history events missing the per-user actor"
+    )
 
     # log_sets counts auth + syslog rotated sets PLUS the two shell-history files.
     assert result.log_sets >= 4, (
@@ -323,9 +327,7 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     assert all(s.endswith("+00:00") for s in stamps)
 
 
-def test_run_logs_persists_findings(
-    log_search_image: Path, case_dir: Path
-) -> None:
+def test_run_logs_persists_findings(log_search_image: Path, case_dir: Path) -> None:
     """G-2 close: run_logs persists the D-44 tamperability + D-45 completeness findings.
 
     The orchestrated :func:`run_logs` must capture the shell-history tamperability
@@ -405,9 +407,7 @@ def test_groundtruth_year_matches_fixture_mtime(
 
     ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
     run_walk(log_search_image, case_dir, timezone="UTC")
-    run_logs(
-        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
-    )
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
 
     with CaseStore.open(case_dir) as store:
         events = store.get_timeline_events(ingested.evidence_source_id)
@@ -427,7 +427,8 @@ def test_groundtruth_year_matches_fixture_mtime(
     stray = sorted({y for y in inferred_years if y not in allowed})
     assert not stray, (
         f"inferred years {stray} not in the sidecar-documented "
-        f"{{prev_year={gt['prev_year']}, year={gt['year']}}} — fixture/sidecar drift (G-1)"
+        f"{{prev_year={gt['prev_year']}, year={gt['year']}}} — "
+        "fixture/sidecar drift (G-1)"
     )
     assert gt["year"] in inferred_years, (
         f"sidecar year {gt['year']} is not produced by the fixture's mtime anchor; "
@@ -526,13 +527,62 @@ def _naive(month_day_time: str, *, year: int) -> Any:
     return datetime.strptime(f"{year} {month_day_time}", "%Y %b %d %H:%M:%S")
 
 
-class _FakeRecord:
-    """A minimal parsed-record stand-in for the LOG-04 normalize contract."""
+def test_parser_order_is_declared_explicitly() -> None:
+    """The parser order is stated, not emergent (EXT-01 / CR-01).
 
-    def __init__(self, **kw: Any) -> None:
-        self.action = kw.get("action")
-        self.outcome = kw.get("outcome")
-        self.actor = kw.get("actor")
-        self.message = kw.get("message")
-        self.volume_id = 0
-        self.volume_offset = 0
+    This order fixes which parser claims a basename, hence the per-line parse
+    order, hence the ``insert_timeline_events`` order, hence the store's
+    surrogate-id tiebreak — the deterministic-tied-order guarantee. It used to
+    be a side effect of which module got imported first; asserting it here
+    means a reorder is a visible, deliberate change.
+    """
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
+
+    assert [p.name for p in PARSERS] == ["auth", "shell-history", "syslog"]
+
+
+@pytest.mark.parametrize(
+    ("basename", "expected"),
+    [
+        ("auth.log", "auth"),
+        ("secure", "auth"),
+        ("syslog", "syslog"),
+        ("messages", "syslog"),
+        (".bash_history", "shell-history"),
+        (".zsh_history", "shell-history"),
+        ("kern.log", None),
+        ("dpkg.log", None),
+        ("random.txt", None),
+    ],
+)
+def test_parser_selection_per_basename(basename: str, expected: str | None) -> None:
+    """Selection is first-match in declared order, unchanged per basename."""
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
+
+    chosen = next((p for p in PARSERS if p.matches(basename)), None)
+    assert (chosen.name if chosen else None) == expected
+
+
+def test_importing_a_parser_module_mutates_no_global_state() -> None:
+    """Importing a parser module has no side effect on parser selection.
+
+    The old registry was populated by import-time ``register()`` calls, so what
+    the orchestrator saw depended on what had been imported. Re-importing a
+    parser module must now change nothing.
+    """
+    import importlib  # noqa: PLC0415
+
+    from pyautopsy.log import PARSERS  # noqa: PLC0415
+
+    before = list(PARSERS)
+    for module in (
+        "pyautopsy.log.auth",
+        "pyautopsy.log.syslog",
+        "pyautopsy.log.shell_history",
+    ):
+        importlib.reload(importlib.import_module(module))
+
+    from pyautopsy.log import PARSERS as after  # noqa: PLC0415
+
+    assert [p.name for p in after] == [p.name for p in before]
+    assert len(after) == 3

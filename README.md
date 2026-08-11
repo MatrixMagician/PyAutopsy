@@ -60,17 +60,24 @@ pip install -e ".[dev]"
 
 ```bash
 # One command: ingest → walk → timeline → report.
-pyautopsy analyze evidence.dd \
-    --case ./case --examiner "Your Name" --evidence-id E1
+# The case directory must live OUTSIDE the evidence directory (see below).
+pyautopsy analyze /evidence/disk.dd \
+    --case ./cases/case1 --examiner "Your Name" --evidence-id E1
 
 # Outputs land under the case directory:
-#   case/reports/report.html   (human-readable, byte-deterministic)
-#   case/reports/report.json   (structured/exportable, byte-deterministic)
-ls ./case/reports/
+#   cases/case1/reports/report.html   (human-readable, byte-deterministic)
+#   cases/case1/reports/report.json   (structured/exportable, byte-deterministic)
+ls ./cases/case1/reports/
 ```
 
-`analyze` requires a **fresh** case directory — a pre-existing `case.db` fails loudly
-so a prior case is never silently overwritten.
+Two rules the tool enforces rather than assumes:
+
+- The case directory must be **separate from the evidence** — not the evidence
+  directory, not inside it, not an ancestor of the image. Output never lands
+  beside the evidence it describes (**D-01**). `--case ./case` alongside
+  `./evidence.dd` in the same directory is refused.
+- `analyze` requires a **fresh** case directory — a pre-existing `case.db` fails
+  loudly so a prior case is never silently overwritten.
 
 ## Usage
 
@@ -89,8 +96,8 @@ composes, so you can run the full pipeline or drive each step against an existin
 **Full analysis with recovery, known-file filtering, logs, and a search term:**
 
 ```bash
-pyautopsy analyze evidence.E01 \
-    --case ./case --examiner "Your Name" --evidence-id E1 \
+pyautopsy analyze /evidence/disk.E01 \
+    --case ./cases/case2 --examiner "Your Name" --evidence-id E1 \
     --recover \
     --nsrl /path/to/nsrl-rds.sqlite \
     --logs \
@@ -100,10 +107,11 @@ pyautopsy analyze evidence.E01 \
 **Drive individual stages against an existing case (created by `ingest`):**
 
 ```bash
-pyautopsy ingest evidence.dd --case ./case --examiner "Your Name" --evidence-id E1
-pyautopsy walk    evidence.dd --case ./case
-pyautopsy recover evidence.dd --case ./case
-pyautopsy search  evidence.dd --case ./case --term "secret" --regex
+pyautopsy ingest  /evidence/disk.dd --case ./cases/case1 --examiner "Your Name" --evidence-id E1
+pyautopsy walk    /evidence/disk.dd --case ./cases/case1
+pyautopsy recover /evidence/disk.dd --case ./cases/case1
+pyautopsy logs    /evidence/disk.dd --case ./cases/case1
+pyautopsy search  /evidence/disk.dd --case ./cases/case1 --term "secret" --regex
 ```
 
 Every command opens the source read-only, records each operation in an append-only
@@ -142,9 +150,21 @@ as a non-root user and expects evidence mounted read-only:
 podman build -t pyautopsy -f Containerfile .
 # or: docker build -t pyautopsy -f Containerfile .
 
-podman run --rm -v "$PWD:/data:ro,Z" pyautopsy \
-    pyautopsy ingest /data/evidence.dd --case /data/case --examiner you --evidence-id E1
+# Evidence is mounted read-only; the case directory is a SEPARATE writable
+# mount, because output must never land beside the evidence (D-01).
+# --userns=keep-id maps the container's `analyst` user to yours, so the case
+# directory is writable and the reports come back owned by you.
+podman run --rm --userns=keep-id \
+    -v "$PWD/evidence:/evidence:ro,Z" \
+    -v "$PWD/cases:/cases:Z" \
+    pyautopsy \
+    ingest /evidence/disk.dd --case /cases/case1 \
+        --examiner you --evidence-id E1
 ```
+
+The image's entrypoint is `pyautopsy` itself, so the arguments after the image
+name start at the subcommand (`ingest`, `analyze`, ...) — repeating `pyautopsy`
+there makes it look like a subcommand and fails.
 
 ## Development
 

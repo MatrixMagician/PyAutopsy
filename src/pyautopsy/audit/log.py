@@ -27,6 +27,11 @@ _LOG_NAME = "audit.jsonl"
 _OPEN_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_APPEND
 _OPEN_MODE = 0o644
 
+# Record keys the writer owns. A caller may never supply them: ``action`` names
+# the event and ``ts`` is the UTC stamp, and a forgeable audit trail is no audit
+# trail at all.
+_RESERVED_FIELDS: tuple[str, ...] = ("action", "ts")
+
 
 class AuditPathError(ValueError):
     """Raised when an audit-log path would escape the case directory."""
@@ -61,6 +66,11 @@ class AuditLog:
     def write(self, action: str, **fields: Any) -> None:
         """Append one audit event built from an action and keyword fields.
 
+        The reserved-key guard lives on :meth:`write_event`, the single path
+        every write traverses. ``action`` cannot reach ``fields`` at all here:
+        it is bound by the positional parameter, so passing it is a
+        ``TypeError`` from the call itself.
+
         Args:
             action: The action name (e.g. ``"ingest.open"``).
             **fields: Action-specific JSON-serialisable payload (inputs, hashes,
@@ -71,12 +81,6 @@ class AuditLog:
             ValueError: If a reserved key (``action`` / ``ts``) is supplied.
             OSError: If the event cannot be written to disk.
         """
-        for reserved in ("action", "ts"):
-            if reserved in fields:
-                raise ValueError(
-                    f"{reserved!r} is a reserved audit field and is set "
-                    "automatically; do not pass it explicitly"
-                )
         self.write_event(AuditEvent(action=action, fields=fields))
 
     def write_event(self, event: AuditEvent) -> None:
@@ -86,6 +90,10 @@ class AuditLog:
         timestamp source single (D-10). The flattened record is
         ``{"action": ..., "ts": ..., **event.fields}``.
 
+        This is the single point every write path passes through, so it owns
+        the reserved-key guard: a caller using either entry point cannot forge
+        an action or a timestamp.
+
         Args:
             event: The event to append.
 
@@ -94,11 +102,17 @@ class AuditLog:
             OSError: If the event cannot be written to disk.
         """
         record: dict[str, Any] = dict(event.fields)
-        if "action" in record or "ts" in record:
-            raise ValueError(
-                "audit event fields must not contain reserved keys "
-                "'action' or 'ts'"
-            )
+        for reserved in _RESERVED_FIELDS:
+            if reserved in record:
+                # One guard means one message, so the two entry points can no
+                # longer word this differently. This is ``write``'s original
+                # wording, kept because it names the offending key; the version
+                # that lived here listed both reserved names without saying
+                # which one the caller actually passed.
+                raise ValueError(
+                    f"{reserved!r} is a reserved audit field and is set "
+                    "automatically; do not pass it explicitly"
+                )
         record["action"] = event.action
         record["ts"] = event.ts or iso_utc()
         line = json.dumps(record, sort_keys=True, ensure_ascii=False) + "\n"
@@ -114,9 +128,7 @@ class AuditLog:
             finally:
                 os.close(fd)
         except OSError as exc:
-            raise OSError(
-                f"failed to append to audit log {self.path}: {exc}"
-            ) from exc
+            raise OSError(f"failed to append to audit log {self.path}: {exc}") from exc
 
 
 def _is_within(path: Path, root: Path) -> bool:

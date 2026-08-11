@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pyautopsy.case import CaseStore
+from pyautopsy.case import Case, CaseStore
 from pyautopsy.core.ingest import run_ingest
 from pyautopsy.core.walk import run_walk
 from pyautopsy.report.assemble import assemble_report_body
@@ -142,14 +142,12 @@ def test_log_findings_disclosures_in_body(
 
     ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
     run_walk(log_search_image, case_dir, timezone="UTC")
-    run_logs(
-        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
-    )
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
 
     with CaseStore.open(case_dir) as store:
-        body = assemble_report_body(
-            store, ingested.evidence_source_id, logs_ran=True
-        )
+        # No logs_ran flag: the body reads the coverage from the case, where
+        # the real run_logs pass above recorded it.
+        body = assemble_report_body(store, ingested.evidence_source_id)
         html = render_html(body, case_dir)
 
     disclosures = body["log_findings"]["disclosures"]
@@ -185,9 +183,7 @@ def test_findings_d28(tiny_ext4_image: Path, case_dir: Path) -> None:
     assert "deleted_count" in inventory
 
 
-def test_integrity_three_states_honest(
-    tiny_ext4_image: Path, case_dir: Path
-) -> None:
+def test_integrity_three_states_honest(tiny_ext4_image: Path, case_dir: Path) -> None:
     """Integrity reflects the real acquisition outcome, never a hardcoded PASS (WR-02).
 
     No acquisition hash was supplied (default), so the body must surface the
@@ -201,12 +197,12 @@ def test_integrity_three_states_honest(
     with CaseStore.open(case_dir) as store:
         # Default: no acquisition hash compared -> honest "not compared".
         not_compared = assemble_report_body(store, source_id)["integrity"]
-        verified = assemble_report_body(
-            store, source_id, acquisition_verified=True
-        )["integrity"]
-        failed = assemble_report_body(
-            store, source_id, acquisition_verified=False
-        )["integrity"]
+        verified = assemble_report_body(store, source_id, acquisition_verified=True)[
+            "integrity"
+        ]
+        failed = assemble_report_body(store, source_id, acquisition_verified=False)[
+            "integrity"
+        ]
 
     assert not_compared["acquisition_supplied"] is False
     assert not_compared["acquisition_compare_pass"] is False
@@ -226,9 +222,7 @@ def test_integrity_three_states_honest(
 
 def test_fat_provenance(tiny_fat32_image: Path, case_dir: Path) -> None:
     """FAT local-time-inferred / assumed_timezone provenance survives to the report."""
-    source_id = _analyzed_store(
-        tiny_fat32_image, case_dir, timezone="America/New_York"
-    )
+    source_id = _analyzed_store(tiny_fat32_image, case_dir, timezone="America/New_York")
     with CaseStore.open(case_dir) as store:
         body = assemble_report_body(store, source_id)
 
@@ -246,3 +240,168 @@ def test_versions_recorded(tiny_ext4_image: Path, case_dir: Path) -> None:
     methodology = body["methodology"]
     assert methodology.get("pyautopsy_version")
     assert "tsk_version" in methodology
+
+
+def test_coverage_is_reported_for_a_pass_that_found_nothing(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """A search that matched nothing is still reported as having run (D-40).
+
+    This is why coverage is recorded by each pass rather than inferred from
+    whether it produced rows. "We searched and found nothing" and "we never
+    searched" are different statements about the evidence, and a report whose
+    job is honest disclosure must not collapse them.
+    """
+    from pyautopsy.core.search import run_search  # noqa: PLC0415
+
+    ingested = run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    result = run_search(
+        tiny_ext4_image,
+        case_dir,
+        terms=[b"a-term-that-does-not-occur-anywhere-in-this-image"],
+    )
+    assert result.hits == 0, "fixture unexpectedly matched; test needs a rarer term"
+
+    with CaseStore.open(case_dir) as store:
+        body = assemble_report_body(store, ingested.evidence_source_id)
+
+    disclaimer = body["limitations"]["mvp_disclaimer"]
+    assert "content search" in disclaimer
+    assert "It does NOT include" not in disclaimer.split("content search")[0][-60:]
+    # The closing honesty sentence survives every combination.
+    assert disclaimer.endswith(
+        "Absence of a finding here does not mean absence of evidence."
+    )
+
+
+def test_coverage_flags_cannot_drift_from_what_ran(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """The report derives coverage from the case, so no caller can misreport it.
+
+    Previously four booleans were threaded down from the orchestrator, and a
+    caller that forgot one produced a report that under-claimed its own
+    coverage. The parameters are gone; this pins that the only input is the
+    case data.
+    """
+    import inspect  # noqa: PLC0415
+
+    signature = inspect.signature(assemble_report_body)
+    assert not (
+        {"recovery_ran", "filtering_ran", "logs_ran", "search_ran"}
+        & set(signature.parameters)
+    )
+
+    ingested = run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    with CaseStore.open(case_dir) as store:
+        bare = assemble_report_body(store, ingested.evidence_source_id)
+    # A walk-only case honestly reports every opt-in pass as not covered.
+    disclaimer = bare["limitations"]["mvp_disclaimer"]
+    for absent in ("deleted-file recovery", "known-file (NSRL) filtering"):
+        assert absent in disclaimer
+
+
+def test_every_stage_the_orchestrators_record_is_read_by_the_report() -> None:
+    """Writer and reader agree on stage names by construction (D-40).
+
+    Coverage is written by four orchestrators and read by the report. When both
+    sides used bare string literals a typo on either one silently under-claimed
+    what a run examined — the exact honest-disclosure failure that recording the
+    stage exists to prevent, with nothing to catch the drift. Both sides now
+    refer to the same enum; this pins that every member is actually consumed.
+    """
+    import inspect  # noqa: PLC0415
+
+    from pyautopsy.case import Stage  # noqa: PLC0415
+    from pyautopsy.report import assemble  # noqa: PLC0415
+
+    source = inspect.getsource(assemble.assemble_report_body)
+    unread = [stage.name for stage in Stage if f"Stage.{stage.name}" not in source]
+    assert not unread, (
+        f"these stages are recorded but never read by the report: {unread} — "
+        "the report would silently under-claim what the run covered"
+    )
+
+
+def test_unknown_stage_rows_do_not_break_the_report(case_dir: Path) -> None:
+    """A stage value the current build does not know is skipped, not fatal.
+
+    An older case (or one written by a later version) may carry a stage this
+    build has never heard of. The report should still render what it can
+    understand rather than refusing to open the case at all.
+    """
+    from pyautopsy.case import Stage  # noqa: PLC0415
+
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        store.connection.execute(
+            "INSERT INTO run_log (case_id, stage) VALUES (?, ?)",
+            (case_id, "a-stage-from-the-future"),
+        )
+        store.record_stage(case_id, Stage.LOGS)
+        assert store.stages_run(case_id) == frozenset({Stage.LOGS})
+    finally:
+        store.close()
+
+
+def test_a_case_without_recorded_stages_still_reports_its_findings_honestly(
+    log_search_image: Path, case_dir: Path
+) -> None:
+    """A case predating stage recording must not deny work its own data proves.
+
+    Coverage is normally read from ``run_log``. A case written before those rows
+    existed has none — and reporting "this does NOT include log analysis" over a
+    case full of parsed log events would be the report lying about its own
+    coverage, which is the single thing this report must never do.
+
+    Findings therefore act as an honest floor: a pass that left rows behind is
+    reported as having run regardless of ``run_log``.
+    """
+    from pyautopsy.core.logs import run_logs  # noqa: PLC0415
+    from pyautopsy.core.search import run_search  # noqa: PLC0415
+
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(log_search_image, case_dir)
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
+    run_search(log_search_image, case_dir, terms=[b"root"])
+
+    # Simulate the older case: findings present, no stage rows.
+    with CaseStore.open(case_dir) as store:
+        store.connection.execute("DELETE FROM run_log")
+        store.connection.commit()
+        assert store.get_log_findings(ingested.evidence_source_id)
+        assert store.get_search_hits(ingested.evidence_source_id)
+        body = assemble_report_body(store, ingested.evidence_source_id)
+
+    disclaimer = body["limitations"]["mvp_disclaimer"]
+    excluded = disclaimer.split("It does NOT include")[-1]
+    assert "log analysis" not in excluded
+    assert "content search" not in excluded
+    assert "log analysis merged into the super-timeline" in disclaimer
+    assert "content search" in disclaimer
+
+
+def test_recorded_stage_still_wins_when_a_pass_found_nothing(
+    tiny_ext4_image: Path, case_dir: Path
+) -> None:
+    """Findings are a floor, not the whole answer.
+
+    A search that ran and matched nothing leaves no rows, so inferring coverage
+    from findings alone would report it as never having run. The recorded stage
+    covers that direction; this pins that the union keeps both.
+    """
+    from pyautopsy.core.search import run_search  # noqa: PLC0415
+
+    ingested = run_ingest(tiny_ext4_image, case_dir, examiner="X", evidence_id="E1")
+    run_walk(tiny_ext4_image, case_dir)
+    result = run_search(tiny_ext4_image, case_dir, terms=[b"no-such-needle-anywhere"])
+    assert result.hits == 0
+
+    with CaseStore.open(case_dir) as store:
+        assert not store.get_search_hits(ingested.evidence_source_id)
+        body = assemble_report_body(store, ingested.evidence_source_id)
+
+    assert "content search" in body["limitations"]["mvp_disclaimer"]

@@ -33,7 +33,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pyautopsy.util.timeutil import iso_utc
 
 __all__ = [
-    "TIMESTAMP_SOURCE_BY_LABEL",
     "zone",
     "resolve_host_tz",
     "to_utc",
@@ -44,7 +43,7 @@ __all__ = [
 # Canonical provenance labels for the event ``timestamp_source`` attribute — the
 # log-side sibling of ``walk._TIMESTAMP_SOURCE_BY_LABEL`` (D-16). These describe
 # HOW a UTC instant was derived; they are asserted verbatim by the D-46 tests.
-TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
+_TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
     "inferred-tz": "log:inferred-tz",
     "assumed-utc": "log:assumed-utc",
     "rfc5424": "log:rfc5424-offset",
@@ -52,8 +51,18 @@ TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
 
 # RFC3164 month abbreviations → 1..12 (the only month spelling in the format).
 _MONTHS: dict[str, int] = {
-    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
-    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+    "Jan": 1,
+    "Feb": 2,
+    "Mar": 3,
+    "Apr": 4,
+    "May": 5,
+    "Jun": 6,
+    "Jul": 7,
+    "Aug": 8,
+    "Sep": 9,
+    "Oct": 10,
+    "Nov": 11,
+    "Dec": 12,
 }
 
 
@@ -87,7 +96,7 @@ def resolve_host_tz(
     if target:
         marker = "/zoneinfo/"
         idx = target.find(marker)
-        zone_name = target[idx + len(marker):] if idx >= 0 else target.lstrip("/")
+        zone_name = target[idx + len(marker) :] if idx >= 0 else target.lstrip("/")
         zone_name = zone_name.strip()
         if zone_name:
             try:
@@ -131,12 +140,12 @@ def to_utc(
     if host_tz is None:
         dt = ts_naive_wallclock.replace(tzinfo=timezone.utc)
         return iso_utc(dt), {
-            "timestamp_source": TIMESTAMP_SOURCE_BY_LABEL["assumed-utc"],
+            "timestamp_source": _TIMESTAMP_SOURCE_BY_LABEL["assumed-utc"],
             "time_warning": "WARNING: host timezone undeterminable; assumed UTC",
         }
     dt = ts_naive_wallclock.replace(tzinfo=host_tz)
     return iso_utc(dt), {
-        "timestamp_source": TIMESTAMP_SOURCE_BY_LABEL["inferred-tz"],
+        "timestamp_source": _TIMESTAMP_SOURCE_BY_LABEL["inferred-tz"],
         "assumed_timezone": str(host_tz),
     }
 
@@ -231,9 +240,7 @@ def infer_years(
         #       year). A lone mid-year spike (e.g. an August anomaly) still fails
         #       BOTH clauses, so the anti-cascade guarantee holds.
         confirmed = wrap and (
-            i == 0
-            or components[i - 1][0] >= 7
-            or components[i][0] >= 11
+            i == 0 or components[i - 1][0] >= 7 or components[i][0] >= 11
         )
         years[i] = years[i + 1] - 1 if confirmed else years[i + 1]
         if confirmed:

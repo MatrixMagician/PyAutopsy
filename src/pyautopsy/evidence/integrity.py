@@ -34,7 +34,9 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+
+from pyautopsy.errors import PyAutopsyError
+from pyautopsy.evidence.byteio import ReadableBytes
 
 __all__ = [
     "EMPTY",
@@ -55,6 +57,12 @@ _DEFAULT_CHUNK = 8 * 1024 * 1024
 # Per-file streaming chunk: 1 MiB — memory-bounded for the many smaller reads of
 # a filesystem walk while keeping the single-pass shape (D-17, configurable).
 _DEFAULT_FILE_CHUNK = 1 * 1024 * 1024
+
+# Algorithm sets, in the key order each digest mapping has always been built in.
+# The image pass omits SHA-1: EWF stores MD5/SHA-1 and NSRL is keyed on MD5/SHA-1,
+# so SHA-1 earns its place per-file (hash-set interop) but not per-image.
+_IMAGE_ALGORITHMS: tuple[str, ...] = ("md5", "sha256")
+_FILE_ALGORITHMS: tuple[str, ...] = ("md5", "sha1", "sha256")
 
 # The well-known empty-file digests (MD5/SHA-1/SHA-256 of zero bytes). Returned
 # verbatim for a zero-length file so the no-content case is recorded as a
@@ -78,7 +86,7 @@ _LEN_TO_ALGO: dict[int, str] = {32: "md5", 64: "sha256"}
 _OCTAL_ESCAPE = re.compile(rb"\\([0-7]{3})")
 
 
-class IntegrityError(Exception):
+class IntegrityError(PyAutopsyError):
     """Raised when an integrity check fails (acquisition mismatch or re-verify).
 
     This is the loud, non-zero-exit-worthy failure the orchestrator turns into a
@@ -87,23 +95,13 @@ class IntegrityError(Exception):
     """
 
 
-class MountedSourceError(Exception):
+class MountedSourceError(PyAutopsyError):
     """Raised when the evidence source path is (under) a mounted filesystem.
 
     Operating on a mounted source risks journal replay, atime updates, and mount
     counter bumps — all evidence-altering side effects (PITFALLS P1). The tool
     refuses to proceed.
     """
-
-
-class ReadableSource(Protocol):
-    """The minimal byte-source interface :func:`hash_image` consumes."""
-
-    def read(self, offset: int, size: int) -> bytes:
-        """Read ``size`` bytes starting at ``offset``."""
-
-    def get_size(self) -> int:
-        """Return the total size in bytes."""
 
 
 # A read-only ``(offset, size) -> bytes`` callable :func:`hash_file` consumes.
@@ -113,6 +111,48 @@ class ReadableSource(Protocol):
 # plain ``Callable`` alias (not a Protocol) so a positional-only closure from the
 # seam matches structurally.
 ContentReader = Callable[[int, int], bytes]
+
+
+def _stream_digests(
+    read: ContentReader, total: int, algorithms: tuple[str, ...], chunk: int
+) -> tuple[dict[str, str], int]:
+    """Stream ``total`` bytes through ``algorithms`` in one pass.
+
+    The shared body of :func:`hash_image` and :func:`hash_file` (D-07): the
+    source is read exactly once no matter how many digests are computed. This
+    routine deliberately has **no short-read policy** — it reports how far it
+    got and lets each caller apply its own, because those policies differ and
+    must stay explicit (a short image read is a hard integrity failure; a short
+    file read is a skip).
+
+    Args:
+        read: A read-only ``(offset, size) -> bytes`` callable.
+        total: The number of bytes the source claims to hold.
+        algorithms: The :mod:`hashlib` algorithm names to compute.
+        chunk: Streaming chunk size in bytes. Must be positive.
+
+    Returns:
+        ``(digests, consumed)`` — the hex digests keyed by algorithm name, and
+        the number of bytes actually read. ``consumed != total`` means the
+        source short-read and the digests cover only part of it.
+
+    Raises:
+        ValueError: If ``chunk`` is not positive.
+    """
+    if chunk <= 0:
+        raise ValueError(f"chunk must be positive, got {chunk}")
+
+    digests = {name: hashlib.new(name) for name in algorithms}
+    offset = 0
+    while offset < total:
+        want = min(chunk, total - offset)
+        block = read(offset, want)
+        if not block:
+            break
+        for digest in digests.values():
+            digest.update(block)
+        offset += len(block)
+    return {name: d.hexdigest() for name, d in digests.items()}, offset
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,9 +185,7 @@ class VerifyResult:
             )
 
 
-def hash_image(
-    source: ReadableSource, chunk: int = _DEFAULT_CHUNK
-) -> dict[str, str]:
+def hash_image(source: ReadableBytes, chunk: int = _DEFAULT_CHUNK) -> dict[str, str]:
     """Compute MD5 + SHA-256 over a byte source in a single streaming pass.
 
     One pass updates both digests, so the source is read exactly once regardless
@@ -168,28 +206,22 @@ def hash_image(
             digest must never silently cover less than the whole image
             (INGEST-02/D-08), so a short read is a loud failure.
     """
+    # Validate the argument BEFORE touching the source: a caller error should be
+    # reported as one, not masked by whatever the evidence read happens to do.
     if chunk <= 0:
         raise ValueError(f"chunk must be positive, got {chunk}")
 
-    md5 = hashlib.md5()
-    sha256 = hashlib.sha256()
     total = source.get_size()
-    offset = 0
-    while offset < total:
-        want = min(chunk, total - offset)
-        block = source.read(offset, want)
-        if not block:
-            break
-        md5.update(block)
-        sha256.update(block)
-        offset += len(block)
-    if offset != total:
+    digests, consumed = _stream_digests(source.read, total, _IMAGE_ALGORITHMS, chunk)
+    if consumed != total:
+        # Image policy: a partial *image* digest is never acceptable, so this
+        # is a hard integrity failure and no digest is returned at all.
         raise IntegrityError(
-            f"short read while hashing source: read {offset} of {total} bytes "
+            f"short read while hashing source: read {consumed} of {total} bytes "
             "(image truncated or unreadable); refusing to record a partial "
             "digest"
         )
-    return {"md5": md5.hexdigest(), "sha256": sha256.hexdigest()}
+    return digests
 
 
 def hash_file(
@@ -242,28 +274,12 @@ def hash_file(
     if max_size is not None and size > max_size:
         return None  # skipped: caller records null hashes + an oversize reason.
 
-    md5 = hashlib.md5()
-    sha1 = hashlib.sha1()
-    sha256 = hashlib.sha256()
-    off = 0
-    while off < size:
-        want = min(chunk, size - off)
-        block = read_random(off, want)
-        if not block:
-            break
-        md5.update(block)
-        sha1.update(block)
-        sha256.update(block)
-        off += len(block)
-    if off != size:
+    digests, consumed = _stream_digests(read_random, size, _FILE_ALGORITHMS, chunk)
+    if consumed != size:
         # Short/truncated read: do NOT record a partial digest (no-partial-digest
         # principle). Per-file divergence from hash_image — skip, do not raise.
         return None
-    return {
-        "md5": md5.hexdigest(),
-        "sha1": sha1.hexdigest(),
-        "sha256": sha256.hexdigest(),
-    }
+    return digests
 
 
 def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
@@ -300,8 +316,7 @@ def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
         int(normalised, 16)
     except ValueError as exc:
         raise IntegrityError(
-            f"supplied acquisition hash is not valid hexadecimal: "
-            f"{supplied!r}"
+            f"supplied acquisition hash is not valid hexadecimal: {supplied!r}"
         ) from exc
     computed_digest = computed[algorithm].lower()
     return VerifyResult(
@@ -312,7 +327,7 @@ def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
     )
 
 
-def reverify(source: ReadableSource, baseline: dict[str, str]) -> None:
+def reverify(source: ReadableBytes, baseline: dict[str, str]) -> None:
     """Re-hash the source and assert it still matches the ingest-time baseline.
 
     Called at end of run: re-streams the source and compares both digests to the

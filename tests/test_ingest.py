@@ -214,9 +214,7 @@ def test_run_ingest_refuses_mounted_source(
 # -- acquisition-hash compare PASS/FAIL (D-08) ----------------------------
 
 
-def test_run_ingest_acquisition_hash_pass(
-    tiny_raw_image: Path, case_dir: Path
-) -> None:
+def test_run_ingest_acquisition_hash_pass(tiny_raw_image: Path, case_dir: Path) -> None:
     """A matching ``acquisition_hash`` records a PASS and succeeds."""
     expected = _expected_digests(tiny_raw_image)
     result = run_ingest(
@@ -319,9 +317,7 @@ def test_run_ingest_rolls_back_case_row_on_failure(
     conn = sqlite3.connect(case_dir / "case.db")
     try:
         cases = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
-        sources = conn.execute(
-            "SELECT COUNT(*) FROM evidence_sources"
-        ).fetchone()[0]
+        sources = conn.execute("SELECT COUNT(*) FROM evidence_sources").fetchone()[0]
     finally:
         conn.close()
     # Neither COC row was committed — the transaction rolled both back (WR-01).
@@ -358,9 +354,7 @@ def test_run_ingest_malformed_acquisition_hash_audits_fail(
             acquisition_hash=malformed,
         )
     events = _read_audit(case_dir)
-    compare = next(
-        e for e in events if e["action"] == "ingest.acquisition_compare"
-    )
+    compare = next(e for e in events if e["action"] == "ingest.acquisition_compare")
     assert compare["outcome"] == "FAIL"
     assert compare.get("reason") == "malformed_hash"
     # CR-03 terminal FAIL event also present.

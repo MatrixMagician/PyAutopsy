@@ -20,6 +20,7 @@ from pyautopsy.case import (
     EvidenceSource,
     FileRow,
     LogFinding,
+    SearchHit,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -51,12 +52,8 @@ def test_create_builds_directory_layout(case_dir: Path) -> None:
 def test_pragmas_wal_and_foreign_keys(case_dir: Path) -> None:
     """The case DB is opened WAL with foreign-key enforcement on."""
     with CaseStore.create(case_dir) as store:
-        journal_mode = store.connection.execute(
-            "PRAGMA journal_mode"
-        ).fetchone()[0]
-        foreign_keys = store.connection.execute(
-            "PRAGMA foreign_keys"
-        ).fetchone()[0]
+        journal_mode = store.connection.execute("PRAGMA journal_mode").fetchone()[0]
+        foreign_keys = store.connection.execute("PRAGMA foreign_keys").fetchone()[0]
     assert journal_mode.lower() == "wal"
     assert foreign_keys == 1
 
@@ -122,12 +119,9 @@ def test_all_timestamp_columns_are_utc(case_dir: Path) -> None:
                 image_type="raw",
             )
         )
-        rows = store.connection.execute(
-            "SELECT created_utc FROM cases"
-        ).fetchall()
+        rows = store.connection.execute("SELECT created_utc FROM cases").fetchall()
         rows += store.connection.execute(
-            "SELECT acquired_utc FROM evidence_sources "
-            "WHERE acquired_utc IS NOT NULL"
+            "SELECT acquired_utc FROM evidence_sources WHERE acquired_utc IS NOT NULL"
         ).fetchall()
     for (ts,) in rows:
         assert ts.endswith("+00:00"), ts
@@ -137,9 +131,7 @@ def test_attributes_accepts_heterogeneous_keys(case_dir: Path) -> None:
     """An arbitrary attributes key round-trips without a schema change (D-02)."""
     weird = {"phase4_finding": [1, 2, 3], "nested": {"k": "v"}, "n": 42}
     with CaseStore.create(case_dir) as store:
-        case_id = store.insert_case(
-            Case(name="c", examiner="ex", attributes=weird)
-        )
+        case_id = store.insert_case(Case(name="c", examiner="ex", attributes=weird))
         loaded = store.get_case(case_id)
     assert loaded.attributes == weird
 
@@ -367,9 +359,9 @@ def test_insert_log_findings_composes_in_outer_transaction(case_dir: Path) -> No
             sibling = sqlite3.connect(case_dir / "case.db")
             try:
                 sibling.execute("PRAGMA busy_timeout = 200")
-                count = sibling.execute(
-                    "SELECT COUNT(*) FROM log_findings"
-                ).fetchone()[0]
+                count = sibling.execute("SELECT COUNT(*) FROM log_findings").fetchone()[
+                    0
+                ]
             finally:
                 sibling.close()
             assert count == 0
@@ -466,19 +458,34 @@ def test_get_timeline_events_applies_d26_total_order(case_dir: Path) -> None:
                 [
                     # later timestamp, should sort last
                     _seed_timeline_event(
-                        source_id, "2026-02-02T00:00:00+00:00", "born",
-                        path="/a", meta_addr=1,
+                        source_id,
+                        "2026-02-02T00:00:00+00:00",
+                        "born",
+                        path="/a",
+                        meta_addr=1,
                     ),
                     # ties on ts/vol/offset/path with the next; differs on type
                     _seed_timeline_event(
-                        source_id, ts, "modified", path="/a", meta_addr=5,
+                        source_id,
+                        ts,
+                        "modified",
+                        path="/a",
+                        meta_addr=5,
                     ),
                     _seed_timeline_event(
-                        source_id, ts, "changed", path="/a", meta_addr=5,
+                        source_id,
+                        ts,
+                        "changed",
+                        path="/a",
+                        meta_addr=5,
                     ),
                     # same ts/type/path but different meta_addr — meta_addr tiebreak
                     _seed_timeline_event(
-                        source_id, ts, "changed", path="/a", meta_addr=2,
+                        source_id,
+                        ts,
+                        "changed",
+                        path="/a",
+                        meta_addr=2,
                     ),
                 ]
             )
@@ -503,8 +510,11 @@ def test_get_timeline_events_limit(case_dir: Path) -> None:
             store.insert_timeline_events(
                 [
                     _seed_timeline_event(
-                        source_id, f"2026-01-0{i}T00:00:00+00:00", "modified",
-                        path="/a", meta_addr=i,
+                        source_id,
+                        f"2026-01-0{i}T00:00:00+00:00",
+                        "modified",
+                        path="/a",
+                        meta_addr=i,
                     )
                     for i in range(1, 6)
                 ]
@@ -584,9 +594,7 @@ def test_transaction_commits_both_rows_atomically(case_dir: Path) -> None:
                     image_type="raw",
                 )
             )
-        cases = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[
-            0
-        ]
+        cases = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
         sources = store.connection.execute(
             "SELECT COUNT(*) FROM evidence_sources"
         ).fetchone()[0]
@@ -603,9 +611,7 @@ def test_transaction_rolls_back_on_exception(case_dir: Path) -> None:
                 raise RuntimeError("boom before evidence insert")
         # The committed-row count is read on a fresh connection to confirm the
         # rollback was durable, not merely uncommitted in this connection.
-        count = store.connection.execute(
-            "SELECT COUNT(*) FROM cases"
-        ).fetchone()[0]
+        count = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
     assert count == 0
 
 
@@ -616,3 +622,195 @@ def test_transaction_rejects_nesting(case_dir: Path) -> None:
             with store.transaction():
                 with store.transaction():
                     pass
+
+
+def test_schema_dataclass_mismatch_fails_loudly(tmp_path: Path) -> None:
+    """A model/table drift is refused at the seam, not silently absorbed.
+
+    The mapping is derived from the dataclasses, so a table missing a column
+    the model declares must fail where it is detectable. Silently dropping the
+    column would mean every row the store returns is quietly incomplete — the
+    worst possible failure mode for an evidence store.
+    """
+    from pyautopsy.case.mapping import RowMapper, validate_mapping  # noqa: PLC0415
+    from pyautopsy.case.models import KnownMatch  # noqa: PLC0415
+
+    case_dir = tmp_path / "case"
+    CaseStore.create(case_dir).close()
+    conn = sqlite3.connect(case_dir / "case.db")
+    try:
+        # A table that has lost a column the dataclass still declares.
+        conn.execute("CREATE TABLE drifted (file_id INTEGER, source TEXT)")
+        mapper: RowMapper[KnownMatch] = RowMapper(KnownMatch, "drifted")
+        with pytest.raises(ValueError, match="mapping drift"):
+            validate_mapping(mapper, conn)
+
+        # And a table that does not exist at all.
+        missing: RowMapper[KnownMatch] = RowMapper(KnownMatch, "no_such_table")
+        with pytest.raises(ValueError, match="no table"):
+            validate_mapping(missing, conn)
+    finally:
+        conn.close()
+
+
+def test_allocated_distinguishes_none_from_false(case_dir: Path) -> None:
+    """``allocated`` round-trips ``None`` (unknown) separately from ``False``.
+
+    A deleted entry (``False``) and an entry whose allocation state could not be
+    determined (``None``) are different forensic statements; storing a nullable
+    bool as an integer must not collapse them.
+    """
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        source_id = store.insert_evidence_source(
+            EvidenceSource(
+                case_id=case_id,
+                evidence_id="E1",
+                path="/x.dd",
+                image_type="raw",
+                attributes={},
+            )
+        )
+        for index, allocated in enumerate((True, False, None)):
+            store.insert_file(
+                FileRow(
+                    evidence_source_id=source_id,
+                    volume_id=0,
+                    volume_offset=0,
+                    path=f"/f{index}",
+                    name=f"f{index}",
+                    allocated=allocated,
+                )
+            )
+        rows = store.get_files(source_id)
+        assert [r.allocated for r in rows] == [True, False, None]
+        # Not merely falsy-equal: the None must still BE None.
+        assert rows[2].allocated is None
+        assert rows[1].allocated is False
+    finally:
+        store.close()
+
+
+def test_attributes_json_round_trips_with_sorted_keys(case_dir: Path) -> None:
+    """``attributes`` serialises with sorted keys, so equal data is equal bytes.
+
+    The reproducibility guarantee rests on this: two runs over the same image
+    must produce byte-identical stored JSON regardless of dict insertion order.
+    """
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        source_id = store.insert_evidence_source(
+            EvidenceSource(
+                case_id=case_id,
+                evidence_id="E1",
+                path="/x.dd",
+                image_type="raw",
+                attributes={},
+            )
+        )
+        payload = {"zebra": 1, "alpha": {"nested": True}, "middle": [1, 2, 3]}
+        reordered = {"middle": [1, 2, 3], "zebra": 1, "alpha": {"nested": True}}
+        ids = [
+            store.insert_file(
+                FileRow(
+                    evidence_source_id=source_id,
+                    volume_id=0,
+                    volume_offset=0,
+                    path=f"/f{i}",
+                    name=f"f{i}",
+                    attributes=attrs,
+                )
+            )
+            for i, attrs in enumerate((payload, reordered))
+        ]
+        stored = [
+            row["attributes"]
+            for row in store.connection.execute(
+                "SELECT attributes FROM files WHERE id IN (?, ?) ORDER BY id", ids
+            )
+        ]
+        assert stored[0] == stored[1], "key order leaked into the stored JSON"
+        assert stored[0] == json.dumps(payload, sort_keys=True)
+        assert store.get_file(ids[0]).attributes == payload
+    finally:
+        store.close()
+
+
+def test_search_hit_term_round_trips_non_utf8_bytes(case_dir: Path) -> None:
+    """A non-UTF-8 search needle survives storage byte-for-byte."""
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        source_id = store.insert_evidence_source(
+            EvidenceSource(
+                case_id=case_id,
+                evidence_id="E1",
+                path="/x.dd",
+                image_type="raw",
+                attributes={},
+            )
+        )
+        needle = b"\xff\xfe\x00binary-needle\x80"
+        store.insert_search_hits(
+            [
+                SearchHit(
+                    evidence_source_id=source_id,
+                    region="unallocated",
+                    term=needle,
+                    term_kind="literal",
+                    volume_id=0,
+                    volume_offset=0,
+                    byte_offset=512,
+                )
+            ]
+        )
+        assert store.get_search_hits(source_id)[0].term == needle
+    finally:
+        store.close()
+
+
+def test_every_persisted_non_native_field_declares_a_codec() -> None:
+    """A new column needing conversion cannot be added without declaring one.
+
+    The mapping passes values through untouched unless a codec is registered.
+    That is right for the columns SQLite stores natively, and silently wrong for
+    anything else — a bool would round-trip as an int, a bytes field would fail
+    to bind. This gate makes the omission fail here rather than in a case file.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    from pyautopsy.case import (
+        mapping,  # noqa: PLC0415
+        models,  # noqa: PLC0415
+    )
+
+    # Types SQLite binds and returns unchanged.
+    native = {
+        "int",
+        "str",
+        "float",
+        "int | None",
+        "str | None",
+        "float | None",
+    }
+    # AuditEvent is written to the JSONL audit log, not through a RowMapper.
+    not_persisted = {"AuditEvent"}
+
+    undeclared: list[str] = []
+    for name in dir(models):
+        model = getattr(models, name)
+        if not (dataclasses.is_dataclass(model) and isinstance(model, type)):
+            continue
+        if name in not_persisted:
+            continue
+        for field in dataclasses.fields(model):
+            if str(field.type) in native or field.name in mapping._CODECS:
+                continue
+            undeclared.append(f"{name}.{field.name}: {field.type}")
+
+    assert not undeclared, (
+        "these persisted fields have a type SQLite does not store natively and "
+        f"no registered codec: {undeclared}. Add one to mapping._CODECS."
+    )

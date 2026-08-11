@@ -1,14 +1,17 @@
-"""The ``LogParser`` protocol + declared-order parser registry (EXT-01).
+"""The ``LogParser`` contract and the record it emits (EXT-01).
 
 A minimal extension seam: each log format is a :class:`LogParser` (``name`` +
 ``matches(path)`` + ``parse(text, ctx)``) that emits :class:`ParsedRecord` value
-objects; :func:`register` adds one to a module-level list iterated in **declared
-order** by :func:`iter_parsers`. The declared order is load-bearing: it fixes the
-per-line parse order, which (combined with discover's oldest→newest file order)
-fixes the ``insert_timeline_events`` order and therefore the store's surrogate-id
-tiebreak — the CR-01 deterministic-tied-order guarantee (Pitfall 3). Future Wave-2
-parsers (syslog, shell-history) register here without touching
-:func:`pyautopsy.core.logs.run_logs`.
+objects.
+
+The parsers themselves are listed, in order, in
+:data:`pyautopsy.log.PARSERS`. That order is load-bearing: it fixes the per-line
+parse order, which (combined with discover's oldest→newest file order) fixes the
+``insert_timeline_events`` order and therefore the store's surrogate-id tiebreak
+— the CR-01 deterministic-tied-order guarantee (Pitfall 3). It is stated
+explicitly there rather than emerging from which module happened to be imported
+first, which is how it was previously established (and how it previously broke:
+the orchestrated path once saw only ``auth``).
 
 This module imports no native bindings (D-14) and adds no runtime dependency
 (D-43): it is pure ``dataclasses``/``typing``.
@@ -16,16 +19,13 @@ This module imports no native bindings (D-14) and adds no runtime dependency
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
-    "ParsedRecord",
     "LogParser",
-    "register",
-    "iter_parsers",
-    "clear_registry",
+    "ParsedRecord",
 ]
 
 
@@ -106,30 +106,3 @@ class LogParser(Protocol):
     ) -> Iterable[ParsedRecord]:
         """Parse decoded log ``text`` into :class:`ParsedRecord` value objects."""
         ...
-
-
-# The module-level registry, iterated in DECLARED (append) order for
-# determinism (Pitfall 3). Parsers register at import time via :func:`register`.
-_REGISTRY: list[LogParser] = []
-
-
-def register(parser: LogParser) -> LogParser:
-    """Append ``parser`` to the registry (declared order), returning it.
-
-    Idempotent on identity: registering the same parser instance twice is a
-    no-op so a re-imported module does not duplicate its parser (which would
-    double every event and break the CR-01 deterministic count).
-    """
-    if parser not in _REGISTRY:
-        _REGISTRY.append(parser)
-    return parser
-
-
-def iter_parsers() -> Iterator[LogParser]:
-    """Yield the registered parsers in declared (registration) order."""
-    yield from _REGISTRY
-
-
-def clear_registry() -> None:
-    """Empty the registry (test hook only)."""
-    _REGISTRY.clear()

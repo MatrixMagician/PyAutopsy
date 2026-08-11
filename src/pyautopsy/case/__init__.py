@@ -15,6 +15,7 @@ from pyautopsy.case.models import (
     KnownMatch,
     LogFinding,
     SearchHit,
+    Stage,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -31,4 +32,5 @@ __all__ = [
     "SearchHit",
     "AuditEvent",
     "CaseStore",
+    "Stage",
 ]

@@ -27,7 +27,6 @@ dependencies = [
     "pytsk3==20260520",
     "python-magic==0.4.27",
     "typer>=0.12,<1",
-    "rich>=13",
     # HTML report templating (REPORT-03/D-22). Pure-Python (MarkupSafe is its
     # only dep, also pure-Python) — no native seam, D-14 unaffected. The
     # deferred WeasyPrint PDF path reuses the same template.

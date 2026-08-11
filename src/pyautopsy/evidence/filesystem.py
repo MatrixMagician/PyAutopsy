@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 
 import pytsk3
 
+from pyautopsy.errors import PyAutopsyError
+
 __all__ = [
     "EXT_FS_TYPES",
     "FAT_FS_TYPES",
@@ -147,7 +149,7 @@ _NAME_TYPE_LABELS: dict[int, str] = {
 }
 
 
-class FilesystemError(Exception):
+class FilesystemError(PyAutopsyError):
     """Raised when the FS-layer seam cannot enumerate or walk a filesystem.
 
     Mirrors :class:`pyautopsy.evidence.image.ImageOpenError`: it carries an
@@ -909,9 +911,7 @@ def walk_fs(
             mtime_nano=int(getattr(meta, "mtime_nano", 0)) if meta is not None else 0,
             atime_nano=int(getattr(meta, "atime_nano", 0)) if meta is not None else 0,
             ctime_nano=int(getattr(meta, "ctime_nano", 0)) if meta is not None else 0,
-            crtime_nano=int(getattr(meta, "crtime_nano", 0))
-            if meta is not None
-            else 0,
+            crtime_nano=int(getattr(meta, "crtime_nano", 0)) if meta is not None else 0,
             fs_ftype=ftype,
             volume_id=volume_id,
             volume_offset=volume_offset,

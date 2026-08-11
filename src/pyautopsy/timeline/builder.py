@@ -31,7 +31,7 @@ _MACB: tuple[tuple[str, str], ...] = (
 )
 
 
-def _explode(file_row: FileRow) -> list[TimelineEvent]:
+def explode(file_row: FileRow) -> list[TimelineEvent]:
     """Explode one :class:`FileRow` into its populated-MACB timeline events.
 
     Pure transform (no I/O): for each populated ``*_utc`` column emit one event
@@ -55,9 +55,7 @@ def _explode(file_row: FileRow) -> list[TimelineEvent]:
         parts.append(f"gid={file_row.gid}")
     actor: str | None = ",".join(parts) if parts else None
 
-    source = (
-        f"filesystem:{file_row.fs_type}" if file_row.fs_type else "filesystem"
-    )
+    source = f"filesystem:{file_row.fs_type}" if file_row.fs_type else "filesystem"
 
     events: list[TimelineEvent] = []
     for col, etype in _MACB:
@@ -81,10 +79,6 @@ def _explode(file_row: FileRow) -> list[TimelineEvent]:
     return events
 
 
-# Public alias: the explosion transform is exercised directly by tests/consumers.
-explode = _explode
-
-
 def build_timeline(store: CaseStore, evidence_source_id: int) -> int:
     """Build the filesystem timeline for one evidence source (TIME-01).
 
@@ -103,7 +97,7 @@ def build_timeline(store: CaseStore, evidence_source_id: int) -> int:
     """
     events: list[TimelineEvent] = []
     for file_row in store.get_files(evidence_source_id):
-        events.extend(_explode(file_row))
+        events.extend(explode(file_row))
 
     with store.transaction():
         store.insert_timeline_events(events)

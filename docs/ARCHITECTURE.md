@@ -57,7 +57,7 @@ graph TD
     LOGS --> SEAM
     SEARCH --> SEAM
 
-    LOGS --> LOGPKG["log/ registry + parsers"]
+    LOGS --> LOGPKG["log/ contract + PARSERS"]
     SEARCH --> SEARCHPKG["search/ (content · ioc)"]
     FILTER --> FILTERPKG["filter/ (nsrl · hashsets)"]
 
@@ -157,14 +157,14 @@ filesystem-only baseline. Throughout, every stage appends structured events to
 
 | Abstraction | Kind | File | Role |
 |-------------|------|------|------|
-| `ReadableImage` | Protocol | `evidence/image.py` | The byte-layer `read`/`get_size`/`close` contract every image handle satisfies; downstream tiers depend on this, never on a concrete native type. |
+| `ReadableBytes` / `ReadableImage` | Protocols | `evidence/byteio.py`, `evidence/image.py` | `ReadableBytes` is the `read`/`get_size` byte-source contract (shared by the byte and integrity layers); `ReadableImage` adds `close` for a handle that owns native resources. Downstream tiers depend on these, never on a concrete native type. |
 | `ImageHandle` | dataclass | `evidence/image.py` | Read-only, plain-Python handle over an opened image (raw `Img_Info` or the `EWFImgInfo` adapter) plus size/format/path. |
 | `FileEntry` | dataclass | `evidence/filesystem.py` | The plain-Python value object the FS walk yields per entry (primitive fields + a single `read_random` byte-reader closure); no native `File` object escapes the seam. |
 | `CaseStore` | class | `case/store.py` | The sole sanctioned reader/writer of `case.db` — owns the schema, WAL + foreign-key pragmas, transactions, and every typed repository method. |
 | `AuditLog` | class | `audit/log.py` | The append-only JSONL audit writer, confined to `<case>/logs/audit.jsonl` with `O_APPEND` + `fsync`. |
-| `LogParser` / `ParsedRecord` | Protocol / dataclass | `log/registry.py` | The log-format extension contract (`name` + `matches` + `parse`) and its emitted (not-yet-time-resolved) value object; the primary extension point (see below). |
+| `LogParser` / `ParsedRecord` | Protocol / dataclass | `log/registry.py` | The log-format extension contract (`name` + `matches` + `parse`) and its emitted (not-yet-time-resolved) value object. The parsers are listed in declared order in `log/__init__.py`'s `PARSERS`; the primary extension point (see below). |
 | `Case`, `EvidenceSource`, `FileRow`, `TimelineEvent`, `VolumeLimitation`, `LogFinding`, `KnownMatch`, `SearchHit`, `AuditEvent` | dataclasses | `case/models.py` | The frozen value models mirroring the typed columns of each `case.db` table, each carrying a JSON `attributes` blackboard for schema-free extension. |
-| `safe_extract` | function | `util/safe_extract.py` | The only sanctioned archive expander — path-confined, symlink/device-refusing, decompression-bomb-capped jail for untrusted archives. |
+| `sanitize_name` / `confined_target` | functions | `util/confine.py` | Path confinement for evidence-controlled names: `sanitize_name` produces the safe on-disk write-name, `confined_target` proves via `realpath` that a resolved target stays inside the case directory. Used by recovery to place recovered bytes. |
 | `run_ingest` / `run_walk` / `run_recover` / `run_filter` / `run_logs` / `run_search` / `run_analyze` | functions | `core/*.py` | The orchestration-tier entry points; the six CLI commands wrap all but `run_filter` (which runs only as a sub-pass of `recover`/`analyze`). |
 
 ## Forensic-soundness boundaries
@@ -194,17 +194,16 @@ constraint. They are not conventions but structural boundaries verified by tests
 
 ## Extension points
 
-- **Log parsers (the `LogParser` registry, EXT-01).** `log/registry.py` defines
-  the `LogParser` protocol (`name`, `matches(path)`, `parse(text, ctx)`) and a
-  module-level registry iterated in **declared order** by `iter_parsers()`. A new
-  log format is added by writing a parser module and calling `register(...)` at
-  import time; `log/__init__.py` imports the in-scope parser modules (`auth`,
-  `syslog`, `shell_history`) purely for that self-registration side effect, so the
-  full registry is populated whenever `pyautopsy.log` is imported. New parsers
-  plug in without touching `core/logs.py:run_logs`. Declared order is
-  load-bearing: it fixes per-line parse order, which (with the discover module's
-  oldest→newest file order) fixes the deterministic insert order and therefore the
-  store's surrogate-id timeline tiebreak.
+- **Log parsers (the `LogParser` contract, EXT-01).** `log/registry.py` defines
+  the `LogParser` protocol (`name`, `matches(path)`, `parse(text, ctx)`); the
+  parsers themselves are listed, in order, in the `PARSERS` tuple in
+  `log/__init__.py`. A new log format is added by writing a parser module and
+  adding its singleton to that tuple — no orchestrator change, and importing a
+  parser module mutates nothing. Declared order is load-bearing: it fixes
+  per-line parse order, which (with the discover module's oldest→newest file
+  order) fixes the deterministic insert order and therefore the store's
+  surrogate-id timeline tiebreak. Stating it in the tuple keeps that guarantee
+  readable in one line instead of depending on import order.
 - **The `attributes` JSON blackboard.** Every case-store model
   (`case/models.py`) carries a free-form `attributes: dict` mapping to its table's
   JSON column. Later phases attach heterogeneous data (recovery rationale, FAT
@@ -233,17 +232,28 @@ src/pyautopsy/
 ├── case/         Persistence: CaseStore (store.py), schema.sql, value models (models.py).
 ├── audit/        Append-only JSONL audit log writer.
 ├── timeline/     MACB-explosion timeline producer into timeline_events.
-├── log/          Log-parsing package: parser registry + per-format parsers
+├── log/          Log-parsing package: parser contract + declared PARSERS tuple
 │                 (auth, syslog, shell_history over a shared _grammar), rotated-set
 │                 discovery, tz/year resolution, event normalization.
 ├── filter/       NSRL RDS membership probe + custom allow/block hash-set matching.
 ├── search/       Streaming literal/regex content scanner + IOC / known-bad-hash matching.
 ├── report/       Deterministic body assembly + JSON and HTML report writers.
 └── util/         Cross-cutting helpers: timeutil (single timestamp source),
-                  safe_extract (hardened archive jail).
+                  confine (path confinement for evidence-controlled names).
 ```
 
 The `case.db` schema defines nine tables — `cases`, `evidence_sources`,
 `run_log`, `files`, `volume_limitations`, `log_findings`, `known_file_matches`,
-`search_hits`, and `timeline_events` — each fronted by a `case/models.py`
-dataclass and accessed exclusively through `CaseStore`.
+`search_hits`, and `timeline_events` — accessed exclusively through `CaseStore`.
+All but `run_log` are fronted by a `case/models.py` dataclass; `run_log` records
+which analysis stages ran for a case (`CaseStore.record_stage` /
+`stages_run`), which is how the report states its own coverage without a caller
+having to tell it (see below).
+
+**Report coverage is derived, not declared.** `assemble_report_body` reads which
+passes ran from `run_log` rather than taking booleans from its caller. Each pass
+records its own stage inside the same transaction as its writes, so coverage
+cannot drift from what happened. It is deliberately *not* inferred from whether a
+pass produced rows: a search that ran and matched nothing still covered the
+image, and "we searched and found nothing" must not be reported as "we never
+searched".

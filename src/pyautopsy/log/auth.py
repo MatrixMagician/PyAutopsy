@@ -9,8 +9,9 @@ taxonomy pattern still becomes a record (``action=None``) carrying its raw
 message; a line that matches no grammar at all is likewise emitted with the raw
 text — nothing is silently dropped.
 
-The parser registers itself in the EXT-01 declared-order registry at import time
-so :func:`pyautopsy.core.logs.run_logs` discovers it without special-casing.
+The parser is listed in the EXT-01 declared-order tuple
+(:data:`pyautopsy.log.registry.PARSERS`) so
+:func:`pyautopsy.core.logs.run_logs` selects it without special-casing.
 
 Pure stdlib ``re`` on decoded text (Security V5 — DATA only): no native bindings
 (D-14), no new runtime dependency (D-43).
@@ -23,15 +24,15 @@ from collections.abc import Iterable, Iterator
 from typing import Any
 
 from pyautopsy.log._grammar import parse_line
-from pyautopsy.log.registry import ParsedRecord, register
+from pyautopsy.log.registry import ParsedRecord
 
-__all__ = ["AuthParser", "AUTH_PATTERNS", "parse", "auth_parser"]
+__all__ = ["AuthParser", "auth_parser", "parse"]
 
 # (action, outcome) for well-known auth message shapes — honest, observed-line
 # only (RESEARCH Pattern 4). Each pattern may capture a ``user`` group used to
 # build the honest ``actor``. Order is significant: the FIRST match wins, so the
 # more specific sudo-failure pattern precedes the generic sudo-COMMAND grant.
-AUTH_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
+_AUTH_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (
         re.compile(r"Accepted \w+ for (?:invalid user )?(?P<user>\S+) from"),
         "ssh-login",
@@ -60,7 +61,7 @@ def _classify(message: str) -> tuple[str | None, str | None, str | None]:
     Describes the observed line only. An unmatched message yields ``action=None``
     / ``outcome=None`` but may still recover a ``user=`` token for the actor.
     """
-    for pattern, action, outcome in AUTH_PATTERNS:
+    for pattern, action, outcome in _AUTH_PATTERNS:
         m = pattern.search(message)
         if m is not None:
             user = m.groupdict().get("user")
@@ -78,7 +79,7 @@ def parse(text: str, ctx: dict[str, Any] | None = None) -> Iterator[ParsedRecord
     Iterates lines tolerantly (blank lines skipped; a malformed line is emitted as
     an unmatched record, never aborting the parse). For each line: parse the
     RFC3164/RFC5424 head (program/host/pid/ts/msg), then classify the message body
-    against :data:`AUTH_PATTERNS`. The actor is ``"user=<name>"`` only when a user
+    against :data:`_AUTH_PATTERNS`. The actor is ``"user=<name>"`` only when a user
     is known (never the literal ``"user=None"`` — WR-05).
 
     Args:
@@ -132,5 +133,6 @@ class AuthParser:
         return parse(text, ctx)
 
 
-# Register the singleton in declared order at import time (EXT-01).
-auth_parser = register(AuthParser())
+# The module's parser singleton. Importing this module has no side effect:
+# the parser takes effect only by being listed in ``registry.PARSERS`` (EXT-01).
+auth_parser = AuthParser()

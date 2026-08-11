@@ -18,8 +18,8 @@ and cataloged as ``files`` rows. In order:
    is False``) entry reopen the inode via
    :func:`filesystem.recover_meta`, re-check the Pitfall-5 reallocation hazard,
    classify the tier (:func:`classify_tier`), write the recovered bytes through
-   the :mod:`pyautopsy.util.safe_extract` confinement jail with a deterministic
-   ``vol/off/meta_addr`` name (D-33/D-34), hash the written bytes via
+   the :mod:`pyautopsy.util.confine` path-confinement helpers with a
+   deterministic ``vol/off/meta_addr`` name (D-33/D-34), hash the written bytes via
    :func:`integrity.hash_file` (single pass, D-37), and build a recovered
    :class:`~pyautopsy.case.models.FileRow` (``allocated=False``, ``recovered=1``).
 4. **Catalog** all recovered rows via :meth:`CaseStore.insert_recovered_files`
@@ -40,15 +40,16 @@ by the recovery tests.
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore
+from pyautopsy.case import CaseStore, Stage
 from pyautopsy.case.models import FileRow
+from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import filetype as filetype_mod
 from pyautopsy.evidence import image as image_seam
@@ -57,10 +58,8 @@ from pyautopsy.evidence.filesystem import (
     EXT_FS_TYPES,
     FAT_FS_TYPES,
     NTFS_FS_TYPES,
-    FilesystemError,
 )
-from pyautopsy.evidence.image import ImageOpenError
-from pyautopsy.util.safe_extract import _confined_target, _sanitize_name
+from pyautopsy.util.confine import confined_target, sanitize_name
 
 __all__ = [
     "RECOVERY_REPORT_COPY",
@@ -94,6 +93,7 @@ def _fs_type_label(fs_ftype: int) -> str:
     if fs_ftype in EXT_FS_TYPES:
         return "ext"
     return "unknown"
+
 
 # Honesty-reviewed, human-facing copy the report's recovery sections render
 # (D-32, mirrors assemble.py's integrity copy and the Phase-3 WR-02 test). Every
@@ -246,7 +246,7 @@ class RecoverResult:
     orphans: tuple[RecoveredFile, ...] = field(default_factory=tuple)
 
 
-class RecoverError(Exception):
+class RecoverError(PyAutopsyError):
     """Raised when recovery cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest/walk was never run) or
@@ -254,20 +254,6 @@ class RecoverError(Exception):
     failures surface as :class:`~pyautopsy.evidence.integrity.MountedSourceError`
     or :class:`~pyautopsy.evidence.integrity.IntegrityError` instead.
     """
-
-
-# The operational exception set recovery legitimately expects (mirrors
-# walk._EXPECTED_WALK_ERRORS). Recorded as a ``recover.error`` FAIL and re-raised;
-# anything OUTSIDE this set is a genuine bug recorded under ``recover.crashed``.
-_EXPECTED_RECOVER_ERRORS: tuple[type[BaseException], ...] = (
-    RecoverError,
-    integrity.MountedSourceError,
-    integrity.IntegrityError,
-    ImageOpenError,
-    FilesystemError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -289,8 +275,8 @@ def _recovered_target(
 ) -> tuple[Path, str]:
     """Resolve the confined, deterministic write path for a recovered entry.
 
-    Routes through the :mod:`safe_extract` confinement jail (``_sanitize_name`` +
-    ``_confined_target`` realpath confinement, D-33) with a deterministic name
+    Routes through the :mod:`pyautopsy.util.confine` helpers (``sanitize_name``
+    + ``confined_target`` realpath confinement, D-33) with a deterministic name
     keyed by ``vol<id>-off<off>/<meta_addr>-<safe_name>`` (D-34) — NEVER the raw
     deleted filename (which is adversarial: it may contain ``../``, control
     chars, FAT ``?``/``_``). The deterministic key makes recovered names
@@ -301,10 +287,10 @@ def _recovered_target(
     """
     dest = (case_path / "recovered" / f"vol{volume_id}-off{volume_offset}").resolve()
     dest.mkdir(parents=True, exist_ok=True)
-    safe_name = _sanitize_name(name) or "unnamed"
+    safe_name = sanitize_name(name) or "unnamed"
     rel = f"{meta_addr}-{safe_name}"
     dest_real = os.path.realpath(dest)
-    target = Path(_confined_target(dest_real, rel))
+    target = Path(confined_target(dest_real, rel))
     case_relative = os.path.relpath(target, case_path)
     return target, case_relative
 
@@ -314,9 +300,9 @@ def _write_recovered_bytes(
 ) -> None:
     """Stream the recovered content to ``target`` (read-only over the seam).
 
-    Honors ``max_hash_size`` as a write cap too (the ``ExtractionLimits`` ethos
-    against a recovered-content size bomb, T-04-01-BOMB): a logical size over the
-    cap is not written. The source is never written — only the case-dir target.
+    Honors ``max_hash_size`` as a write cap too (a size-bomb guard against
+    crafted recovered content, T-04-01-BOMB): a logical size over the cap is
+    not written. The source is never written — only the case-dir target.
     """
     if max_hash_size is not None and size > max_hash_size:
         # Size bomb guard: do not materialise an oversize recovered blob.
@@ -399,7 +385,7 @@ def run_recover(
     intact_count = 0
     overwritten_count = 0
 
-    try:
+    with audited_step(audit, store, "recover", RecoverError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -431,9 +417,7 @@ def run_recover(
                 # meta_addr order — deterministic, Pitfall 6). The seam unions a
                 # directory walk (name/path/parent for surviving dir links) with
                 # an inode-range scan (broken-link inodes, e.g. NTFS resident).
-                for di in fs_seam.iter_deleted_inodes(
-                    fs, volume_id, volume_offset
-                ):
+                for di in fs_seam.iter_deleted_inodes(fs, volume_id, volume_offset):
                     entry = fs_seam.recover_meta(fs, di.meta_addr)
                     if entry is None:
                         continue
@@ -528,6 +512,9 @@ def run_recover(
 
             with store.transaction():
                 store.insert_recovered_files(recovered_rows)
+                # Record that recovery covered this case, so the report can
+                # state its own coverage from the case data (D-40 honesty).
+                store.record_stage_for_source(source_id, Stage.RECOVER)
         finally:
             handle.close()
 
@@ -541,24 +528,6 @@ def run_recover(
             overwritten_count=overwritten_count,
             orphan_count=len(orphan_list),
         )
-    except _EXPECTED_RECOVER_ERRORS as exc:
-        audit.write(
-            "recover.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "recover.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return RecoverResult(
         evidence_source_id=source_id,

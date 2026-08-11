@@ -18,8 +18,10 @@ native seam (D-14 unaffected).
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
+from pyautopsy.case import KnownMatch
 from tests.fixtures import make_fixtures
 
 
@@ -28,9 +30,10 @@ def test_nsrl_membership(nsrl_minimal_db: Path) -> None:
 
     The fixture stores ``NSRL_KNOWN_MD5`` UPPERCASE; the probe value is the
     project's lowercase hex. The matcher must normalize before comparing (D-37
-    md5->sha1->sha256 order, Pitfall 4) and surface a NEUTRAL ``known`` annotation
-    carrying ``source: nsrl`` and never a good/bad verdict (D-38). A non-member
-    yields no match.
+    md5->sha1->sha256 order, Pitfall 4) and report WHICH hash column matched.
+    Membership is all it reports: turning a hit into a NEUTRAL record carrying
+    ``source: nsrl`` and never a good/bad verdict (D-38) belongs to the caller.
+    A non-member yields no match.
     """
     from pyautopsy.filter import nsrl  # noqa: PLC0415 (RED stub)
 
@@ -44,9 +47,17 @@ def test_nsrl_membership(nsrl_minimal_db: Path) -> None:
             sha256=make_fixtures.NSRL_KNOWN_SHA256,
         )
         assert hit is not None, "known NSRL member did not match (uppercase trap?)"
-        assert hit.get("source") == "nsrl"
-        # Neutral annotation only — never a good/bad/malicious verdict (D-38).
-        assert not (set(hit) & {"good", "bad", "malicious", "verdict"})
+        # The probe answers only "which column matched" — md5 first (D-37).
+        assert hit == "md5"
+
+        # The record built from it is the NEUTRAL annotation: source + column,
+        # never a good/bad/malicious verdict (D-38).
+        record = KnownMatch(file_id=1, source="nsrl", matched_on=hit)
+        assert record.source == "nsrl"
+        assert not (
+            {f.name for f in dataclasses.fields(record)}
+            & {"good", "bad", "malicious", "verdict"}
+        )
 
         miss = nsrl.nsrl_match(
             conn,
@@ -77,46 +88,88 @@ def test_custom_hash_sets() -> None:
         f"   {make_fixtures.NSRL_KNOWN2_SHA256}\n"
         "# trailing comment\n"
     )
-    parsed = hashsets.parse_hash_set(list_text)
+    parsed = hashsets.parse_hash_set(list_text.splitlines())
 
     # md5 match (case-normalized).
-    hit = hashsets.custom_match(
+    matched_on = hashsets.probe_hash_set(
         parsed,
-        "allow",
-        "my-allow-list",
         md5=make_fixtures.NSRL_KNOWN_MD5,
         sha1=None,
         sha256=None,
     )
-    assert hit is not None
-    assert hit.get("source") == "custom"
-    assert hit.get("list") == "my-allow-list"
-    assert hit.get("sense") == "allow"
-    assert not (set(hit) & {"good", "bad", "malicious", "verdict"})
+    assert matched_on == "md5"
+    hit = hashsets.to_known_match(
+        7, matched_on, list_name="my-allow-list", sense="allow"
+    )
+    assert hit.source == "custom"
+    assert hit.list_name == "my-allow-list"
+    assert hit.sense == "allow"
+    # Neutrality (D-38): the record carries provenance, never a verdict.
+    assert not (
+        {f.name for f in dataclasses.fields(hit)}
+        & {"good", "bad", "malicious", "verdict"}
+    )
 
     # sha256 fall-through match (md5/sha1 absent in the list for this entry).
-    hit2 = hashsets.custom_match(
+    matched_on2 = hashsets.probe_hash_set(
         parsed,
-        "block",
-        "my-block-list",
         md5=make_fixtures.NSRL_NONMEMBER_MD5,
         sha1=None,
         sha256=make_fixtures.NSRL_KNOWN2_SHA256,
     )
-    assert hit2 is not None
-    assert hit2.get("sense") == "block"
-    assert hit2.get("matched_on") == "sha256"
+    assert matched_on2 == "sha256"
+    hit2 = hashsets.to_known_match(
+        7, matched_on2, list_name="my-block-list", sense="block"
+    )
+    assert hit2.sense == "block"
+    assert hit2.matched_on == "sha256"
 
     # A hash in neither list does not match.
-    miss = hashsets.custom_match(
-        parsed,
-        "allow",
-        "my-allow-list",
-        md5=make_fixtures.NSRL_NONMEMBER_MD5,
-        sha1=make_fixtures.NSRL_NONMEMBER_SHA1,
-        sha256=make_fixtures.NSRL_NONMEMBER_SHA256,
+    assert (
+        hashsets.probe_hash_set(
+            parsed,
+            md5=make_fixtures.NSRL_NONMEMBER_MD5,
+            sha1=make_fixtures.NSRL_NONMEMBER_SHA1,
+            sha256=make_fixtures.NSRL_NONMEMBER_SHA256,
+        )
+        is None
     )
-    assert miss is None
+
+
+def test_one_parser_serves_both_filtering_and_search() -> None:
+    """The same parser handles a list file's lines and bare command-line hashes.
+
+    Search used to wrap the parser in a function that joined the caller's
+    already-split hashes with newlines so the parser could split them again.
+    Both callers now hand it lines directly, and must get the same set.
+    """
+    from pyautopsy.filter import hashsets  # noqa: PLC0415
+
+    digest = make_fixtures.NSRL_KNOWN_MD5
+    from_file_text = hashsets.parse_hash_set(f"# list\n{digest.upper()}\n".splitlines())
+    from_cli_args = hashsets.parse_hash_set([digest.upper()])
+
+    assert from_file_text == from_cli_args
+    assert from_cli_args["md5"] == {digest.lower()}
+
+
+def test_parse_tolerance_is_preserved() -> None:
+    """One malformed line never discards an examiner's whole hash set."""
+    from pyautopsy.filter import hashsets  # noqa: PLC0415
+
+    parsed = hashsets.parse_hash_set(
+        [
+            "# comment",
+            "",
+            f"{make_fixtures.NSRL_KNOWN_MD5.upper()}  file.bin   # trailing",
+            "zzzznot-hex-at-all-but-32-chars!",
+            "abc",  # unrecognised length
+            f"  {make_fixtures.NSRL_KNOWN2_SHA256}  ",
+        ]
+    )
+    assert parsed["md5"] == {make_fixtures.NSRL_KNOWN_MD5.lower()}
+    assert parsed["sha256"] == {make_fixtures.NSRL_KNOWN2_SHA256.lower()}
+    assert parsed["sha1"] == set()
 
 
 def test_variant_table_discovery(nsrl_minimal_db: Path, nsrl_metadata_db: Path) -> None:
@@ -145,7 +198,7 @@ def test_variant_table_discovery(nsrl_minimal_db: Path, nsrl_metadata_db: Path) 
                 sha1=make_fixtures.NSRL_KNOWN_SHA1,
                 sha256=make_fixtures.NSRL_KNOWN_SHA256,
             )
-            assert hit is not None, f"known member not found in {table} variant"
+            assert hit == "md5", f"known member not found in {table} variant"
     finally:
         minimal_conn.close()
         metadata_conn.close()

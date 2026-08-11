@@ -27,6 +27,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
+# ``Stage`` is used at runtime (coverage is read from the case store), unlike the
+# type-only imports below.
+from pyautopsy.case import Stage
+
 if TYPE_CHECKING:
     from pyautopsy.case import CaseStore, FileRow
 
@@ -145,6 +149,7 @@ def _mvp_limitations(
         )
     parts.append("Absence of a finding here does not mean absence of evidence.")
     return " ".join(parts)
+
 
 # Integrity copy strings, verbatim from 03-UI-SPEC.md:166-167, plus the honest
 # "not supplied" state (WR-02). The PASS copy is only ever rendered when an
@@ -266,15 +271,42 @@ def _surface_provenance(file_row: FileRow) -> dict[str, str]:
     return surfaced
 
 
+def _stages_evidenced_by_findings(
+    store: CaseStore, evidence_source_id: int
+) -> frozenset[Stage]:
+    """Return the stages whose own findings prove they ran.
+
+    A pass that persisted rows demonstrably covered the evidence, whether or not
+    it recorded itself in ``run_log``. This is the honest floor on coverage; it
+    can never be the whole answer, because a pass that ran and found nothing
+    leaves no rows and must still be reported as covered.
+
+    Args:
+        store: The open case store.
+        evidence_source_id: The evidence source being reported on.
+
+    Returns:
+        The stages with persisted findings.
+    """
+    evidenced: set[Stage] = set()
+    if store.get_recovered_files(evidence_source_id) or store.get_orphan_files(
+        evidence_source_id
+    ):
+        evidenced.add(Stage.RECOVER)
+    if store.get_known_matches(evidence_source_id):
+        evidenced.add(Stage.FILTER)
+    if store.get_log_findings(evidence_source_id):
+        evidenced.add(Stage.LOGS)
+    if store.get_search_hits(evidence_source_id):
+        evidenced.add(Stage.SEARCH)
+    return frozenset(evidenced)
+
+
 def assemble_report_body(
     store: CaseStore,
     evidence_source_id: int,
     *,
     acquisition_verified: bool | None = None,
-    recovery_ran: bool = False,
-    filtering_ran: bool = False,
-    logs_ran: bool = False,
-    search_ran: bool = False,
 ) -> dict[str, Any]:
     """Assemble the deterministic report body for one evidence source.
 
@@ -295,18 +327,6 @@ def assemble_report_body(
             report renders three honest states and NEVER claims a hash match that
             did not happen (WR-02 / D-28). Defaults to ``None`` (not compared) so
             a caller without the ingest result never overclaims a PASS.
-        recovery_ran: Whether deleted/orphan-file recovery actually ran for this
-            report. Drives the honest MVP-limitations disclaimer (D-40): with
-            both this and ``filtering_ran`` ``False`` (default), the disclaimer
-            is byte-identical to the Phase-3 baseline.
-        filtering_ran: Whether the known-file filtering pass actually ran. Same
-            honesty contract as ``recovery_ran``.
-        logs_ran: Whether log parsing ran (``--logs``). Drives the honest
-            disclaimer and is independent of the log-findings section, which is
-            derived from the persisted events. Default ``False`` keeps the
-            disclaimer byte-identical to the Phase-4 baseline (D-48).
-        search_ran: Whether content search ran (``--search``). Same honesty
-            contract as ``logs_ran``.
 
     Returns:
         The analytical report body. Notable keys: ``case``, ``evidence``,
@@ -342,6 +362,21 @@ def assemble_report_body(
     # disclosures sub-block renders as [] and the section stays byte-identical to
     # the Phase-4/05 baseline (D-48).
     log_findings_rows = store.get_log_findings(evidence_source_id)
+    # (D-40 honesty) What this run actually covered, read from the case itself
+    # rather than from caller-supplied flags. Each pass records its own stage as
+    # it runs, so the report cannot under-claim (a caller forgetting a flag) or
+    # over-claim (a caller passing one for a pass that did not run). Crucially
+    # this is NOT inferred from whether a pass produced rows: a search that ran
+    # and matched nothing still covered the image, and must be reported as such.
+    stages = store.stages_run(evidence.case_id)
+    # A pass that left findings behind demonstrably ran, whatever ``run_log``
+    # says. That matters for a case written before stages were recorded: its
+    # run_log is empty, and reporting "this does NOT include log analysis" over
+    # a case full of parsed log events would be the report lying about its own
+    # coverage. Recorded stages remain authoritative for the other direction —
+    # a pass that ran and found nothing is still reported as covered — so the
+    # two sources are unioned, never substituted.
+    stages = stages | _stages_evidenced_by_findings(store, evidence_source_id)
 
     # -- Inventory aggregation set (BL-01): exclude recovered rows ---------------
     # The walk records every deleted inode as a ``files`` row (allocated=False,
@@ -446,9 +481,7 @@ def assemble_report_body(
     # (filesystem events use a `filesystem`/`filesystem:<fs>` label); the filter
     # preserves the store's D-26 order so the section stays byte-stable, and is
     # empty on the default analyze path so report bytes are unchanged (D-48).
-    log_events = [
-        ev for ev in events if not ev.source.startswith("filesystem")
-    ]
+    log_events = [ev for ev in events if not ev.source.startswith("filesystem")]
     # Per-source counts (e.g. auth / syslog / shell-history), ranked by
     # (-count, source) so the breakdown is deterministic regardless of insert
     # order; the source labels are content-derived, not wall-clock.
@@ -464,9 +497,7 @@ def assemble_report_body(
     # never erased — the report must not present an inferred time as recorded
     # fact. Derived deterministically by counting attribute presence.
     inferred_year_count = sum(
-        1
-        for ev in log_events
-        if (ev.attributes or {}).get("year_inferred") is not None
+        1 for ev in log_events if (ev.attributes or {}).get("year_inferred") is not None
     )
     inferred_tz_count = sum(
         1
@@ -678,9 +709,7 @@ def assemble_report_body(
             "intro": RECOVERY_REPORT_COPY["section_intro"],
             "tier_copy": {
                 "intact": RECOVERY_REPORT_COPY["tier_intact"],
-                "partial/overwritten": RECOVERY_REPORT_COPY[
-                    "tier_partial_overwritten"
-                ],
+                "partial/overwritten": RECOVERY_REPORT_COPY["tier_partial_overwritten"],
             },
             "files": [_recovered_section(f) for f in recovered_files],
             "count": len(recovered_files),
@@ -732,10 +761,10 @@ def assemble_report_body(
         "limitations": {
             "volumes": limitation_rows,
             "mvp_disclaimer": _mvp_limitations(
-                recovery_ran=recovery_ran,
-                filtering_ran=filtering_ran,
-                logs_ran=logs_ran,
-                search_ran=search_ran,
+                recovery_ran=Stage.RECOVER in stages,
+                filtering_ran=Stage.FILTER in stages,
+                logs_ran=Stage.LOGS in stages,
+                search_ran=Stage.SEARCH in stages,
             ),
         },
     }
@@ -770,8 +799,7 @@ def build_run_metadata(
     return {
         "non_analytical": True,
         "label": (
-            "Run Metadata (non-analytical — excluded from the reproducible "
-            "report body)"
+            "Run Metadata (non-analytical — excluded from the reproducible report body)"
         ),
         "generated_utc": generation_ts,
         "host": host,

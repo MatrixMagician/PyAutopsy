@@ -22,6 +22,7 @@ from types import TracebackType
 from typing import Any
 
 import pyautopsy
+from pyautopsy.case.mapping import RowMapper, validate_mapping
 from pyautopsy.case.models import (
     Case,
     EvidenceSource,
@@ -29,6 +30,7 @@ from pyautopsy.case.models import (
     KnownMatch,
     LogFinding,
     SearchHit,
+    Stage,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -108,6 +110,13 @@ class CaseStore:
             raise RuntimeError(
                 f"failed to initialise case schema at {case_dir}: {exc}"
             ) from exc
+        # Fail at the seam if a model and its table have drifted apart, rather
+        # than silently dropping a column on every read.
+        try:
+            _validate_mappings(conn)
+        except ValueError:
+            conn.close()
+            raise
         return cls(case_dir, conn)
 
     @classmethod
@@ -127,7 +136,31 @@ class CaseStore:
         db_path = case_dir / _DB_NAME
         if not db_path.is_file():
             raise FileNotFoundError(f"no case database at {db_path}")
-        return cls(case_dir, cls._connect(db_path))
+        conn = cls._connect(db_path)
+        # Same guard on the read path: an older case whose schema predates a
+        # model change must say so, not return rows with columns quietly missing.
+        try:
+            _validate_mappings(conn)
+        except ValueError:
+            conn.close()
+            raise
+        return cls(case_dir, conn)
+
+    @staticmethod
+    def exists(case_dir: Path | str) -> bool:
+        """Return True if ``case_dir`` holds a case database.
+
+        Lets a caller check for a case *before* it needs the store — notably
+        before binding an audit log, which lives inside the case directory and
+        so cannot record a failure about the directory being absent.
+
+        Args:
+            case_dir: Root directory to check.
+
+        Returns:
+            ``True`` if the case database is present and a regular file.
+        """
+        return (Path(case_dir) / _DB_NAME).is_file()
 
     @staticmethod
     def _connect(db_path: Path) -> sqlite3.Connection:
@@ -244,15 +277,7 @@ class CaseStore:
         ).fetchone()
         if row is None:
             raise LookupError(f"no case with id {case_id}")
-        return Case(
-            name=row["name"],
-            examiner=row["examiner"],
-            notes=row["notes"],
-            created_utc=row["created_utc"],
-            pyautopsy_version=row["pyautopsy_version"],
-            attributes=_load_attributes(row["attributes"]),
-            id=row["id"],
-        )
+        return _CASE_MAPPER.from_row(row)
 
     # -- evidence sources --------------------------------------------------
 
@@ -288,9 +313,7 @@ class CaseStore:
         )
         self._commit_unless_in_transaction()
         if cur.lastrowid is None:
-            raise RuntimeError(
-                "INSERT INTO evidence_sources did not return a row id"
-            )
+            raise RuntimeError("INSERT INTO evidence_sources did not return a row id")
         return cur.lastrowid
 
     def get_latest_evidence_source_id(self) -> int | None:
@@ -355,19 +378,7 @@ class CaseStore:
         ).fetchone()
         if row is None:
             raise LookupError(f"no evidence source with id {source_id}")
-        return EvidenceSource(
-            case_id=row["case_id"],
-            evidence_id=row["evidence_id"],
-            path=row["path"],
-            image_type=row["image_type"],
-            sha256=row["sha256"],
-            md5=row["md5"],
-            byte_size=row["byte_size"],
-            acquired_utc=row["acquired_utc"],
-            tsk_version=row["tsk_version"],
-            attributes=_load_attributes(row["attributes"]),
-            id=row["id"],
-        )
+        return _EVIDENCE_MAPPER.from_row(row)
 
     # -- files (walk inventory) -------------------------------------------
 
@@ -383,7 +394,9 @@ class CaseStore:
         Raises:
             sqlite3.IntegrityError: On a foreign-key or constraint violation.
         """
-        cur = self.connection.execute(_FILES_INSERT_SQL, _file_row_params(file_row))
+        cur = self.connection.execute(
+            _FILE_MAPPER.insert_sql, _FILE_MAPPER.to_params(file_row)
+        )
         self._commit_unless_in_transaction()
         if cur.lastrowid is None:
             raise RuntimeError("INSERT INTO files did not return a row id")
@@ -403,9 +416,9 @@ class CaseStore:
         Returns:
             The number of rows inserted.
         """
-        params = [_file_row_params(row) for row in rows]
+        params = [_FILE_MAPPER.to_params(row) for row in rows]
         if params:
-            self.connection.executemany(_FILES_INSERT_SQL, params)
+            self.connection.executemany(_FILE_MAPPER.insert_sql, params)
         self._commit_unless_in_transaction()
         return len(params)
 
@@ -426,41 +439,7 @@ class CaseStore:
         ).fetchone()
         if row is None:
             raise LookupError(f"no file with id {file_id}")
-        return FileRow(
-            evidence_source_id=row["evidence_source_id"],
-            volume_id=row["volume_id"],
-            volume_offset=row["volume_offset"],
-            path=row["path"],
-            name=row["name"],
-            parent_addr=row["parent_addr"],
-            meta_addr=row["meta_addr"],
-            fs_type=row["fs_type"],
-            size=row["size"],
-            allocated=None if row["allocated"] is None else bool(row["allocated"]),
-            meta_type=row["meta_type"],
-            uid=row["uid"],
-            gid=row["gid"],
-            mode=row["mode"],
-            md5=row["md5"],
-            sha1=row["sha1"],
-            sha256=row["sha256"],
-            mtime_utc=row["mtime_utc"],
-            atime_utc=row["atime_utc"],
-            ctime_utc=row["ctime_utc"],
-            crtime_utc=row["crtime_utc"],
-            timestamp_source=row["timestamp_source"],
-            file_type=row["file_type"],
-            recovered=(
-                None if row["recovered"] is None else bool(row["recovered"])
-            ),
-            confidence_tier=row["confidence_tier"],
-            recovered_path=row["recovered_path"],
-            is_orphan=(
-                None if row["is_orphan"] is None else bool(row["is_orphan"])
-            ),
-            attributes=_load_attributes(row["attributes"]),
-            id=row["id"],
-        )
+        return _FILE_MAPPER.from_row(row)
 
     def get_files(self, evidence_source_id: int) -> list[FileRow]:
         """Read every file row for an evidence source, ordered by id.
@@ -495,9 +474,9 @@ class CaseStore:
         Returns:
             The number of rows inserted.
         """
-        params = [_file_row_params(row) for row in rows]
+        params = [_FILE_MAPPER.to_params(row) for row in rows]
         if params:
-            self.connection.executemany(_FILES_INSERT_SQL, params)
+            self.connection.executemany(_FILE_MAPPER.insert_sql, params)
         self._commit_unless_in_transaction()
         return len(params)
 
@@ -576,9 +555,7 @@ class CaseStore:
         )
         self._commit_unless_in_transaction()
         if cur.lastrowid is None:
-            raise RuntimeError(
-                "INSERT INTO volume_limitations did not return a row id"
-            )
+            raise RuntimeError("INSERT INTO volume_limitations did not return a row id")
         return cur.lastrowid
 
     def get_volume_limitation(self, limitation_id: int) -> VolumeLimitation:
@@ -598,19 +575,9 @@ class CaseStore:
         ).fetchone()
         if row is None:
             raise LookupError(f"no volume limitation with id {limitation_id}")
-        return VolumeLimitation(
-            evidence_source_id=row["evidence_source_id"],
-            volume_id=row["volume_id"],
-            volume_offset=row["volume_offset"],
-            detected_desc=row["detected_desc"],
-            reason=row["reason"],
-            attributes=_load_attributes(row["attributes"]),
-            id=row["id"],
-        )
+        return _LIMITATION_MAPPER.from_row(row)
 
-    def get_volume_limitations(
-        self, evidence_source_id: int
-    ) -> list[VolumeLimitation]:
+    def get_volume_limitations(self, evidence_source_id: int) -> list[VolumeLimitation]:
         """Read every limitation finding for an evidence source, ordered by id.
 
         Args:
@@ -642,9 +609,9 @@ class CaseStore:
         Returns:
             The number of rows inserted.
         """
-        params = [_log_finding_params(row) for row in rows]
+        params = [_LOG_FINDING_MAPPER.to_params(row) for row in rows]
         if params:
-            self.connection.executemany(_LOG_FINDING_INSERT_SQL, params)
+            self.connection.executemany(_LOG_FINDING_MAPPER.insert_sql, params)
         self._commit_unless_in_transaction()
         return len(params)
 
@@ -662,21 +629,10 @@ class CaseStore:
             All matching :class:`LogFinding` rows in ``id`` order (possibly empty).
         """
         rows = self.connection.execute(
-            "SELECT * FROM log_findings "
-            "WHERE evidence_source_id = ? ORDER BY id",
+            "SELECT * FROM log_findings WHERE evidence_source_id = ? ORDER BY id",
             (evidence_source_id,),
         ).fetchall()
-        return [
-            LogFinding(
-                evidence_source_id=row["evidence_source_id"],
-                category=row["category"],
-                subject=row["subject"],
-                detail=row["detail"],
-                attributes=_load_attributes(row["attributes"]),
-                id=row["id"],
-            )
-            for row in rows
-        ]
+        return [_LOG_FINDING_MAPPER.from_row(row) for row in rows]
 
     # -- timeline events (TIME-01 / D-23/D-24/D-26) -----------------------
 
@@ -696,9 +652,9 @@ class CaseStore:
         Returns:
             The number of rows inserted.
         """
-        params = [_timeline_event_params(row) for row in rows]
+        params = [_TIMELINE_MAPPER.to_params(row) for row in rows]
         if params:
-            self.connection.executemany(_TIMELINE_INSERT_SQL, params)
+            self.connection.executemany(_TIMELINE_MAPPER.insert_sql, params)
         self._commit_unless_in_transaction()
         return len(params)
 
@@ -742,25 +698,7 @@ class CaseStore:
             sql += " LIMIT ?"
             params = (evidence_source_id, limit)
         rows = self.connection.execute(sql, params).fetchall()
-        return [
-            TimelineEvent(
-                evidence_source_id=row["evidence_source_id"],
-                ts_utc=row["ts_utc"],
-                source=row["source"],
-                event_type=row["event_type"],
-                volume_id=row["volume_id"],
-                volume_offset=row["volume_offset"],
-                path=row["path"],
-                meta_addr=row["meta_addr"],
-                actor=row["actor"],
-                action=row["action"],
-                outcome=row["outcome"],
-                file_id=row["file_id"],
-                attributes=_load_attributes(row["attributes"]),
-                id=row["id"],
-            )
-            for row in rows
-        ]
+        return [_TIMELINE_MAPPER.from_row(row) for row in rows]
 
     # -- known-file matches (FILTER-01, D-38/D-39/D-41) -------------------
 
@@ -780,9 +718,9 @@ class CaseStore:
         Returns:
             The number of rows inserted.
         """
-        params = [_known_match_params(row) for row in rows]
+        params = [_KNOWN_MATCH_MAPPER.to_params(row) for row in rows]
         if params:
-            self.connection.executemany(_KNOWN_MATCH_INSERT_SQL, params)
+            self.connection.executemany(_KNOWN_MATCH_MAPPER.insert_sql, params)
         self._commit_unless_in_transaction()
         return len(params)
 
@@ -815,18 +753,7 @@ class CaseStore:
             "k.source, k.list_name, k.sense, k.matched_on, k.id",
             (evidence_source_id,),
         ).fetchall()
-        return [
-            KnownMatch(
-                file_id=row["file_id"],
-                source=row["source"],
-                matched_on=row["matched_on"],
-                list_name=row["list_name"],
-                sense=row["sense"],
-                attributes=_load_attributes(row["attributes"]),
-                id=row["id"],
-            )
-            for row in rows
-        ]
+        return [_KNOWN_MATCH_MAPPER.from_row(row) for row in rows]
 
     # -- search hits (SEARCH-01/02, D-49) ---------------------------------
 
@@ -846,9 +773,9 @@ class CaseStore:
         Returns:
             The number of rows inserted.
         """
-        params = [_search_hit_params(row) for row in rows]
+        params = [_SEARCH_HIT_MAPPER.to_params(row) for row in rows]
         if params:
-            self.connection.executemany(_SEARCH_HIT_INSERT_SQL, params)
+            self.connection.executemany(_SEARCH_HIT_MAPPER.insert_sql, params)
         self._commit_unless_in_transaction()
         return len(params)
 
@@ -876,265 +803,97 @@ class CaseStore:
             "ORDER BY volume_id, volume_offset, byte_offset, term, id",
             (evidence_source_id,),
         ).fetchall()
-        return [
-            SearchHit(
-                evidence_source_id=row["evidence_source_id"],
-                region=row["region"],
-                # ``term`` round-trips via latin-1 so a non-UTF-8 needle is exact.
-                term=row["term"].encode("latin-1"),
-                term_kind=row["term_kind"],
-                volume_id=row["volume_id"],
-                volume_offset=row["volume_offset"],
-                byte_offset=row["byte_offset"],
-                file_id=row["file_id"],
-                path=row["path"],
-                block_index=row["block_index"],
-                context=row["context"],
-                attributes=_load_attributes(row["attributes"]),
-                id=row["id"],
-            )
-            for row in rows
-        ]
+        return [_SEARCH_HIT_MAPPER.from_row(row) for row in rows]
+
+    # -- run stages --------------------------------------------------------
+
+    def record_stage_for_source(self, evidence_source_id: int, stage: Stage) -> None:
+        """Record that ``stage`` ran, resolving the case from its evidence source.
+
+        The orchestrators know the evidence source they are working on, not the
+        case id, so this saves every one of them repeating the same lookup.
+
+        Args:
+            evidence_source_id: The evidence source the pass covered.
+            stage: The pass that ran.
+        """
+        self.record_stage(self.get_evidence_source(evidence_source_id).case_id, stage)
+
+    def record_stage(self, case_id: int, stage: Stage) -> None:
+        """Record that an analysis stage ran for this case (``run_log``).
+
+        This is what makes "did search run?" answerable from the case itself
+        rather than from a caller's memory. It is deliberately not derived from
+        whether a stage produced findings: a search that ran and matched nothing
+        is a real, reportable outcome, and inferring coverage from row counts
+        would report it as never having run — the report would under-claim what
+        was examined.
+
+        Recording is idempotent per stage, so re-running a pass does not
+        multiply rows.
+
+        Args:
+            case_id: The owning case.
+            stage: The stage name (e.g. ``"recover"``, ``"filter"``,
+                ``"logs"``, ``"search"``).
+        """
+        self.connection.execute(
+            "INSERT INTO run_log (case_id, stage) "
+            "SELECT ?, ? WHERE NOT EXISTS ("
+            "  SELECT 1 FROM run_log WHERE case_id = ? AND stage = ?"
+            ")",
+            (case_id, stage, case_id, stage),
+        )
+        self._commit_unless_in_transaction()
+
+    def stages_run(self, case_id: int) -> frozenset[Stage]:
+        """Return the set of analysis stages recorded for this case.
+
+        Args:
+            case_id: The case to report on.
+
+        Returns:
+            The recorded stages. An unrecognised value in the table (an older
+            case, or a stage since removed) is skipped rather than raising: the
+            report should still render what it can understand.
+        """
+        rows = self.connection.execute(
+            "SELECT DISTINCT stage FROM run_log WHERE case_id = ?", (case_id,)
+        ).fetchall()
+        known = {stage.value: stage for stage in Stage}
+        return frozenset(known[row["stage"]] for row in rows if row["stage"] in known)
 
 
-# The ``files`` insert column order, used by both insert_file and the bulk
-# insert_files ``executemany`` so the single SQL statement and the parameter
-# tuple stay in lockstep.
-_FILES_COLUMNS: tuple[str, ...] = (
-    "evidence_source_id",
-    "volume_id",
-    "volume_offset",
-    "path",
-    "name",
-    "parent_addr",
-    "meta_addr",
-    "fs_type",
-    "size",
-    "allocated",
-    "meta_type",
-    "uid",
-    "gid",
-    "mode",
-    "md5",
-    "sha1",
-    "sha256",
-    "mtime_utc",
-    "atime_utc",
-    "ctime_utc",
-    "crtime_utc",
-    "timestamp_source",
-    "file_type",
-    "recovered",
-    "confidence_tier",
-    "recovered_path",
-    "is_orphan",
-    "attributes",
+# One mapper per persisted model. Each derives its column list, INSERT statement
+# and row<->dataclass conversion from the dataclass itself, so a column name is
+# written once (in the model) instead of three times. The mappers are validated
+# against the live schema at open/create time — see ``_validate_mappings``.
+_CASE_MAPPER: RowMapper[Case] = RowMapper(Case, "cases")
+_EVIDENCE_MAPPER: RowMapper[EvidenceSource] = RowMapper(
+    EvidenceSource, "evidence_sources"
 )
-
-_FILES_INSERT_SQL = (
-    "INSERT INTO files ("
-    + ", ".join(_FILES_COLUMNS)
-    + ") VALUES ("
-    + ", ".join("?" for _ in _FILES_COLUMNS)
-    + ")"
+_FILE_MAPPER: RowMapper[FileRow] = RowMapper(FileRow, "files")
+_TIMELINE_MAPPER: RowMapper[TimelineEvent] = RowMapper(TimelineEvent, "timeline_events")
+_LIMITATION_MAPPER: RowMapper[VolumeLimitation] = RowMapper(
+    VolumeLimitation, "volume_limitations"
 )
+_LOG_FINDING_MAPPER: RowMapper[LogFinding] = RowMapper(LogFinding, "log_findings")
+_KNOWN_MATCH_MAPPER: RowMapper[KnownMatch] = RowMapper(KnownMatch, "known_file_matches")
+_SEARCH_HIT_MAPPER: RowMapper[SearchHit] = RowMapper(SearchHit, "search_hits")
 
-
-def _file_row_params(file_row: FileRow) -> tuple[Any, ...]:
-    """Flatten a :class:`FileRow` into the :data:`_FILES_COLUMNS` insert tuple."""
-    return (
-        file_row.evidence_source_id,
-        file_row.volume_id,
-        file_row.volume_offset,
-        file_row.path,
-        file_row.name,
-        file_row.parent_addr,
-        file_row.meta_addr,
-        file_row.fs_type,
-        file_row.size,
-        None if file_row.allocated is None else int(file_row.allocated),
-        file_row.meta_type,
-        file_row.uid,
-        file_row.gid,
-        file_row.mode,
-        file_row.md5,
-        file_row.sha1,
-        file_row.sha256,
-        file_row.mtime_utc,
-        file_row.atime_utc,
-        file_row.ctime_utc,
-        file_row.crtime_utc,
-        file_row.timestamp_source,
-        file_row.file_type,
-        None if file_row.recovered is None else int(file_row.recovered),
-        file_row.confidence_tier,
-        file_row.recovered_path,
-        None if file_row.is_orphan is None else int(file_row.is_orphan),
-        json.dumps(file_row.attributes, sort_keys=True),
-    )
-
-
-# The ``timeline_events`` insert column order, kept in lockstep with
-# :func:`_timeline_event_params` exactly like ``files`` (WR-01).
-_TIMELINE_COLUMNS: tuple[str, ...] = (
-    "evidence_source_id",
-    "file_id",
-    "ts_utc",
-    "source",
-    "event_type",
-    "volume_id",
-    "volume_offset",
-    "path",
-    "meta_addr",
-    "actor",
-    "action",
-    "outcome",
-    "attributes",
-)
-
-_TIMELINE_INSERT_SQL = (
-    "INSERT INTO timeline_events ("
-    + ", ".join(_TIMELINE_COLUMNS)
-    + ") VALUES ("
-    + ", ".join("?" for _ in _TIMELINE_COLUMNS)
-    + ")"
+_ALL_MAPPERS: tuple[RowMapper[Any], ...] = (
+    _CASE_MAPPER,
+    _EVIDENCE_MAPPER,
+    _FILE_MAPPER,
+    _TIMELINE_MAPPER,
+    _LIMITATION_MAPPER,
+    _LOG_FINDING_MAPPER,
+    _KNOWN_MATCH_MAPPER,
+    _SEARCH_HIT_MAPPER,
 )
 
 
-def _timeline_event_params(event: TimelineEvent) -> tuple[Any, ...]:
-    """Flatten a :class:`TimelineEvent` into the :data:`_TIMELINE_COLUMNS` tuple."""
-    return (
-        event.evidence_source_id,
-        event.file_id,
-        event.ts_utc,
-        event.source,
-        event.event_type,
-        event.volume_id,
-        event.volume_offset,
-        event.path,
-        event.meta_addr,
-        event.actor,
-        event.action,
-        event.outcome,
-        json.dumps(event.attributes, sort_keys=True),
-    )
-
-
-# The ``known_file_matches`` insert column order, kept in lockstep with
-# :func:`_known_match_params` exactly like ``files``/``timeline_events`` (WR-01).
-_KNOWN_MATCH_COLUMNS: tuple[str, ...] = (
-    "file_id",
-    "source",
-    "list_name",
-    "sense",
-    "matched_on",
-    "attributes",
-)
-
-_KNOWN_MATCH_INSERT_SQL = (
-    "INSERT INTO known_file_matches ("
-    + ", ".join(_KNOWN_MATCH_COLUMNS)
-    + ") VALUES ("
-    + ", ".join("?" for _ in _KNOWN_MATCH_COLUMNS)
-    + ")"
-)
-
-
-def _known_match_params(match: KnownMatch) -> tuple[Any, ...]:
-    """Flatten a :class:`KnownMatch` into the :data:`_KNOWN_MATCH_COLUMNS` tuple."""
-    return (
-        match.file_id,
-        match.source,
-        match.list_name,
-        match.sense,
-        match.matched_on,
-        json.dumps(match.attributes, sort_keys=True),
-    )
-
-
-# The ``log_findings`` insert column order, kept in lockstep with
-# :func:`_log_finding_params` exactly like ``volume_limitations`` (WR-01).
-_LOG_FINDING_COLUMNS: tuple[str, ...] = (
-    "evidence_source_id",
-    "category",
-    "subject",
-    "detail",
-    "attributes",
-)
-
-_LOG_FINDING_INSERT_SQL = (
-    "INSERT INTO log_findings ("
-    + ", ".join(_LOG_FINDING_COLUMNS)
-    + ") VALUES ("
-    + ", ".join("?" for _ in _LOG_FINDING_COLUMNS)
-    + ")"
-)
-
-
-def _log_finding_params(finding: LogFinding) -> tuple[Any, ...]:
-    """Flatten a :class:`LogFinding` into the :data:`_LOG_FINDING_COLUMNS` tuple."""
-    return (
-        finding.evidence_source_id,
-        finding.category,
-        finding.subject,
-        finding.detail,
-        json.dumps(finding.attributes, sort_keys=True),
-    )
-
-
-# The ``search_hits`` insert column order, kept in lockstep with
-# :func:`_search_hit_params` exactly like ``known_file_matches`` (WR-01).
-_SEARCH_HIT_COLUMNS: tuple[str, ...] = (
-    "evidence_source_id",
-    "file_id",
-    "region",
-    "term",
-    "term_kind",
-    "volume_id",
-    "volume_offset",
-    "byte_offset",
-    "block_index",
-    "path",
-    "context",
-    "attributes",
-)
-
-_SEARCH_HIT_INSERT_SQL = (
-    "INSERT INTO search_hits ("
-    + ", ".join(_SEARCH_HIT_COLUMNS)
-    + ") VALUES ("
-    + ", ".join("?" for _ in _SEARCH_HIT_COLUMNS)
-    + ")"
-)
-
-
-def _search_hit_params(hit: SearchHit) -> tuple[Any, ...]:
-    """Flatten a :class:`SearchHit` into the :data:`_SEARCH_HIT_COLUMNS` tuple."""
-    return (
-        hit.evidence_source_id,
-        hit.file_id,
-        hit.region,
-        # Store the raw needle bytes as a latin-1 string (byte-exact round-trip).
-        hit.term.decode("latin-1"),
-        hit.term_kind,
-        hit.volume_id,
-        hit.volume_offset,
-        hit.byte_offset,
-        hit.block_index,
-        hit.path,
-        hit.context,
-        json.dumps(hit.attributes, sort_keys=True),
-    )
-
-
-def _load_attributes(raw: str | None) -> dict[str, Any]:
-    """Deserialise a JSON ``attributes`` column to a dict (empty when null)."""
-    if not raw:
-        return {}
-    try:
-        loaded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"corrupt attributes JSON in case store: {exc}") from exc
-    if not isinstance(loaded, dict):
-        raise ValueError("attributes column must deserialise to a JSON object")
-    return loaded
+def _validate_mappings(connection: sqlite3.Connection) -> None:
+    """Fail loudly if any model has drifted from its table (schema guard)."""
+    for mapper in _ALL_MAPPERS:
+        validate_mapping(mapper, connection)

@@ -1,6 +1,6 @@
 """Parsed-record → :class:`TimelineEvent` transform (LOG-04).
 
-The log-side mirror of :func:`pyautopsy.timeline.builder._explode`: a pure
+The log-side mirror of :func:`pyautopsy.timeline.builder.explode`: a pure
 transform that maps one parsed-and-time-resolved log record onto the shared
 :class:`~pyautopsy.case.TimelineEvent` model so log events sit in the SAME
 ``timeline_events`` table — and therefore the SAME D-26 total order — as
@@ -18,32 +18,16 @@ Imports no native bindings (D-14); adds no runtime dependency (D-43).
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any
 
 from pyautopsy.case import TimelineEvent
+from pyautopsy.log.registry import ParsedRecord
 
 __all__ = ["to_event"]
 
 
-class _RecordLike(Protocol):
-    """The minimal parsed-record shape :func:`to_event` reads (a ``ParsedRecord``).
-
-    Attributes are declared read-only (``@property``) so a frozen-dataclass
-    :class:`~pyautopsy.log.registry.ParsedRecord` structurally satisfies it.
-    """
-
-    @property
-    def action(self) -> str | None: ...
-    @property
-    def outcome(self) -> str | None: ...
-    @property
-    def actor(self) -> str | None: ...
-    @property
-    def message(self) -> str | None: ...
-
-
 def to_event(
-    parsed: _RecordLike,
+    parsed: ParsedRecord,
     *,
     evidence_source_id: int,
     file_id: int | None,
@@ -77,30 +61,27 @@ def to_event(
         have no inode) and the reserved Phase-5 ``action``/``outcome``/``file_id``
         columns filled.
     """
-    action = getattr(parsed, "action", None)
-    outcome = getattr(parsed, "outcome", None)
-
     # Honest actor: only when a user/actor is actually known (WR-05). The parser
     # already encodes ``"user=<name>"`` or ``None`` — never coerce to a literal.
-    actor = getattr(parsed, "actor", None) or None
+    # (``or None`` collapses an empty string to the honest absent value.)
+    actor = parsed.actor or None
 
     event_attrs: dict[str, Any] = dict(attrs) if attrs else {}
-    message = getattr(parsed, "message", None)
-    if message is not None and "raw" not in event_attrs:
-        event_attrs["raw"] = message
+    if parsed.message is not None and "raw" not in event_attrs:
+        event_attrs["raw"] = parsed.message
 
     return TimelineEvent(
         evidence_source_id=evidence_source_id,
         ts_utc=utc_iso,  # verbatim from timeresolve (D-46) — never re-derived
         source=source,
-        event_type=action or "log",
+        event_type=parsed.action or "log",
         volume_id=volume_id,
         volume_offset=volume_offset,
         path=log_path,
         meta_addr=None,  # log events have no inode (nullable, schema-allowed)
         actor=actor,
-        action=action,  # reserved column, now populated (D-23/D-47)
-        outcome=outcome,
+        action=parsed.action,  # reserved column, now populated (D-23/D-47)
+        outcome=parsed.outcome,
         file_id=file_id,  # FK to the log FILE's files row, or None (Open Q3)
         attributes=event_attrs,
     )

@@ -23,15 +23,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import typer
 
 import pyautopsy
-from pyautopsy.core.analyze import AnalyzeError, run_analyze
-from pyautopsy.core.ingest import IngestError, run_ingest
-from pyautopsy.core.knownfiles import FilterError, run_filter
-from pyautopsy.core.logs import LogsError, run_logs
-from pyautopsy.core.recover import RecoverError, run_recover
-from pyautopsy.core.search import SearchError, run_search
-from pyautopsy.core.walk import WalkError, run_walk
-from pyautopsy.evidence.image import ImageOpenError
-from pyautopsy.evidence.integrity import IntegrityError, MountedSourceError
+from pyautopsy.core.analyze import run_analyze
+from pyautopsy.core.ingest import run_ingest
+from pyautopsy.core.knownfiles import run_filter
+from pyautopsy.core.logs import run_logs
+from pyautopsy.core.recover import run_recover
+from pyautopsy.core.search import run_search
+from pyautopsy.core.walk import run_walk
+from pyautopsy.errors import PyAutopsyError
 
 app = typer.Typer(
     name="pyautopsy",
@@ -44,6 +43,48 @@ app = typer.Typer(
 # from Typer's usage-error code (2) so callers can tell a forensic failure from a
 # bad invocation.
 _INTEGRITY_EXIT_CODE = 1
+
+
+# ---------------------------------------------------------------------------
+# Shared parameter declarations
+#
+# Declared once and reused across commands so a change to the operator-facing
+# text or validation happens in one place. Only genuinely identical parameters
+# are shared: options whose help text differs per command (``--case`` on the
+# commands that CREATE a case, ``--max-hash-size``, ``--nsrl``, the hash-set
+# options) keep their own declaration, because collapsing those would change
+# the ``--help`` output an examiner reads.
+# ---------------------------------------------------------------------------
+
+# The evidence image every command operates on. ``exists``/``dir_okay``/
+# ``readable`` make Typer reject an unusable path before any evidence access.
+ImageArgument = Annotated[
+    Path,
+    typer.Argument(
+        help="Path to the evidence image (raw/dd file or first E01 segment).",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+]
+
+# The case directory for a command that consumes an EXISTING case.
+ExistingCaseOption = Annotated[
+    Path,
+    typer.Option(
+        "--case",
+        help="Existing case directory (created by a prior `ingest`).",
+    ),
+]
+
+# The IANA zone used to interpret FAT local timestamps.
+TimezoneOption = Annotated[
+    str,
+    typer.Option(
+        "--timezone",
+        help="IANA zone for FAT local-time handling (default UTC).",
+    ),
+]
 
 
 def _hash_sets(
@@ -87,15 +128,7 @@ def main(
 
 @app.command()
 def ingest(
-    image: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the evidence image (raw/dd file or first E01 segment).",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
+    image: ImageArgument,
     case: Annotated[
         Path,
         typer.Option(
@@ -134,7 +167,7 @@ def ingest(
             evidence_id=evidence_id,
             acquisition_hash=acquisition_hash,
         )
-    except (IntegrityError, MountedSourceError, IngestError, ImageOpenError) as exc:
+    except PyAutopsyError as exc:
         typer.echo(f"ingest failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
@@ -159,29 +192,9 @@ def ingest(
 
 @app.command()
 def walk(
-    image: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the evidence image (raw/dd file or first E01 segment).",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    case: Annotated[
-        Path,
-        typer.Option(
-            "--case",
-            help="Existing case directory (created by a prior `ingest`).",
-        ),
-    ],
-    timezone: Annotated[
-        str,
-        typer.Option(
-            "--timezone",
-            help="IANA zone for FAT local-time handling (default UTC).",
-        ),
-    ] = "UTC",
+    image: ImageArgument,
+    case: ExistingCaseOption,
+    timezone: TimezoneOption = "UTC",
     max_hash_size: Annotated[
         int | None,
         typer.Option(
@@ -214,7 +227,7 @@ def walk(
             timezone=timezone,
             max_hash_size=max_hash_size,
         )
-    except (WalkError, ImageOpenError, MountedSourceError, IntegrityError) as exc:
+    except PyAutopsyError as exc:
         typer.echo(f"walk failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
@@ -230,22 +243,8 @@ def walk(
 
 @app.command()
 def recover(
-    image: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the evidence image (raw/dd file or first E01 segment).",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    case: Annotated[
-        Path,
-        typer.Option(
-            "--case",
-            help="Existing case directory (created by a prior `ingest`).",
-        ),
-    ],
+    image: ImageArgument,
+    case: ExistingCaseOption,
     max_hash_size: Annotated[
         int | None,
         typer.Option(
@@ -303,12 +302,7 @@ def recover(
     hash_sets = _hash_sets(hash_set_allow, hash_set_block)
     try:
         result = run_recover(image, case, max_hash_size=max_hash_size)
-    except (
-        RecoverError,
-        ImageOpenError,
-        MountedSourceError,
-        IntegrityError,
-    ) as exc:
+    except PyAutopsyError as exc:
         typer.echo(f"recover failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
@@ -316,11 +310,11 @@ def recover(
     if nsrl is not None or hash_sets:
         try:
             filter_result = run_filter(case, nsrl_db=nsrl, hash_sets=hash_sets)
-        except (FilterError, OSError, sqlite3.Error) as exc:
+        except (PyAutopsyError, OSError, sqlite3.Error) as exc:
             # BL-02: sqlite3.Error is NOT an OSError, so a corrupt examiner-
             # supplied --nsrl DB would otherwise escape this handler and crash
-            # with a raw traceback. run_filter lists sqlite3.Error in
-            # _EXPECTED_FILTER_ERRORS and re-raises it; map it here to the clean
+            # with a raw traceback. run_filter treats sqlite3.Error as an
+            # expected operational error and re-raises it; map it here to the clean
             # non-zero integrity exit + audit FAIL.
             typer.echo(f"recover filtering failed: {exc}", err=True)
             raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
@@ -344,22 +338,8 @@ def recover(
 
 @app.command()
 def logs(
-    image: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the evidence image (raw/dd file or first E01 segment).",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    case: Annotated[
-        Path,
-        typer.Option(
-            "--case",
-            help="Existing case directory (created by a prior `ingest`).",
-        ),
-    ],
+    image: ImageArgument,
+    case: ExistingCaseOption,
 ) -> None:
     """Parse the image's logs into the shared super-timeline (LOG-01, TIME-02).
 
@@ -375,18 +355,13 @@ def logs(
     """
     try:
         result = run_logs(image, case)
-    except (
-        LogsError,
-        ImageOpenError,
-        MountedSourceError,
-        IntegrityError,
-    ) as exc:
+    except PyAutopsyError as exc:
         typer.echo(f"logs failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
     except sqlite3.Error as exc:
         # BL-02: sqlite3.Error is NOT an OSError — a corrupt case DB would
-        # otherwise escape with a raw traceback. run_logs lists it in
-        # _EXPECTED_LOGS_ERRORS and re-raises; map it to the clean integrity exit.
+        # otherwise escape with a raw traceback. run_logs treats it as an
+        # expected operational error and re-raises; map it to the integrity exit.
         typer.echo(f"logs failed: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
@@ -402,15 +377,7 @@ def logs(
 
 @app.command()
 def analyze(
-    image: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the evidence image (raw/dd file or first E01 segment).",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
+    image: ImageArgument,
     case: Annotated[
         Path,
         typer.Option(
@@ -433,13 +400,7 @@ def analyze(
             help="Optional acquisition hash (md5/sha256 hex) to verify against.",
         ),
     ] = None,
-    timezone: Annotated[
-        str,
-        typer.Option(
-            "--timezone",
-            help="IANA zone for FAT local-time handling (default UTC).",
-        ),
-    ] = "UTC",
+    timezone: TimezoneOption = "UTC",
     max_hash_size: Annotated[
         int | None,
         typer.Option(
@@ -523,9 +484,7 @@ def analyze(
     try:
         ZoneInfo(timezone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        typer.echo(
-            f"analyze failed: invalid --timezone {timezone!r}: {exc}", err=True
-        )
+        typer.echo(f"analyze failed: invalid --timezone {timezone!r}: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
     hash_sets = _hash_sets(hash_set_allow, hash_set_block)
@@ -545,19 +504,11 @@ def analyze(
             search=search,
         )
     except (
-        AnalyzeError,
-        IngestError,
-        WalkError,
-        RecoverError,
-        FilterError,
-        LogsError,
-        SearchError,
-        ImageOpenError,
-        MountedSourceError,
-        IntegrityError,
-        # BL-02: sqlite3.Error is not an OSError; run_analyze lists it in
-        # _EXPECTED_ANALYZE_ERRORS and re-raises a corrupt --nsrl DB failure, so
-        # map it to the clean integrity exit instead of crashing with a traceback.
+        PyAutopsyError,
+        # BL-02: sqlite3.Error is not an OSError and is not a PyAutopsyError;
+        # run_analyze treats it as an expected operational error and re-raises a
+        # corrupt --nsrl DB failure, so map it to the clean integrity exit
+        # instead of crashing with a traceback.
         sqlite3.Error,
     ) as exc:
         typer.echo(f"analyze failed: {exc}", err=True)
@@ -580,28 +531,13 @@ def analyze(
 
 @app.command()
 def search(
-    image: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the evidence image (raw/dd file or first E01 segment).",
-            exists=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    case: Annotated[
-        Path,
-        typer.Option(
-            "--case",
-            help="Existing case directory (created by a prior `ingest`).",
-        ),
-    ],
+    image: ImageArgument,
+    case: ExistingCaseOption,
     term: Annotated[
         list[str] | None,
         typer.Option(
             "--term",
-            help="Literal (or, with --regex, regex) needle to search for "
-            "(repeatable).",
+            help="Literal (or, with --regex, regex) needle to search for (repeatable).",
         ),
     ] = None,
     regex: Annotated[
@@ -670,13 +606,11 @@ def search(
             bad_hashes=bad_hashes,
         )
     except (
-        SearchError,
-        ImageOpenError,
-        MountedSourceError,
-        IntegrityError,
-        # BL-02: sqlite3.Error is NOT an OSError; run_search lists it in
-        # _EXPECTED_SEARCH_ERRORS and re-raises a corrupt case DB failure, so map
-        # it to the clean integrity exit instead of crashing with a traceback.
+        PyAutopsyError,
+        # BL-02: sqlite3.Error is NOT an OSError and is not a PyAutopsyError;
+        # run_search treats it as an expected operational error and re-raises a
+        # corrupt case DB failure, so map it to the clean integrity exit instead
+        # of crashing with a traceback.
         sqlite3.Error,
     ) as exc:
         typer.echo(f"search failed: {exc}", err=True)

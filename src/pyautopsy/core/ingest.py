@@ -39,6 +39,7 @@ from pathlib import Path
 from pyautopsy.audit import AuditLog
 from pyautopsy.case import CaseStore
 from pyautopsy.case.models import Case, EvidenceSource
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import image as image_seam
 from pyautopsy.evidence import integrity
 from pyautopsy.evidence.integrity import IntegrityError
@@ -47,7 +48,7 @@ from pyautopsy.util.timeutil import iso_utc
 __all__ = ["IngestError", "IngestResult", "run_ingest"]
 
 
-class IngestError(Exception):
+class IngestError(PyAutopsyError):
     """Raised when ingest cannot proceed for a non-integrity reason.
 
     Used for input-validation failures the CLI turns into a non-zero exit —
@@ -186,9 +187,7 @@ def run_ingest(
         # orphaned cases row with no evidence_sources row (WR-01). The commit
         # happens once, after a clean re-verify; any exception rolls both back.
         with store.transaction():
-            case_id = store.insert_case(
-                Case(name=evidence_id, examiner=examiner)
-            )
+            case_id = store.insert_case(Case(name=evidence_id, examiner=examiner))
             audit.write("ingest.case_init", case_id=case_id, examiner=examiner)
 
             # (3) Open the evidence read-only through the single native seam.
@@ -345,6 +344,4 @@ def _reverify(
             error=str(exc),
         )
         raise
-    audit.write(
-        "ingest.reverify", outcome="PASS", baseline_sha256=baseline["sha256"]
-    )
+    audit.write("ingest.reverify", outcome="PASS", baseline_sha256=baseline["sha256"])

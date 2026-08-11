@@ -167,7 +167,7 @@ objects.
 ### No silent dependency creep
 
 `tests/test_no_new_deps.py` pins `[project.dependencies]` to its baseline set
-(`pytsk3`, `python-magic`, `typer`, `rich`, `jinja2`) and forbids
+(`pytsk3`, `python-magic`, `typer`, `jinja2`) and forbids
 `python-systemd` / journald bindings in any dependency table (decision **D-43**).
 New runtime dependencies require a deliberate decision and an explicit baseline
 update — they are not added silently.
@@ -183,9 +183,9 @@ protocol:
 - `parse(self, text, ctx) -> Iterable[ParsedRecord]` — turns decoded log text into
   `ParsedRecord` value objects.
 
-New parsers register themselves with the registry and the orchestrator
-(`pyautopsy.core.logs.run_logs`) picks them up via `iter_parsers()` — no
-orchestrator change is needed.
+Parsers are listed, in order, in the `PARSERS` tuple in `pyautopsy/log/__init__.py`.
+The orchestrator (`pyautopsy.core.logs.run_logs`) picks the first parser whose
+`matches()` claims the file — no orchestrator change is needed.
 
 ### Steps
 
@@ -199,11 +199,11 @@ orchestrator change is needed.
    embedded `epoch` for shell history). UTC resolution and per-event tz/year
    flagging happen later in `pyautopsy.log.timeresolve` (**D-46**) — do not resolve
    against the host clock in the parser.
-4. Register the parser singleton at import time, appending in declared order
-   (this mirrors `SyslogParser` in `syslog.py`):
+4. Define the parser singleton at module level (this mirrors `SyslogParser` in
+   `syslog.py`). Importing the module has no side effect:
 
    ```python
-   from pyautopsy.log.registry import ParsedRecord, register
+   from pyautopsy.log.registry import ParsedRecord
 
    class MyLogParser:
        name = "mylog"
@@ -215,26 +215,27 @@ orchestrator change is needed.
        def parse(self, text, ctx=None):
            ...  # yield ParsedRecord(...) per line
 
-   # Declared order is load-bearing for determinism — register at import time.
-   mylog_parser = register(MyLogParser())
+   mylog_parser = MyLogParser()
    ```
 
-5. Import the module for its registration side effect in
-   `src/pyautopsy/log/__init__.py`, with a `# noqa: F401` comment, matching the
-   existing `auth` / `syslog` / `shell_history` side-effect imports. Without this,
-   `iter_parsers()` is only populated when a caller imports your module directly —
-   the package import on the orchestrated `run_logs` path would miss it (this was
-   the **CR-01** regression).
+5. Add the singleton to the `PARSERS` tuple in `src/pyautopsy/log/__init__.py`,
+   at a deliberately chosen position (see below), and update the declared-order
+   assertion in `tests/test_logs.py`.
 
 ### Why declared order matters
 
-`iter_parsers()` yields parsers in declared (registration) order. That order fixes
-the per-line parse order, which — combined with `discover`'s oldest→newest file
-order — fixes the `insert_timeline_events` order and therefore the store's
-surrogate-id tiebreak. This is the **CR-01** deterministic-tied-order guarantee
-that keeps `report.json` / `report.html` byte-identical run-to-run. Choose your
-registration position deliberately and add a determinism regression test for the
-new parser.
+`PARSERS` is consulted in order, and the first parser whose `matches()` returns
+true claims the file. That order fixes the per-line parse order, which — combined
+with `discover`'s oldest→newest file order — fixes the `insert_timeline_events`
+order and therefore the store's surrogate-id tiebreak. This is the **CR-01**
+deterministic-tied-order guarantee that keeps `report.json` / `report.html`
+byte-identical run-to-run. Choose your position deliberately and add a
+determinism regression test for the new parser.
+
+The order used to be an emergent property of import order, via a mutable registry
+each parser appended itself to at import time. That let the orchestrated path see
+only `auth` while the tests passed (they imported the parser modules by hand) —
+the **CR-01** regression. Stating the order explicitly removes that failure mode.
 
 ## Branch conventions
 

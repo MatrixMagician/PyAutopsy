@@ -1,10 +1,10 @@
-"""Custom allow/block hash-list parsing + neutral matching (FILTER-01, D-38).
+"""Known-hash list parsing + neutral matching (FILTER-01/SEARCH-02, D-38).
 
-An examiner can supply newline-delimited hash lists alongside (or instead of)
-the NSRL RDS — typically a small allow-list of locally-known-good build
-artifacts, or a block-list of hashes of interest. This module parses those
-lists tolerantly and answers the same neutral "is this hash *known* to the
-list?" question the NSRL probe does.
+One parser and one probe serve every known-hash question the tool asks, whether
+the hashes came from an examiner's allow/block list file (known-file filtering)
+or from ``--hash-set-block`` on the search command (known-bad matching). Both
+ask the same thing — *is this file's hash known to the supplied set?* — so both
+go through the same code.
 
 Parsing (T-04-02-PARSE) tolerates the real shape of hand-maintained lists:
 
@@ -17,16 +17,30 @@ Parsing (T-04-02-PARSE) tolerates the real shape of hand-maintained lists:
 * every token is hex-validated and lowercase-normalized, so a mixed-case or
   UPPERCASE list entry still matches our lowercase ``files`` row hashes.
 
-A match is surfaced as a NEUTRAL ``known`` annotation carrying ``source``,
-``list``, ``sense`` (``allow``|``block``) and ``matched_on`` only — never a
-good/bad/malicious/verdict key (D-38). The allow/block ``sense`` is recorded as
-provenance, NOT interpreted as a verdict. This module imports no
-``pytsk3``/``pyewf`` (D-14): pure stdlib text parsing.
+A malformed token is skipped rather than aborting the list: one bad line must
+never discard an examiner's whole hash set.
+
+**Neutrality.** A match records that a hash is *known* to a supplied list, with
+the source, list name and list sense as provenance. It is never a good/bad
+verdict (D-38) — a hash appearing on a block list is a fact about the list, not
+a finding about the file. That is why :func:`to_known_match` is the single
+place a hit becomes a persisted record: the neutrality rule is stated once.
+
+This module imports no ``pytsk3``/``pyewf`` (D-14): pure stdlib text parsing.
 """
 
 from __future__ import annotations
 
-__all__ = ["custom_match", "parse_hash_set"]
+from collections.abc import Iterable
+
+from pyautopsy.case.models import KnownMatch
+
+__all__ = [
+    "HashSet",
+    "parse_hash_set",
+    "probe_hash_set",
+    "to_known_match",
+]
 
 # Map a hash hex-digest length to the algorithm it identifies. Extends
 # ``evidence.integrity._LEN_TO_ALGO`` (which only needs md5/sha256 for
@@ -37,26 +51,27 @@ _LEN_TO_ALGO: dict[int, str] = {32: "md5", 40: "sha1", 64: "sha256"}
 # Probe order: md5 → sha1 → sha256 (D-37), matching the NSRL probe.
 _HASH_COLUMNS: tuple[str, ...] = ("md5", "sha1", "sha256")
 
+# A parsed hash list: lowercase hex digests bucketed by algorithm.
+HashSet = dict[str, set[str]]
 
-def parse_hash_set(text: str) -> dict[str, set[str]]:
-    """Parse a newline-delimited custom hash list into per-algorithm sets.
 
-    Tolerates ``#`` comment lines, blank lines, trailing per-line comments
-    (only the leading token is read), and mixed-case hex (T-04-02-PARSE). The
-    algorithm is inferred from the token's hex length via :data:`_LEN_TO_ALGO`;
-    tokens that are not valid hex of a recognised length (32/40/64) are skipped
-    rather than aborting the parse, so one malformed line never discards a whole
-    list.
+def parse_hash_set(lines: Iterable[str]) -> HashSet:
+    """Parse hash-list lines into per-algorithm sets.
+
+    Takes any iterable of lines — a file's ``splitlines()``, or a sequence of
+    hashes supplied on the command line — so callers never have to join text
+    back together just to have it split again.
 
     Args:
-        text: The raw text of the hash list (e.g. a list file's contents).
+        lines: The hash-list lines (or bare hashes), in any case, with or
+            without comments and blank lines.
 
     Returns:
         ``{"md5": set, "sha1": set, "sha256": set}`` of lowercase hex digests
         (any of the sets may be empty).
     """
-    parsed: dict[str, set[str]] = {algo: set() for algo in _HASH_COLUMNS}
-    for raw_line in text.splitlines():
+    parsed: HashSet = {algo: set() for algo in _HASH_COLUMNS}
+    for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -73,41 +88,59 @@ def parse_hash_set(text: str) -> dict[str, set[str]]:
     return parsed
 
 
-def custom_match(
-    parsed: dict[str, set[str]],
-    sense: str,
-    list_name: str,
+def probe_hash_set(
+    parsed: HashSet,
     *,
     md5: str | None,
     sha1: str | None,
     sha256: str | None,
-) -> dict[str, str] | None:
-    """Probe a parsed custom list for a file's hashes (md5 → sha1 → sha256).
+) -> str | None:
+    """Return which hash column matched the set, or ``None``.
 
     Each supplied hash is lowercase-folded and tested for membership in the
-    matching algorithm set, in D-37 order. The first hit is surfaced as a
-    NEUTRAL match dict carrying provenance only — ``source``/``list``/``sense``/
-    ``matched_on`` — never a good/bad/verdict key (D-38). The ``sense`` is
-    recorded as recorded provenance (allow vs block list), not a judgement.
+    matching algorithm set, in D-37 order (md5 → sha1 → sha256). The answer is
+    just the column that matched: provenance and neutrality live in
+    :func:`to_known_match`, so the probe stays a plain set lookup.
 
     Args:
         parsed: A :func:`parse_hash_set` result.
-        sense: The list's sense — ``"allow"`` or ``"block"`` (provenance only).
-        list_name: The list's display name (surfaced in the report).
         md5: The file's MD5 hex (any case), or ``None``.
         sha1: The file's SHA-1 hex (any case), or ``None``.
         sha256: The file's SHA-256 hex (any case), or ``None``.
 
     Returns:
-        ``{"source": "custom", "list": list_name, "sense": sense,
-        "matched_on": col}`` on the first matching hash, else ``None``.
+        ``"md5"`` / ``"sha1"`` / ``"sha256"`` for the first match, else ``None``.
     """
     for col, val in zip(_HASH_COLUMNS, (md5, sha1, sha256), strict=True):
         if val and val.lower() in parsed[col]:
-            return {
-                "source": "custom",
-                "list": list_name,
-                "sense": sense,
-                "matched_on": col,
-            }
+            return col
     return None
+
+
+def to_known_match(
+    file_id: int, matched_on: str, *, list_name: str, sense: str
+) -> KnownMatch:
+    """Build the NEUTRAL record for one known-hash hit (D-38).
+
+    The single place a hit becomes a persisted finding, so the neutrality rule
+    is stated once: the record carries where the match came from — source, list
+    name, list sense, and which hash column matched — and never a good/bad
+    verdict. A ``sense`` of ``"block"`` is provenance about the list the hash
+    was found on, not a judgement about the file.
+
+    Args:
+        file_id: The matched ``files`` row id.
+        matched_on: The hash column that matched (from :func:`probe_hash_set`).
+        list_name: The list's display name, surfaced in the report.
+        sense: The list's sense — ``"allow"`` or ``"block"`` (provenance only).
+
+    Returns:
+        A :class:`~pyautopsy.case.models.KnownMatch` ready to persist.
+    """
+    return KnownMatch(
+        file_id=file_id,
+        source="custom",
+        matched_on=matched_on,
+        list_name=list_name,
+        sense=sense,
+    )

@@ -1,4 +1,3 @@
-<!-- GSD:project-start source:PROJECT.md -->
 
 ## Project
 
@@ -20,10 +19,6 @@ single automated Python workflow.
 - **Dependencies**: Autopsy / The Sleuth Kit (TSK) and Python bindings (e.g. `pytsk3`) — Required: core forensic primitives come from TSK, not reimplemented
 - **Forensic soundness**: Evidence sources must be treated read-only; findings must be hashable/reproducible — Why: output supports evidence presentation
 - **Reporting**: Report must be both human-readable and structured/exportable — Why: needs to serve both investigators and downstream tooling
-
-<!-- GSD:project-end -->
-
-<!-- GSD:stack-start source:research/STACK.md -->
 
 ## Technology Stack
 
@@ -56,7 +51,7 @@ single automated Python workflow.
 | **WeasyPrint** | 63+ | HTML/CSS → PDF | Best HTML-to-PDF path: write one Jinja2 HTML/CSS report, render to both HTML and PDF. Excellent CSS (incl. flexbox) for evidence-presentation layout. (HIGH) |
 | **pydantic** | 2.x | Typed models for findings + structured JSON export | Models for files, timeline events, hashes, chain-of-custody. `.model_dump_json()` gives the structured/exportable output PROJECT.md requires, with validation. (HIGH) |
 | **Typer** | 0.12+ | CLI framework | Type-hint-driven CLI, built on Click; minimal boilerplate, auto help/validation, subcommands (`ingest`, `recover`, `timeline`, `report`). Matches the project's type-hint + modern-Python posture. (HIGH) |
-| **Rich** | 13+ | Terminal progress/output | Progress bars over large images, readable status. Pairs natively with Typer. (HIGH) |
+| **Rich** | 13+ | Terminal progress/output | *Not a declared dependency.* Arrives transitively via Typer, which renders `--help` through it. PyAutopsy imports it nowhere and declares it nowhere: CLI output is plain `typer.echo` (issue #1). |
 | **hashlib** | stdlib | Evidence integrity (MD5/SHA-1/SHA-256) | Image + file hashing for chain of custody. SHA-256 primary; MD5/SHA-1 also computed because NSRL and legacy evidence indexes use them. (HIGH) |
 
 ### Hashing / integrity specifics
@@ -165,48 +160,102 @@ single automated Python workflow.
 - https://typer.tiangolo.com/alternatives/ + https://codecut.ai/comparing-python-command-line-interface-tools-argparse-click-and-typer/ — Typer (type-hint, on Click) recommended for maintainable CLIs (HIGH)
 - https://packaging.python.org/en/latest/guides/writing-pyproject-toml/ + https://learn.scientific-python.org/development/guides/packaging-simple/ — hatchling + src layout + dependency-groups + pytest `pythonpath=src` (HIGH)
 
-<!-- GSD:stack-end -->
-
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
-
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
-<!-- GSD:conventions-end -->
+These are enforced by tests, not just documented - the named test fails if the
+convention is broken.
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
+- **UTC everywhere, from the evidence.** Timestamps use the explicit
+  `timezone.utc` idiom (ruff's `UP017` is disabled deliberately). Never put host
+  wall-clock time (`datetime.now()`) into analytical output; run metadata is
+  segregated into `reports/run_metadata.json` so reports stay byte-deterministic.
+- **Native bindings stay behind the seam.** `pytsk3`/`pyewf` may only be imported
+  by `evidence/image.py` and `evidence/filesystem.py`
+  (`tests/test_seam_allowlist.py`). Everything else consumes plain value objects
+  and read-only byte-reader closures.
+- **The store is the sole writer.** All SQL lives in `case/store.py`; no raw SQL
+  outside it. The store owns every total ordering, including the tied-timestamp
+  surrogate-id tiebreak that makes reports reproducible.
+- **Reports are byte-deterministic.** Two runs over the same image produce
+  identical `report.json`/`report.html` (`tests/test_reproducibility.py`).
+  Anything that could vary run-to-run belongs in the run-metadata sidecar.
+- **Honest output, never a verdict.** Findings describe what was observed. A
+  hash match means "known to the supplied list", never good/bad; recovery tiers
+  describe data survival, never intent; inferred timestamps are flagged, not
+  asserted. The report states what actually ran, including passes that found
+  nothing.
+- **No silent dependency creep.** The `[project.dependencies]` array is pinned by
+  `tests/test_no_new_deps.py`; adding one is a deliberate baseline update.
+- **Exports are promises.** A name in `__all__` must be used elsewhere or be
+  recorded as deliberately retained (`tests/test_exports.py`).
+- **The case directory is separate from the evidence.** Output never lands beside
+  the evidence it describes (D-01); ingest refuses a case dir that is, contains,
+  or sits inside the evidence directory.
 
 ## Architecture
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
-<!-- GSD:architecture-end -->
+A layered pipeline; each tier depends only on the one below it. Full detail in
+`docs/ARCHITECTURE.md`.
 
-<!-- GSD:skills-start source:skills/ -->
+```
+cli/          Typer shells over the orchestrators; no logic of its own.
+core/         Orchestrators (ingest, walk, recover, knownfiles, logs, search,
+              analyze). Each ends with the shared core/epilogue.py audit
+              epilogue: expected operational failures are audited as
+              "<step>.error", genuine bugs as a distinct "<step>.crashed", and
+              both re-raise with the traceback intact.
+evidence/     The only native seam: byte-layer image open, FS walk, integrity
+              hashing, file typing. byteio.py holds the shared read contract.
+case/         case.db - the sole writer. mapping.py derives each table's column
+              mapping from its dataclass, so a column is named once.
+audit/        Append-only JSONL audit log (O_APPEND + fsync), confined to the
+              case directory.
+timeline/     MACB explosion into timeline events.
+log/          Log parsing: the LogParser contract plus the explicitly ordered
+              PARSERS tuple. That order is load-bearing for determinism.
+filter/       NSRL + custom hash-set matching (one parse, one probe, one record).
+search/       Streaming content/unallocated search, IOC and known-bad hashes.
+report/       Deterministic body assembly + JSON/HTML writers. Coverage is read
+              from the case database, never passed in by a caller.
+util/         Cross-cutting: UTC time helpers, path confinement for
+              evidence-controlled names.
+errors.py     PyAutopsyError, the base every deliberate error derives from, so
+              the CLI catches one name and a programming bug still propagates.
+```
 
 ## Project Skills
 
 No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, `.github/skills/`, or `.codex/skills/` with a `SKILL.md` index file.
-<!-- GSD:skills-end -->
 
-<!-- GSD:workflow-start source:GSD defaults -->
+## Agent skills
 
-## GSD Workflow Enforcement
+### Issue tracker
 
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
+GitHub Issues on `MatrixMagician/PyAutopsy`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
-Use these entry points:
+### Triage labels
 
-- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd-debug` for investigation and bug fixing
-- `/gsd-execute-phase` for planned phase work
+The five canonical roles, used verbatim as label strings. See `docs/agents/triage-labels.md`.
 
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
+### Domain docs
 
-<!-- GSD:profile-start -->
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root (neither exists yet; created lazily). See `docs/agents/domain.md`.
+
+## Workflow
+
+Edit code directly. There is no planning gate to route through.
+
+The durable record of a change is the code, its tests, and the commit message.
+Historical planning documents live in `.planning/` and are read-only history:
+they describe how the project got here, not a process to follow.
 
 ## Developer Profile
 
-> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
+Senior engineer and tool-builder; domain-aware, multi-language (Python, TS/React, Rust, Go).
+
+- **Autonomy between gates.** Drive multi-step work without per-step approval; pause for explicit sign-off at decision and release points.
+- **Precise & reproducible:** detailed repro/test steps, exact commands/paths; honor tightly-scoped requirements without broadening scope.
+- **Protect history & releases:** split/atomic commits, careful tag/deploy handling, security review on changes.
+- **Register:** courteous and direct - plain, decisive; apply restated corrections immediately.
+- **Surface options crisply.** Assume a senior, domain-aware reader; cite evidence where domain specifics matter.
+- **Persist context** (decisions, patterns, bugs) to graphmind memory proactively.

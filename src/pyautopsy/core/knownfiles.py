@@ -7,9 +7,10 @@ hashes, asking two neutral membership questions:
 
 * is this hash in the examiner-supplied **NSRL RDS**? (via
   :func:`pyautopsy.filter.nsrl.open_nsrl` + :func:`~pyautopsy.filter.nsrl.nsrl_match`)
-* is it in any supplied **custom allow/block list**? (via
-  :func:`pyautopsy.filter.hashsets.parse_hash_set` +
-  :func:`~pyautopsy.filter.hashsets.custom_match`)
+* is it in any supplied **custom allow/block list**? (via the shared known-hash
+  path: :func:`pyautopsy.filter.hashsets.parse_hash_set` +
+  :func:`~pyautopsy.filter.hashsets.probe_hash_set` +
+  :func:`~pyautopsy.filter.hashsets.to_known_match`)
 
 Every match becomes a NEUTRAL :class:`~pyautopsy.case.KnownMatch` annotation —
 source + list + sense + matched_on, never a good/bad/clean/malicious verdict
@@ -31,13 +32,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, KnownMatch
+from pyautopsy.case import CaseStore, KnownMatch, Stage
+from pyautopsy.core.epilogue import audited_step
+from pyautopsy.errors import PyAutopsyError
 from pyautopsy.filter import hashsets, nsrl
 
 __all__ = ["FilterError", "FilterResult", "run_filter"]
 
 
-class FilterError(Exception):
+class FilterError(PyAutopsyError):
     """Raised when filtering cannot proceed for a non-integrity reason.
 
     Chiefly: the case directory has no ``case.db`` (ingest/walk was never run) or
@@ -64,17 +67,6 @@ class FilterResult:
     files_matched: int
     nsrl_matches: int
     custom_matches: int
-
-
-# The operational exception set filtering legitimately expects (mirrors
-# recover._EXPECTED_RECOVER_ERRORS). Recorded as a ``filter.error`` FAIL and
-# re-raised; anything OUTSIDE this set is a genuine bug recorded under
-# ``filter.crashed``.
-_EXPECTED_FILTER_ERRORS: tuple[type[BaseException], ...] = (
-    FilterError,
-    OSError,
-    sqlite3.Error,
-)
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -150,7 +142,7 @@ def run_filter(
     custom_matches = 0
     matched_file_ids: set[int] = set()
 
-    try:
+    with audited_step(audit, store, "filter", FilterError):
         source_id = (
             evidence_source_id
             if evidence_source_id is not None
@@ -162,8 +154,8 @@ def run_filter(
         for raw_path, sense in hash_sets:
             list_path = Path(raw_path)
             # WR-01: a binary / non-UTF-8 custom list makes read_text raise
-            # UnicodeDecodeError (a ValueError subclass) which is NOT in
-            # _EXPECTED_FILTER_ERRORS, so it would be mis-recorded as a
+            # UnicodeDecodeError (a ValueError subclass) which is NOT an
+            # expected operational error, so it would be mis-recorded as a
             # filter.crashed "programming bug". It is actually operator bad
             # input — convert it to a FilterError naming the offending list so
             # it surfaces as a clean filter.error + handled exit.
@@ -174,7 +166,7 @@ def run_filter(
                     f"hash-set list {list_path} is not valid UTF-8 text "
                     f"(binary or wrong encoding?): {exc}"
                 ) from exc
-            parsed = hashsets.parse_hash_set(list_text)
+            parsed = hashsets.parse_hash_set(list_text.splitlines())
             parsed_lists.append((list_path.stem, sense, parsed))
 
         # Open the NSRL DB once (read-only), reused for every probe.
@@ -194,39 +186,36 @@ def run_filter(
                     continue
 
                 if nsrl_conn is not None:
-                    nsrl_hit = nsrl.nsrl_match(
+                    nsrl_matched_on = nsrl.nsrl_match(
                         nsrl_conn,
                         nsrl_table,
                         md5=file_row.md5,
                         sha1=file_row.sha1,
                         sha256=file_row.sha256,
                     )
-                    if nsrl_hit is not None:
+                    if nsrl_matched_on is not None:
                         matches.append(
                             KnownMatch(
                                 file_id=file_row.id,
                                 source="nsrl",
-                                matched_on=nsrl_hit["matched_on"],
+                                matched_on=nsrl_matched_on,
                             )
                         )
                         nsrl_matches += 1
                         matched_file_ids.add(file_row.id)
 
                 for list_name, sense, parsed in parsed_lists:
-                    custom_hit = hashsets.custom_match(
+                    matched_on = hashsets.probe_hash_set(
                         parsed,
-                        sense,
-                        list_name,
                         md5=file_row.md5,
                         sha1=file_row.sha1,
                         sha256=file_row.sha256,
                     )
-                    if custom_hit is not None:
+                    if matched_on is not None:
                         matches.append(
-                            KnownMatch(
-                                file_id=file_row.id,
-                                source="custom",
-                                matched_on=custom_hit["matched_on"],
+                            hashsets.to_known_match(
+                                file_row.id,
+                                matched_on,
                                 list_name=list_name,
                                 sense=sense,
                             )
@@ -239,6 +228,9 @@ def run_filter(
 
         with store.transaction():
             store.insert_known_matches(matches)
+            # Recorded even when nothing matched: a filtering pass that matched
+            # nothing still covered the inventory (D-40 honesty).
+            store.record_stage_for_source(source_id, Stage.FILTER)
 
         audit.write(
             "filter.end",
@@ -248,24 +240,6 @@ def run_filter(
             nsrl_matches=nsrl_matches,
             custom_matches=custom_matches,
         )
-    except _EXPECTED_FILTER_ERRORS as exc:
-        audit.write(
-            "filter.error",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    except Exception as exc:
-        audit.write(
-            "filter.crashed",
-            outcome="FAIL",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        raise
-    finally:
-        store.close()
 
     return FilterResult(
         evidence_source_id=source_id,

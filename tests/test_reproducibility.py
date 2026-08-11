@@ -18,10 +18,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from pyautopsy.case import CaseStore
 from pyautopsy.cli.main import app
+from pyautopsy.core.analyze import run_analyze
 from tests.fixtures import make_fixtures
 
 runner = CliRunner()
@@ -82,11 +84,7 @@ def _analytical_fields(case_dir: Path) -> dict[str, object]:
     conn.row_factory = sqlite3.Row
     try:
         case = dict(conn.execute("SELECT * FROM cases ORDER BY id").fetchone())
-        ev = dict(
-            conn.execute(
-                "SELECT * FROM evidence_sources ORDER BY id"
-            ).fetchone()
-        )
+        ev = dict(conn.execute("SELECT * FROM evidence_sources ORDER BY id").fetchone())
     finally:
         conn.close()
 
@@ -120,9 +118,7 @@ def test_two_runs_produce_identical_analytical_content(
     assert fields_a["evidence.image_type"] == "raw"
 
 
-def test_run_metadata_is_segregated(
-    tiny_raw_image: Path, tmp_path: Path
-) -> None:
+def test_run_metadata_is_segregated(tiny_raw_image: Path, tmp_path: Path) -> None:
     """Run metadata (timestamps) is stored but excluded from the comparison.
 
     Both runs persist a ``created_utc``/``acquired_utc`` (run metadata exists),
@@ -243,9 +239,7 @@ def test_recover_filter_reproducible(
     # produces a real, deterministic custom match against a RECOVERED row.
     resident_md5 = hashlib.md5(make_fixtures.NTFS_RESIDENT_CONTENT).hexdigest()
     allow_list = tmp_path / "allow.txt"
-    allow_list.write_text(
-        f"{resident_md5.upper()}  resident-known\n", encoding="utf-8"
-    )
+    allow_list.write_text(f"{resident_md5.upper()}  resident-known\n", encoding="utf-8")
 
     case_a = tmp_path / "case_a"
     case_b = tmp_path / "case_b"
@@ -279,9 +273,7 @@ def test_recover_filter_reproducible(
     def _recovered_names(case: Path) -> set[str]:
         recovered = case / "recovered"
         return {
-            str(p.relative_to(recovered))
-            for p in recovered.rglob("*")
-            if p.is_file()
+            str(p.relative_to(recovered)) for p in recovered.rglob("*") if p.is_file()
         }
 
     names_a = _recovered_names(case_a)
@@ -382,9 +374,7 @@ def test_tied_log_events_stable(
     assert html_a == html_b
     assert "tamper" in html_a
     log_in_timeline = sum(
-        1
-        for ev in body_a["timeline"]
-        if not str(ev["source"]).startswith("filesystem")
+        1 for ev in body_a["timeline"] if not str(ev["source"]).startswith("filesystem")
     )
     assert log_in_timeline == log_count
     # The fixture documents its CR-01 trap via ground truth; assert it is present
@@ -422,9 +412,7 @@ def test_tied_log_events_null_meta_tiebreak(case_dir: Path) -> None:
                     )
                 )
                 store.insert_timeline_events(
-                    [
-                        TimelineEvent(evidence_source_id=sid, **e) for e in events
-                    ]
+                    [TimelineEvent(evidence_source_id=sid, **e) for e in events]
                 )
             read = store.get_timeline_events(sid)
         return [(e.ts_utc, e.source, e.event_type, e.actor) for e in read]
@@ -451,9 +439,7 @@ def test_tied_log_events_null_meta_tiebreak(case_dir: Path) -> None:
     assert [t[1] for t in order_ab] == ["auth", "syslog"]
 
 
-def test_default_analyze_unchanged(
-    tiny_ext4_image: Path, tmp_path: Path
-) -> None:
+def test_default_analyze_unchanged(tiny_ext4_image: Path, tmp_path: Path) -> None:
     """D-40: a plain ``analyze`` (no recover/filter inputs) is byte-unchanged.
 
     Proves the opt-in wiring left the DEFAULT path untouched: a plain
@@ -494,3 +480,57 @@ def test_default_analyze_unchanged(
     # disclosures slice empties to [] so the section adds no noise and stays
     # byte-identical to the Phase-4/05 baseline (D-48).
     assert body_a["log_findings"]["disclosures"] == []
+
+
+@pytest.mark.parametrize(
+    "combination",
+    [
+        pytest.param({}, id="bare-walk"),
+        pytest.param({"recover": True}, id="walk+recover"),
+        pytest.param({"nsrl_db": True}, id="walk+filter"),
+        pytest.param({"logs": True}, id="walk+logs"),
+        pytest.param({"search": "root"}, id="walk+search"),
+        pytest.param(
+            {"recover": True, "nsrl_db": True, "logs": True, "search": "root"},
+            id="full-run",
+        ),
+    ],
+)
+def test_reports_are_byte_identical_for_each_coverage_combination(
+    log_search_image: Path,
+    nsrl_minimal_db: Path,
+    tmp_path: Path,
+    combination: dict,
+) -> None:
+    """Each coverage combination reproduces byte-for-byte across two runs.
+
+    The report derives which passes ran from the case database rather than from
+    caller-supplied flags, and each combination emits different limitations
+    prose. This runs every combination twice and compares the report bytes, so a
+    change to how coverage is derived cannot silently perturb any of them.
+    """
+    kwargs = dict(combination)
+    if kwargs.pop("nsrl_db", None):
+        kwargs["nsrl_db"] = nsrl_minimal_db
+
+    outputs = []
+    for run in ("first", "second"):
+        case = tmp_path / f"{run}-{abs(hash(tuple(sorted(combination))))}"
+        run_analyze(
+            log_search_image,
+            case,
+            examiner="X",
+            evidence_id="E1",
+            **kwargs,
+        )
+        outputs.append(
+            {
+                name: (case / "reports" / name).read_bytes()
+                for name in ("report.json", "report.html")
+            }
+        )
+
+    for name in ("report.json", "report.html"):
+        assert outputs[0][name] == outputs[1][name], (
+            f"{name} differs between runs for this coverage combination"
+        )
