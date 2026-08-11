@@ -764,3 +764,48 @@ def test_search_hit_term_round_trips_non_utf8_bytes(case_dir: Path) -> None:
         assert store.get_search_hits(source_id)[0].term == needle
     finally:
         store.close()
+
+
+def test_every_persisted_non_native_field_declares_a_codec() -> None:
+    """A new column needing conversion cannot be added without declaring one.
+
+    The mapping passes values through untouched unless a codec is registered.
+    That is right for the columns SQLite stores natively, and silently wrong for
+    anything else — a bool would round-trip as an int, a bytes field would fail
+    to bind. This gate makes the omission fail here rather than in a case file.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    from pyautopsy.case import (
+        mapping,  # noqa: PLC0415
+        models,  # noqa: PLC0415
+    )
+
+    # Types SQLite binds and returns unchanged.
+    native = {
+        "int",
+        "str",
+        "float",
+        "int | None",
+        "str | None",
+        "float | None",
+    }
+    # AuditEvent is written to the JSONL audit log, not through a RowMapper.
+    not_persisted = {"AuditEvent"}
+
+    undeclared: list[str] = []
+    for name in dir(models):
+        model = getattr(models, name)
+        if not (dataclasses.is_dataclass(model) and isinstance(model, type)):
+            continue
+        if name in not_persisted:
+            continue
+        for field in dataclasses.fields(model):
+            if str(field.type) in native or field.name in mapping._CODECS:
+                continue
+            undeclared.append(f"{name}.{field.name}: {field.type}")
+
+    assert not undeclared, (
+        "these persisted fields have a type SQLite does not store natively and "
+        f"no registered codec: {undeclared}. Add one to mapping._CODECS."
+    )
