@@ -55,9 +55,7 @@ def explode(file_row: FileRow) -> list[TimelineEvent]:
         parts.append(f"gid={file_row.gid}")
     actor: str | None = ",".join(parts) if parts else None
 
-    source = (
-        f"filesystem:{file_row.fs_type}" if file_row.fs_type else "filesystem"
-    )
+    source = f"filesystem:{file_row.fs_type}" if file_row.fs_type else "filesystem"
 
     events: list[TimelineEvent] = []
     for col, etype in _MACB:

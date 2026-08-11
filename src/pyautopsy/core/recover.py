@@ -94,6 +94,7 @@ def _fs_type_label(fs_ftype: int) -> str:
         return "ext"
     return "unknown"
 
+
 # Honesty-reviewed, human-facing copy the report's recovery sections render
 # (D-32, mirrors assemble.py's integrity copy and the Phase-3 WR-02 test). Every
 # string describes DATA SURVIVAL only — it must never assert intent or a
@@ -253,8 +254,6 @@ class RecoverError(PyAutopsyError):
     failures surface as :class:`~pyautopsy.evidence.integrity.MountedSourceError`
     or :class:`~pyautopsy.evidence.integrity.IntegrityError` instead.
     """
-
-
 
 
 def _latest_evidence_source_id(store: CaseStore) -> int:
@@ -418,9 +417,7 @@ def run_recover(
                 # meta_addr order — deterministic, Pitfall 6). The seam unions a
                 # directory walk (name/path/parent for surviving dir links) with
                 # an inode-range scan (broken-link inodes, e.g. NTFS resident).
-                for di in fs_seam.iter_deleted_inodes(
-                    fs, volume_id, volume_offset
-                ):
+                for di in fs_seam.iter_deleted_inodes(fs, volume_id, volume_offset):
                     entry = fs_seam.recover_meta(fs, di.meta_addr)
                     if entry is None:
                         continue

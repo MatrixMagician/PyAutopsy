@@ -52,12 +52,8 @@ def test_create_builds_directory_layout(case_dir: Path) -> None:
 def test_pragmas_wal_and_foreign_keys(case_dir: Path) -> None:
     """The case DB is opened WAL with foreign-key enforcement on."""
     with CaseStore.create(case_dir) as store:
-        journal_mode = store.connection.execute(
-            "PRAGMA journal_mode"
-        ).fetchone()[0]
-        foreign_keys = store.connection.execute(
-            "PRAGMA foreign_keys"
-        ).fetchone()[0]
+        journal_mode = store.connection.execute("PRAGMA journal_mode").fetchone()[0]
+        foreign_keys = store.connection.execute("PRAGMA foreign_keys").fetchone()[0]
     assert journal_mode.lower() == "wal"
     assert foreign_keys == 1
 
@@ -123,12 +119,9 @@ def test_all_timestamp_columns_are_utc(case_dir: Path) -> None:
                 image_type="raw",
             )
         )
-        rows = store.connection.execute(
-            "SELECT created_utc FROM cases"
-        ).fetchall()
+        rows = store.connection.execute("SELECT created_utc FROM cases").fetchall()
         rows += store.connection.execute(
-            "SELECT acquired_utc FROM evidence_sources "
-            "WHERE acquired_utc IS NOT NULL"
+            "SELECT acquired_utc FROM evidence_sources WHERE acquired_utc IS NOT NULL"
         ).fetchall()
     for (ts,) in rows:
         assert ts.endswith("+00:00"), ts
@@ -138,9 +131,7 @@ def test_attributes_accepts_heterogeneous_keys(case_dir: Path) -> None:
     """An arbitrary attributes key round-trips without a schema change (D-02)."""
     weird = {"phase4_finding": [1, 2, 3], "nested": {"k": "v"}, "n": 42}
     with CaseStore.create(case_dir) as store:
-        case_id = store.insert_case(
-            Case(name="c", examiner="ex", attributes=weird)
-        )
+        case_id = store.insert_case(Case(name="c", examiner="ex", attributes=weird))
         loaded = store.get_case(case_id)
     assert loaded.attributes == weird
 
@@ -368,9 +359,9 @@ def test_insert_log_findings_composes_in_outer_transaction(case_dir: Path) -> No
             sibling = sqlite3.connect(case_dir / "case.db")
             try:
                 sibling.execute("PRAGMA busy_timeout = 200")
-                count = sibling.execute(
-                    "SELECT COUNT(*) FROM log_findings"
-                ).fetchone()[0]
+                count = sibling.execute("SELECT COUNT(*) FROM log_findings").fetchone()[
+                    0
+                ]
             finally:
                 sibling.close()
             assert count == 0
@@ -467,19 +458,34 @@ def test_get_timeline_events_applies_d26_total_order(case_dir: Path) -> None:
                 [
                     # later timestamp, should sort last
                     _seed_timeline_event(
-                        source_id, "2026-02-02T00:00:00+00:00", "born",
-                        path="/a", meta_addr=1,
+                        source_id,
+                        "2026-02-02T00:00:00+00:00",
+                        "born",
+                        path="/a",
+                        meta_addr=1,
                     ),
                     # ties on ts/vol/offset/path with the next; differs on type
                     _seed_timeline_event(
-                        source_id, ts, "modified", path="/a", meta_addr=5,
+                        source_id,
+                        ts,
+                        "modified",
+                        path="/a",
+                        meta_addr=5,
                     ),
                     _seed_timeline_event(
-                        source_id, ts, "changed", path="/a", meta_addr=5,
+                        source_id,
+                        ts,
+                        "changed",
+                        path="/a",
+                        meta_addr=5,
                     ),
                     # same ts/type/path but different meta_addr — meta_addr tiebreak
                     _seed_timeline_event(
-                        source_id, ts, "changed", path="/a", meta_addr=2,
+                        source_id,
+                        ts,
+                        "changed",
+                        path="/a",
+                        meta_addr=2,
                     ),
                 ]
             )
@@ -504,8 +510,11 @@ def test_get_timeline_events_limit(case_dir: Path) -> None:
             store.insert_timeline_events(
                 [
                     _seed_timeline_event(
-                        source_id, f"2026-01-0{i}T00:00:00+00:00", "modified",
-                        path="/a", meta_addr=i,
+                        source_id,
+                        f"2026-01-0{i}T00:00:00+00:00",
+                        "modified",
+                        path="/a",
+                        meta_addr=i,
                     )
                     for i in range(1, 6)
                 ]
@@ -585,9 +594,7 @@ def test_transaction_commits_both_rows_atomically(case_dir: Path) -> None:
                     image_type="raw",
                 )
             )
-        cases = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[
-            0
-        ]
+        cases = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
         sources = store.connection.execute(
             "SELECT COUNT(*) FROM evidence_sources"
         ).fetchone()[0]
@@ -604,9 +611,7 @@ def test_transaction_rolls_back_on_exception(case_dir: Path) -> None:
                 raise RuntimeError("boom before evidence insert")
         # The committed-row count is read on a fresh connection to confirm the
         # rollback was durable, not merely uncommitted in this connection.
-        count = store.connection.execute(
-            "SELECT COUNT(*) FROM cases"
-        ).fetchone()[0]
+        count = store.connection.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
     assert count == 0
 
 

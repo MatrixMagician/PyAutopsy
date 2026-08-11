@@ -215,9 +215,7 @@ def _open_raw(path: Path) -> ImageHandle:
     try:
         img = pytsk3.Img_Info(os.fspath(path))
     except OSError as exc:
-        raise ImageOpenError(
-            f"could not open raw image {path!s}: {exc}"
-        ) from exc
+        raise ImageOpenError(f"could not open raw image {path!s}: {exc}") from exc
     return ImageHandle(
         image=img,
         size=img.get_size(),
@@ -246,9 +244,7 @@ def _open_ewf(path: Path) -> ImageHandle:
         handle = pyewf.handle()
         handle.open(filenames)  # read-only
     except OSError as exc:
-        raise ImageOpenError(
-            f"could not open E01/EWF image {path!s}: {exc}"
-        ) from exc
+        raise ImageOpenError(f"could not open E01/EWF image {path!s}: {exc}") from exc
 
     img = EWFImgInfo(handle)
     return ImageHandle(

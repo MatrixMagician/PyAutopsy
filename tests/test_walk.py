@@ -81,9 +81,7 @@ def _ingest_then_walk(
     image: Path, case_dir: Path, *, timezone: str = "UTC"
 ) -> tuple[WalkResult, int]:
     """Ingest ``image`` into ``case_dir`` then walk it; return (result, source_id)."""
-    ingested = run_ingest(
-        image, case_dir, examiner="X", evidence_id="E1"
-    )
+    ingested = run_ingest(image, case_dir, examiner="X", evidence_id="E1")
     result = run_walk(image, case_dir, timezone=timezone)
     return result, ingested.evidence_source_id
 
@@ -187,9 +185,7 @@ def test_macb_utc_and_fat_flagged(
     )
     with CaseStore.open(fat_utc_case) as store:
         fat_utc_rows = store.get_files(fat_utc_source)
-    fat_utc_file = next(
-        r for r in fat_utc_rows if r.name == make_fixtures.FS_FILE_NAME
-    )
+    fat_utc_file = next(r for r in fat_utc_rows if r.name == make_fixtures.FS_FILE_NAME)
     assert fat_utc_file.mtime_utc is not None
     ny_instant = datetime.fromisoformat(fat_file.mtime_utc)
     utc_instant = datetime.fromisoformat(fat_utc_file.mtime_utc)
@@ -518,9 +514,7 @@ def test_unallocated_typing_flags_provenance() -> None:
     )
     assert hashes == {"md5": None, "sha1": None, "sha256": None}
     assert file_type == "text/plain"
-    assert (
-        attributes["file_type_provenance"] == "unallocated-blocks-may-be-reused"
-    )
+    assert attributes["file_type_provenance"] == "unallocated-blocks-may-be-reused"
 
     # Allocated: same type, but NO provenance caveat.
     alloc = _reg_entry(_bytes_reader(b"deleted bytes"), allocated=True)

@@ -34,9 +34,7 @@ def test_source_mtime_and_size_unchanged_after_open_and_hash(
     assert after.st_size == before.st_size
 
 
-def test_source_unchanged_after_walk(
-    tiny_ext4_image: Path, tmp_path: Path
-) -> None:
+def test_source_unchanged_after_walk(tiny_ext4_image: Path, tmp_path: Path) -> None:
     """D-05/P1: a full filesystem walk never modifies the source.
 
     Mirrors ``test_source_mtime_and_size_unchanged_after_open_and_hash`` for the
@@ -78,9 +76,7 @@ def test_recover_does_not_write_source(
     case_dir = tmp_path / "case"
     before = ntfs_resident_deleted_image.stat()
 
-    run_ingest(
-        ntfs_resident_deleted_image, case_dir, examiner="X", evidence_id="E1"
-    )
+    run_ingest(ntfs_resident_deleted_image, case_dir, examiner="X", evidence_id="E1")
     run_walk(ntfs_resident_deleted_image, case_dir)
     result = run_recover(ntfs_resident_deleted_image, case_dir)
 
@@ -122,9 +118,7 @@ def test_search_does_not_write_source(
     case_dir = tmp_path / "case"
     before = log_search_image.stat()
 
-    ingested = run_ingest(
-        log_search_image, case_dir, examiner="X", evidence_id="E1"
-    )
+    ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
     gt = log_search_groundtruth
     result = run_search(
         log_search_image,

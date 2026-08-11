@@ -82,9 +82,7 @@ def test_ingest_wrong_acquisition_hash_exits_nonzero(
         for line in log.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    compare = next(
-        e for e in events if e["action"] == "ingest.acquisition_compare"
-    )
+    compare = next(e for e in events if e["action"] == "ingest.acquisition_compare")
     assert compare["outcome"] == "FAIL"
 
 
@@ -115,17 +113,13 @@ def test_walk_smoke_inventories_into_case(
     ingest = runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
     assert ingest.exit_code == 0, ingest.output
 
-    result = runner.invoke(
-        app, ["walk", str(tiny_ext4_image), "--case", str(case_dir)]
-    )
+    result = runner.invoke(app, ["walk", str(tiny_ext4_image), "--case", str(case_dir)])
     assert result.exit_code == 0, result.output
     assert "walk complete" in result.output
     assert "files inventoried:" in result.output
 
 
-def test_walk_rejects_invalid_timezone(
-    tiny_ext4_image: Path, case_dir: Path
-) -> None:
+def test_walk_rejects_invalid_timezone(tiny_ext4_image: Path, case_dir: Path) -> None:
     """An invalid ``--timezone`` exits non-zero (Security V5 validation)."""
     runner.invoke(app, _ingest_args(tiny_ext4_image, case_dir))
     result = runner.invoke(
@@ -246,9 +240,7 @@ def test_missing_case_directory_exits_cleanly_not_with_a_traceback(
     from the audit write masked the actionable message.
     """
     missing = tmp_path / "no-such-case"
-    result = runner.invoke(
-        app, [command, str(tiny_ext4_image), "--case", str(missing)]
-    )
+    result = runner.invoke(app, [command, str(tiny_ext4_image), "--case", str(missing)])
     assert result.exit_code == 1, result.output
     assert "no case database under" in result.output
     assert "run `pyautopsy ingest`" in result.output

@@ -69,8 +69,6 @@ class FilterResult:
     custom_matches: int
 
 
-
-
 def _latest_evidence_source_id(store: CaseStore) -> int:
     """Return the latest ``evidence_sources`` id, or raise :class:`FilterError`.
 
@@ -232,9 +230,7 @@ def run_filter(
             store.insert_known_matches(matches)
             # Recorded even when nothing matched: a filtering pass that matched
             # nothing still covered the inventory (D-40 honesty).
-            store.record_stage(
-                store.get_evidence_source(source_id).case_id, "filter"
-            )
+            store.record_stage(store.get_evidence_source(source_id).case_id, "filter")
 
         audit.write(
             "filter.end",

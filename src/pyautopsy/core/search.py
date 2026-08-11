@@ -71,8 +71,6 @@ class SearchResult:
     hash_hits: int
 
 
-
-
 def _latest_evidence_source_id(store: CaseStore) -> int:
     """Return the latest ``evidence_sources`` id, or raise :class:`SearchError`.
 
@@ -275,9 +273,7 @@ def run_search(
             # Recorded even when nothing matched: a search that found nothing is
             # a real outcome, and the report must not report it as never having
             # run (D-40 honesty).
-            store.record_stage(
-                store.get_evidence_source(source_id).case_id, "search"
-            )
+            store.record_stage(store.get_evidence_source(source_id).case_id, "search")
 
         audit.write(
             "search.end",

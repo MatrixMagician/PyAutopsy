@@ -62,13 +62,13 @@ def test_analyze_composes_pipeline(tiny_ext4_image: Path, tmp_path: Path) -> Non
     conn.row_factory = sqlite3.Row
     try:
         cases = conn.execute("SELECT COUNT(*) AS n FROM cases").fetchone()["n"]
-        sources = conn.execute(
-            "SELECT COUNT(*) AS n FROM evidence_sources"
-        ).fetchone()["n"]
+        sources = conn.execute("SELECT COUNT(*) AS n FROM evidence_sources").fetchone()[
+            "n"
+        ]
         files = conn.execute("SELECT COUNT(*) AS n FROM files").fetchone()["n"]
-        events = conn.execute(
-            "SELECT COUNT(*) AS n FROM timeline_events"
-        ).fetchone()["n"]
+        events = conn.execute("SELECT COUNT(*) AS n FROM timeline_events").fetchone()[
+            "n"
+        ]
     finally:
         conn.close()
 

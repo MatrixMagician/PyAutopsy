@@ -74,8 +74,6 @@ class LogsError(PyAutopsyError):
     """
 
 
-
-
 @dataclass(frozen=True, slots=True)
 class LogsResult:
     """The analytical outcome of a log-parsing run (reproducible counts only).
@@ -405,9 +403,7 @@ def run_logs(
                     read_text=_text,
                 )
 
-                rows = list(
-                    fs_seam.walk_fs(fs, vol.volume_id, vol.offset)
-                )
+                rows = list(fs_seam.walk_fs(fs, vol.volume_id, vol.offset))
                 rows_by_path = {r.path: r for r in rows}
 
                 # Rotated /var/log sets (auth/syslog) THEN per-user shell-history
@@ -489,9 +485,7 @@ def run_logs(
                 store.insert_log_findings(all_findings)
                 # Recorded even when a log set yielded no events: the pass still
                 # covered the image's logs (D-40 honesty).
-                store.record_stage(
-                    store.get_evidence_source(source_id).case_id, "logs"
-                )
+                store.record_stage(store.get_evidence_source(source_id).case_id, "logs")
             events_parsed = len(all_events)
             findings_count = len(all_findings)
         finally:
@@ -541,9 +535,7 @@ def _parse_log_set(
     (D-44 tamperability) the matched parser exposes — both in encounter order so
     the store's surrogate-id tiebreak stays insertion-deterministic (Pitfall 3).
     """
-    parser = next(
-        (p for p in PARSERS if p.matches(log_set.basename)), None
-    )
+    parser = next((p for p in PARSERS if p.matches(log_set.basename)), None)
     if parser is None:
         return [], []
 

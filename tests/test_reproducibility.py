@@ -82,11 +82,7 @@ def _analytical_fields(case_dir: Path) -> dict[str, object]:
     conn.row_factory = sqlite3.Row
     try:
         case = dict(conn.execute("SELECT * FROM cases ORDER BY id").fetchone())
-        ev = dict(
-            conn.execute(
-                "SELECT * FROM evidence_sources ORDER BY id"
-            ).fetchone()
-        )
+        ev = dict(conn.execute("SELECT * FROM evidence_sources ORDER BY id").fetchone())
     finally:
         conn.close()
 
@@ -120,9 +116,7 @@ def test_two_runs_produce_identical_analytical_content(
     assert fields_a["evidence.image_type"] == "raw"
 
 
-def test_run_metadata_is_segregated(
-    tiny_raw_image: Path, tmp_path: Path
-) -> None:
+def test_run_metadata_is_segregated(tiny_raw_image: Path, tmp_path: Path) -> None:
     """Run metadata (timestamps) is stored but excluded from the comparison.
 
     Both runs persist a ``created_utc``/``acquired_utc`` (run metadata exists),
@@ -243,9 +237,7 @@ def test_recover_filter_reproducible(
     # produces a real, deterministic custom match against a RECOVERED row.
     resident_md5 = hashlib.md5(make_fixtures.NTFS_RESIDENT_CONTENT).hexdigest()
     allow_list = tmp_path / "allow.txt"
-    allow_list.write_text(
-        f"{resident_md5.upper()}  resident-known\n", encoding="utf-8"
-    )
+    allow_list.write_text(f"{resident_md5.upper()}  resident-known\n", encoding="utf-8")
 
     case_a = tmp_path / "case_a"
     case_b = tmp_path / "case_b"
@@ -279,9 +271,7 @@ def test_recover_filter_reproducible(
     def _recovered_names(case: Path) -> set[str]:
         recovered = case / "recovered"
         return {
-            str(p.relative_to(recovered))
-            for p in recovered.rglob("*")
-            if p.is_file()
+            str(p.relative_to(recovered)) for p in recovered.rglob("*") if p.is_file()
         }
 
     names_a = _recovered_names(case_a)
@@ -382,9 +372,7 @@ def test_tied_log_events_stable(
     assert html_a == html_b
     assert "tamper" in html_a
     log_in_timeline = sum(
-        1
-        for ev in body_a["timeline"]
-        if not str(ev["source"]).startswith("filesystem")
+        1 for ev in body_a["timeline"] if not str(ev["source"]).startswith("filesystem")
     )
     assert log_in_timeline == log_count
     # The fixture documents its CR-01 trap via ground truth; assert it is present
@@ -422,9 +410,7 @@ def test_tied_log_events_null_meta_tiebreak(case_dir: Path) -> None:
                     )
                 )
                 store.insert_timeline_events(
-                    [
-                        TimelineEvent(evidence_source_id=sid, **e) for e in events
-                    ]
+                    [TimelineEvent(evidence_source_id=sid, **e) for e in events]
                 )
             read = store.get_timeline_events(sid)
         return [(e.ts_utc, e.source, e.event_type, e.actor) for e in read]
@@ -451,9 +437,7 @@ def test_tied_log_events_null_meta_tiebreak(case_dir: Path) -> None:
     assert [t[1] for t in order_ab] == ["auth", "syslog"]
 
 
-def test_default_analyze_unchanged(
-    tiny_ext4_image: Path, tmp_path: Path
-) -> None:
+def test_default_analyze_unchanged(tiny_ext4_image: Path, tmp_path: Path) -> None:
     """D-40: a plain ``analyze`` (no recover/filter inputs) is byte-unchanged.
 
     Proves the opt-in wiring left the DEFAULT path untouched: a plain

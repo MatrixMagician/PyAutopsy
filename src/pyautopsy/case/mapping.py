@@ -130,9 +130,7 @@ class RowMapper(Generic[T]):
         self._model = model
         self._table = table
         self._columns = tuple(
-            f.name
-            for f in dataclasses.fields(model)
-            if f.name not in skip_on_insert
+            f.name for f in dataclasses.fields(model) if f.name not in skip_on_insert
         )
         self.insert_sql = (
             f"INSERT INTO {table} ("
@@ -192,8 +190,7 @@ def validate_mapping(mapper: RowMapper[Any], connection: sqlite3.Connection) -> 
         ValueError: If the model and the table disagree on any name.
     """
     table_columns = {
-        str(row[1])
-        for row in connection.execute(f"PRAGMA table_info({mapper.table})")
+        str(row[1]) for row in connection.execute(f"PRAGMA table_info({mapper.table})")
     }
     if not table_columns:
         raise ValueError(f"case database has no table {mapper.table!r}")

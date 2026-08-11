@@ -245,9 +245,7 @@ def _stream_scan(
         for start, end, term, kind in _iter_window_matches(
             window, literals=literals, regexes=regexes, carry_len=carry_len
         ):
-            yield window_base + start, term, kind, _context_snippet(
-                window, start, end
-            )
+            yield window_base + start, term, kind, _context_snippet(window, start, end)
         if overlap > 0 and len(window) > overlap:
             carry = window[-overlap:]
             carry_base = window_base + len(window) - overlap

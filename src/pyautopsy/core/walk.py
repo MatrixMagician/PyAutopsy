@@ -213,8 +213,6 @@ class WalkError(PyAutopsyError):
     """
 
 
-
-
 @dataclass(frozen=True, slots=True)
 class WalkResult:
     """The analytical outcome of a successful walk (reproducible counts only).
@@ -309,9 +307,7 @@ def _content_fields(
         # null hashes + a ``read_error`` reason and continue the walk. ``OSError``
         # covers ``IOError`` (an alias since Py3.3).
         try:
-            digests = integrity.hash_file(
-                reader, entry.size, max_size=max_hash_size
-            )
+            digests = integrity.hash_file(reader, entry.size, max_size=max_hash_size)
         except OSError:
             digests = None
             attributes["hash_skipped"] = "read_error"
@@ -576,9 +572,7 @@ _LUKS_MAGIC = b"LUKS\xba\xbe"
 _BITLOCKER_MARKER = b"-FVE-FS-"
 
 
-def _encryption_hint(
-    handle: image_seam.ImageHandle, offset: int
-) -> dict[str, str]:
+def _encryption_hint(handle: image_seam.ImageHandle, offset: int) -> dict[str, str]:
     """Return an optional ``{"encryption_hint": ...}`` for a D-20 finding.
 
     Reads the first 512 bytes at ``offset`` (read-only) and checks well-known

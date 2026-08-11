@@ -484,9 +484,7 @@ def analyze(
     try:
         ZoneInfo(timezone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        typer.echo(
-            f"analyze failed: invalid --timezone {timezone!r}: {exc}", err=True
-        )
+        typer.echo(f"analyze failed: invalid --timezone {timezone!r}: {exc}", err=True)
         raise typer.Exit(code=_INTEGRITY_EXIT_CODE) from exc
 
     hash_sets = _hash_sets(hash_set_allow, hash_set_block)
@@ -539,8 +537,7 @@ def search(
         list[str] | None,
         typer.Option(
             "--term",
-            help="Literal (or, with --regex, regex) needle to search for "
-            "(repeatable).",
+            help="Literal (or, with --regex, regex) needle to search for (repeatable).",
         ),
     ] = None,
     regex: Annotated[

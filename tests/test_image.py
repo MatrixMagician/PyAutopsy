@@ -66,9 +66,7 @@ def test_handle_is_context_manager(tiny_raw_image: Path) -> None:
         ("disk", ImageFormat.RAW),
     ],
 )
-def test_format_detection_routes_by_extension(
-    name: str, expected: ImageFormat
-) -> None:
+def test_format_detection_routes_by_extension(name: str, expected: ImageFormat) -> None:
     """E01/Ex01/S01 route to EWF; raw/.dd/.raw/.img/no-ext route to RAW."""
     assert detect_format(Path(name)) is expected
 

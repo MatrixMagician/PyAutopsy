@@ -123,9 +123,7 @@ class AuditLog:
             finally:
                 os.close(fd)
         except OSError as exc:
-            raise OSError(
-                f"failed to append to audit log {self.path}: {exc}"
-            ) from exc
+            raise OSError(f"failed to append to audit log {self.path}: {exc}") from exc
 
 
 def _is_within(path: Path, root: Path) -> bool:

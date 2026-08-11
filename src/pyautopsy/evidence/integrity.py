@@ -185,9 +185,7 @@ class VerifyResult:
             )
 
 
-def hash_image(
-    source: ReadableBytes, chunk: int = _DEFAULT_CHUNK
-) -> dict[str, str]:
+def hash_image(source: ReadableBytes, chunk: int = _DEFAULT_CHUNK) -> dict[str, str]:
     """Compute MD5 + SHA-256 over a byte source in a single streaming pass.
 
     One pass updates both digests, so the source is read exactly once regardless
@@ -209,9 +207,7 @@ def hash_image(
             (INGEST-02/D-08), so a short read is a loud failure.
     """
     total = source.get_size()
-    digests, consumed = _stream_digests(
-        source.read, total, _IMAGE_ALGORITHMS, chunk
-    )
+    digests, consumed = _stream_digests(source.read, total, _IMAGE_ALGORITHMS, chunk)
     if consumed != total:
         # Image policy: a partial *image* digest is never acceptable, so this
         # is a hard integrity failure and no digest is returned at all.
@@ -273,9 +269,7 @@ def hash_file(
     if max_size is not None and size > max_size:
         return None  # skipped: caller records null hashes + an oversize reason.
 
-    digests, consumed = _stream_digests(
-        read_random, size, _FILE_ALGORITHMS, chunk
-    )
+    digests, consumed = _stream_digests(read_random, size, _FILE_ALGORITHMS, chunk)
     if consumed != size:
         # Short/truncated read: do NOT record a partial digest (no-partial-digest
         # principle). Per-file divergence from hash_image — skip, do not raise.
@@ -317,8 +311,7 @@ def verify_acquisition(computed: dict[str, str], supplied: str) -> VerifyResult:
         int(normalised, 16)
     except ValueError as exc:
         raise IntegrityError(
-            f"supplied acquisition hash is not valid hexadecimal: "
-            f"{supplied!r}"
+            f"supplied acquisition hash is not valid hexadecimal: {supplied!r}"
         ) from exc
     computed_digest = computed[algorithm].lower()
     return VerifyResult(

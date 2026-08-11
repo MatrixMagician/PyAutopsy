@@ -312,9 +312,7 @@ class CaseStore:
         )
         self._commit_unless_in_transaction()
         if cur.lastrowid is None:
-            raise RuntimeError(
-                "INSERT INTO evidence_sources did not return a row id"
-            )
+            raise RuntimeError("INSERT INTO evidence_sources did not return a row id")
         return cur.lastrowid
 
     def get_latest_evidence_source_id(self) -> int | None:
@@ -556,9 +554,7 @@ class CaseStore:
         )
         self._commit_unless_in_transaction()
         if cur.lastrowid is None:
-            raise RuntimeError(
-                "INSERT INTO volume_limitations did not return a row id"
-            )
+            raise RuntimeError("INSERT INTO volume_limitations did not return a row id")
         return cur.lastrowid
 
     def get_volume_limitation(self, limitation_id: int) -> VolumeLimitation:
@@ -580,9 +576,7 @@ class CaseStore:
             raise LookupError(f"no volume limitation with id {limitation_id}")
         return _LIMITATION_MAPPER.from_row(row)
 
-    def get_volume_limitations(
-        self, evidence_source_id: int
-    ) -> list[VolumeLimitation]:
+    def get_volume_limitations(self, evidence_source_id: int) -> list[VolumeLimitation]:
         """Read every limitation finding for an evidence source, ordered by id.
 
         Args:
@@ -634,8 +628,7 @@ class CaseStore:
             All matching :class:`LogFinding` rows in ``id`` order (possibly empty).
         """
         rows = self.connection.execute(
-            "SELECT * FROM log_findings "
-            "WHERE evidence_source_id = ? ORDER BY id",
+            "SELECT * FROM log_findings WHERE evidence_source_id = ? ORDER BY id",
             (evidence_source_id,),
         ).fetchall()
         return [_LOG_FINDING_MAPPER.from_row(row) for row in rows]
@@ -811,7 +804,6 @@ class CaseStore:
         ).fetchall()
         return [_SEARCH_HIT_MAPPER.from_row(row) for row in rows]
 
-
     # -- run stages --------------------------------------------------------
 
     def record_stage(self, case_id: int, stage: str) -> None:
@@ -865,16 +857,12 @@ _EVIDENCE_MAPPER: RowMapper[EvidenceSource] = RowMapper(
     EvidenceSource, "evidence_sources"
 )
 _FILE_MAPPER: RowMapper[FileRow] = RowMapper(FileRow, "files")
-_TIMELINE_MAPPER: RowMapper[TimelineEvent] = RowMapper(
-    TimelineEvent, "timeline_events"
-)
+_TIMELINE_MAPPER: RowMapper[TimelineEvent] = RowMapper(TimelineEvent, "timeline_events")
 _LIMITATION_MAPPER: RowMapper[VolumeLimitation] = RowMapper(
     VolumeLimitation, "volume_limitations"
 )
 _LOG_FINDING_MAPPER: RowMapper[LogFinding] = RowMapper(LogFinding, "log_findings")
-_KNOWN_MATCH_MAPPER: RowMapper[KnownMatch] = RowMapper(
-    KnownMatch, "known_file_matches"
-)
+_KNOWN_MATCH_MAPPER: RowMapper[KnownMatch] = RowMapper(KnownMatch, "known_file_matches")
 _SEARCH_HIT_MAPPER: RowMapper[SearchHit] = RowMapper(SearchHit, "search_hits")
 
 _ALL_MAPPERS: tuple[RowMapper[Any], ...] = (
@@ -893,4 +881,3 @@ def _validate_mappings(connection: sqlite3.Connection) -> None:
     """Fail loudly if any model has drifted from its table (schema guard)."""
     for mapper in _ALL_MAPPERS:
         validate_mapping(mapper, connection)
-

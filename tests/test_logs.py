@@ -294,9 +294,9 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
 
     # CR-01 core: syslog AND shell-history events are present on the REAL path.
     assert by_source.get("syslog"), "orchestrated run_logs produced no syslog events"
-    assert by_source.get(
-        "shell-history"
-    ), "orchestrated run_logs produced no shell-history events"
+    assert by_source.get("shell-history"), (
+        "orchestrated run_logs produced no shell-history events"
+    )
     assert by_source.get("auth"), "orchestrated run_logs produced no auth events"
 
     # The fixture's tied-second syslog pair must BOTH be merged (05-04 gap closed).
@@ -312,9 +312,9 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     assert {e.ts_utc for e in tied} == {tied[0].ts_utc}, "tied lines must share ts_utc"
 
     # Shell history carries the per-user actor derived from /home/<user>.
-    assert any(
-        e.actor == "user=alice" for e in by_source["shell-history"]
-    ), "shell-history events missing the per-user actor"
+    assert any(e.actor == "user=alice" for e in by_source["shell-history"]), (
+        "shell-history events missing the per-user actor"
+    )
 
     # log_sets counts auth + syslog rotated sets PLUS the two shell-history files.
     assert result.log_sets >= 4, (
@@ -327,9 +327,7 @@ def test_run_logs_orchestrated_emits_syslog_and_shell_history(
     assert all(s.endswith("+00:00") for s in stamps)
 
 
-def test_run_logs_persists_findings(
-    log_search_image: Path, case_dir: Path
-) -> None:
+def test_run_logs_persists_findings(log_search_image: Path, case_dir: Path) -> None:
     """G-2 close: run_logs persists the D-44 tamperability + D-45 completeness findings.
 
     The orchestrated :func:`run_logs` must capture the shell-history tamperability
@@ -409,9 +407,7 @@ def test_groundtruth_year_matches_fixture_mtime(
 
     ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
     run_walk(log_search_image, case_dir, timezone="UTC")
-    run_logs(
-        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
-    )
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
 
     with CaseStore.open(case_dir) as store:
         events = store.get_timeline_events(ingested.evidence_source_id)
@@ -579,8 +575,11 @@ def test_importing_a_parser_module_mutates_no_global_state() -> None:
     from pyautopsy.log import PARSERS  # noqa: PLC0415
 
     before = list(PARSERS)
-    for module in ("pyautopsy.log.auth", "pyautopsy.log.syslog",
-                   "pyautopsy.log.shell_history"):
+    for module in (
+        "pyautopsy.log.auth",
+        "pyautopsy.log.syslog",
+        "pyautopsy.log.shell_history",
+    ):
         importlib.reload(importlib.import_module(module))
 
     from pyautopsy.log import PARSERS as after  # noqa: PLC0415

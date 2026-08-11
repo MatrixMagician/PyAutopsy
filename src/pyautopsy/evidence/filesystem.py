@@ -911,9 +911,7 @@ def walk_fs(
             mtime_nano=int(getattr(meta, "mtime_nano", 0)) if meta is not None else 0,
             atime_nano=int(getattr(meta, "atime_nano", 0)) if meta is not None else 0,
             ctime_nano=int(getattr(meta, "ctime_nano", 0)) if meta is not None else 0,
-            crtime_nano=int(getattr(meta, "crtime_nano", 0))
-            if meta is not None
-            else 0,
+            crtime_nano=int(getattr(meta, "crtime_nano", 0)) if meta is not None else 0,
             fs_ftype=ftype,
             volume_id=volume_id,
             volume_offset=volume_offset,

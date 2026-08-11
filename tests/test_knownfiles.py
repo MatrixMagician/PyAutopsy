@@ -95,8 +95,10 @@ def test_custom_hash_sets() -> None:
     assert hit.list_name == "my-allow-list"
     assert hit.sense == "allow"
     # Neutrality (D-38): the record carries provenance, never a verdict.
-    assert not ({f.name for f in dataclasses.fields(hit)}
-                & {"good", "bad", "malicious", "verdict"})
+    assert not (
+        {f.name for f in dataclasses.fields(hit)}
+        & {"good", "bad", "malicious", "verdict"}
+    )
 
     # sha256 fall-through match (md5/sha1 absent in the list for this entry).
     matched_on2 = hashsets.probe_hash_set(

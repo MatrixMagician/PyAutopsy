@@ -146,6 +146,7 @@ def _mvp_limitations(
     parts.append("Absence of a finding here does not mean absence of evidence.")
     return " ".join(parts)
 
+
 # Integrity copy strings, verbatim from 03-UI-SPEC.md:166-167, plus the honest
 # "not supplied" state (WR-02). The PASS copy is only ever rendered when an
 # acquisition hash was actually supplied AND matched; it never claims a hash
@@ -437,9 +438,7 @@ def assemble_report_body(
     # (filesystem events use a `filesystem`/`filesystem:<fs>` label); the filter
     # preserves the store's D-26 order so the section stays byte-stable, and is
     # empty on the default analyze path so report bytes are unchanged (D-48).
-    log_events = [
-        ev for ev in events if not ev.source.startswith("filesystem")
-    ]
+    log_events = [ev for ev in events if not ev.source.startswith("filesystem")]
     # Per-source counts (e.g. auth / syslog / shell-history), ranked by
     # (-count, source) so the breakdown is deterministic regardless of insert
     # order; the source labels are content-derived, not wall-clock.
@@ -455,9 +454,7 @@ def assemble_report_body(
     # never erased — the report must not present an inferred time as recorded
     # fact. Derived deterministically by counting attribute presence.
     inferred_year_count = sum(
-        1
-        for ev in log_events
-        if (ev.attributes or {}).get("year_inferred") is not None
+        1 for ev in log_events if (ev.attributes or {}).get("year_inferred") is not None
     )
     inferred_tz_count = sum(
         1
@@ -669,9 +666,7 @@ def assemble_report_body(
             "intro": RECOVERY_REPORT_COPY["section_intro"],
             "tier_copy": {
                 "intact": RECOVERY_REPORT_COPY["tier_intact"],
-                "partial/overwritten": RECOVERY_REPORT_COPY[
-                    "tier_partial_overwritten"
-                ],
+                "partial/overwritten": RECOVERY_REPORT_COPY["tier_partial_overwritten"],
             },
             "files": [_recovered_section(f) for f in recovered_files],
             "count": len(recovered_files),
@@ -761,8 +756,7 @@ def build_run_metadata(
     return {
         "non_analytical": True,
         "label": (
-            "Run Metadata (non-analytical — excluded from the reproducible "
-            "report body)"
+            "Run Metadata (non-analytical — excluded from the reproducible report body)"
         ),
         "generated_utc": generation_ts,
         "host": host,

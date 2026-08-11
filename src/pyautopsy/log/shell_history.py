@@ -207,9 +207,7 @@ class ShellHistoryParser:
         path = (ctx or {}).get("path", "")
         return parse(text, ctx, kind=self._kind_for(path)).records
 
-    def findings_for(
-        self, text: str, ctx: dict[str, Any] | None = None
-    ) -> list[str]:
+    def findings_for(self, text: str, ctx: dict[str, Any] | None = None) -> list[str]:
         """Return this history file's honesty findings (D-44 tamperability).
 
         An additive concrete accessor that reaches the ``ShellHistoryResult.findings``

@@ -91,8 +91,7 @@ def open_nsrl(path: str) -> tuple[sqlite3.Connection, str]:
             return conn, candidate
     conn.close()
     raise ValueError(
-        "no NSRL hash table found: expected one of "
-        f"{_NSRL_TABLE_ALLOWLIST} in {path!r}"
+        f"no NSRL hash table found: expected one of {_NSRL_TABLE_ALLOWLIST} in {path!r}"
     )
 
 

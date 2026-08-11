@@ -142,9 +142,7 @@ def test_log_findings_disclosures_in_body(
 
     ingested = run_ingest(log_search_image, case_dir, examiner="X", evidence_id="E1")
     run_walk(log_search_image, case_dir, timezone="UTC")
-    run_logs(
-        log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id
-    )
+    run_logs(log_search_image, case_dir, evidence_source_id=ingested.evidence_source_id)
 
     with CaseStore.open(case_dir) as store:
         # No logs_ran flag: the body reads the coverage from the case, where
@@ -185,9 +183,7 @@ def test_findings_d28(tiny_ext4_image: Path, case_dir: Path) -> None:
     assert "deleted_count" in inventory
 
 
-def test_integrity_three_states_honest(
-    tiny_ext4_image: Path, case_dir: Path
-) -> None:
+def test_integrity_three_states_honest(tiny_ext4_image: Path, case_dir: Path) -> None:
     """Integrity reflects the real acquisition outcome, never a hardcoded PASS (WR-02).
 
     No acquisition hash was supplied (default), so the body must surface the
@@ -201,12 +197,12 @@ def test_integrity_three_states_honest(
     with CaseStore.open(case_dir) as store:
         # Default: no acquisition hash compared -> honest "not compared".
         not_compared = assemble_report_body(store, source_id)["integrity"]
-        verified = assemble_report_body(
-            store, source_id, acquisition_verified=True
-        )["integrity"]
-        failed = assemble_report_body(
-            store, source_id, acquisition_verified=False
-        )["integrity"]
+        verified = assemble_report_body(store, source_id, acquisition_verified=True)[
+            "integrity"
+        ]
+        failed = assemble_report_body(store, source_id, acquisition_verified=False)[
+            "integrity"
+        ]
 
     assert not_compared["acquisition_supplied"] is False
     assert not_compared["acquisition_compare_pass"] is False
@@ -226,9 +222,7 @@ def test_integrity_three_states_honest(
 
 def test_fat_provenance(tiny_fat32_image: Path, case_dir: Path) -> None:
     """FAT local-time-inferred / assumed_timezone provenance survives to the report."""
-    source_id = _analyzed_store(
-        tiny_fat32_image, case_dir, timezone="America/New_York"
-    )
+    source_id = _analyzed_store(tiny_fat32_image, case_dir, timezone="America/New_York")
     with CaseStore.open(case_dir) as store:
         body = assemble_report_body(store, source_id)
 
