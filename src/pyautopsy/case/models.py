@@ -12,10 +12,12 @@ Timestamp fields are UTC ISO-8601 strings (D-10) sourced from
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 __all__ = [
     "Case",
+    "Stage",
     "EvidenceSource",
     "FileRow",
     "TimelineEvent",
@@ -25,6 +27,22 @@ __all__ = [
     "SearchHit",
     "AuditEvent",
 ]
+
+
+class Stage(StrEnum):
+    """An analysis pass whose having-run is recorded in ``run_log``.
+
+    The report states its own coverage from these, so the writer and the reader
+    must agree on the exact strings. A bare literal on either side would let a
+    typo silently under-claim what a run examined — precisely the honest-
+    disclosure failure recording the stage exists to prevent — so the names live
+    here once and both sides refer to them.
+    """
+
+    RECOVER = "recover"
+    FILTER = "filter"
+    LOGS = "logs"
+    SEARCH = "search"
 
 
 @dataclass(frozen=True, slots=True)

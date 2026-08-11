@@ -80,3 +80,69 @@ def test_analyze_composes_pipeline(tiny_ext4_image: Path, tmp_path: Path) -> Non
     # The end-of-run re-verify is audited like ingest/walk (REPORT-02).
     audit = (case / "logs" / "audit.jsonl").read_text(encoding="utf-8")
     assert "verify" in audit
+
+
+def test_analyze_closes_every_store_it_opens(
+    tiny_ext4_image: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """``run_analyze`` leaks no database connection (CR-03).
+
+    The pipeline opens a store for the report read-back on top of the ones its
+    sub-orchestrators open. Every one must be closed on the way out: an unclosed
+    SQLite handle keeps a WAL open against the case database, and a long-lived
+    caller running many cases accumulates them until it hits the process
+    file-descriptor limit.
+
+    sqlite releases the handle at interpreter exit, so this is invisible to a
+    test that merely asserts the run succeeded. Stores are tagged with a
+    monotonic counter rather than ``id()``, because CPython reuses the address
+    of a collected object and a leaked store would masquerade as a closed one.
+    """
+    import itertools  # noqa: PLC0415
+
+    from pyautopsy.case import store as store_mod  # noqa: PLC0415
+    from pyautopsy.core.analyze import run_analyze  # noqa: PLC0415
+
+    tags = itertools.count(1)
+    opened: list[int] = []
+    closed: list[int] = []
+
+    original_open = store_mod.CaseStore.open.__func__
+    original_create = store_mod.CaseStore.create.__func__
+    original_close = store_mod.CaseStore.close
+
+    def tag(store: object) -> object:
+        store._tracking_tag = next(tags)  # type: ignore[attr-defined]
+        opened.append(store._tracking_tag)  # type: ignore[attr-defined]
+        return store
+
+    @classmethod  # type: ignore[misc]
+    def tracked_open(cls: type, case_dir: Path) -> object:
+        return tag(original_open(cls, case_dir))
+
+    @classmethod  # type: ignore[misc]
+    def tracked_create(cls: type, case_dir: Path) -> object:
+        return tag(original_create(cls, case_dir))
+
+    def tracked_close(self: object) -> None:
+        tag_value = getattr(self, "_tracking_tag", None)
+        if tag_value is not None:
+            closed.append(tag_value)
+        original_close(self)
+
+    monkeypatch.setattr(store_mod.CaseStore, "open", tracked_open)
+    monkeypatch.setattr(store_mod.CaseStore, "create", tracked_create)
+    monkeypatch.setattr(store_mod.CaseStore, "close", tracked_close)
+
+    run_analyze(
+        tiny_ext4_image,
+        tmp_path / "case",
+        examiner="X",
+        evidence_id="E1",
+    )
+
+    leaked = [tag_value for tag_value in opened if tag_value not in closed]
+    assert not leaked, (
+        f"{len(leaked)} of {len(opened)} case stores opened by run_analyze were "
+        f"never closed (tags {leaked})"
+    )

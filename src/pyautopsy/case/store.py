@@ -30,6 +30,7 @@ from pyautopsy.case.models import (
     KnownMatch,
     LogFinding,
     SearchHit,
+    Stage,
     TimelineEvent,
     VolumeLimitation,
 )
@@ -806,7 +807,19 @@ class CaseStore:
 
     # -- run stages --------------------------------------------------------
 
-    def record_stage(self, case_id: int, stage: str) -> None:
+    def record_stage_for_source(self, evidence_source_id: int, stage: Stage) -> None:
+        """Record that ``stage`` ran, resolving the case from its evidence source.
+
+        The orchestrators know the evidence source they are working on, not the
+        case id, so this saves every one of them repeating the same lookup.
+
+        Args:
+            evidence_source_id: The evidence source the pass covered.
+            stage: The pass that ran.
+        """
+        self.record_stage(self.get_evidence_source(evidence_source_id).case_id, stage)
+
+    def record_stage(self, case_id: int, stage: Stage) -> None:
         """Record that an analysis stage ran for this case (``run_log``).
 
         This is what makes "did search run?" answerable from the case itself
@@ -833,19 +846,22 @@ class CaseStore:
         )
         self._commit_unless_in_transaction()
 
-    def stages_run(self, case_id: int) -> frozenset[str]:
+    def stages_run(self, case_id: int) -> frozenset[Stage]:
         """Return the set of analysis stages recorded for this case.
 
         Args:
             case_id: The case to report on.
 
         Returns:
-            The recorded stage names.
+            The recorded stages. An unrecognised value in the table (an older
+            case, or a stage since removed) is skipped rather than raising: the
+            report should still render what it can understand.
         """
         rows = self.connection.execute(
             "SELECT DISTINCT stage FROM run_log WHERE case_id = ?", (case_id,)
         ).fetchall()
-        return frozenset(row["stage"] for row in rows)
+        known = {stage.value: stage for stage in Stage}
+        return frozenset(known[row["stage"]] for row in rows if row["stage"] in known)
 
 
 # One mapper per persisted model. Each derives its column list, INSERT statement

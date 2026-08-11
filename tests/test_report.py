@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pyautopsy.case import CaseStore
+from pyautopsy.case import Case, CaseStore
 from pyautopsy.core.ingest import run_ingest
 from pyautopsy.core.walk import run_walk
 from pyautopsy.report.assemble import assemble_report_body
@@ -301,3 +301,47 @@ def test_coverage_flags_cannot_drift_from_what_ran(
     disclaimer = bare["limitations"]["mvp_disclaimer"]
     for absent in ("deleted-file recovery", "known-file (NSRL) filtering"):
         assert absent in disclaimer
+
+
+def test_every_stage_the_orchestrators_record_is_read_by_the_report() -> None:
+    """Writer and reader agree on stage names by construction (D-40).
+
+    Coverage is written by four orchestrators and read by the report. When both
+    sides used bare string literals a typo on either one silently under-claimed
+    what a run examined — the exact honest-disclosure failure that recording the
+    stage exists to prevent, with nothing to catch the drift. Both sides now
+    refer to the same enum; this pins that every member is actually consumed.
+    """
+    import inspect  # noqa: PLC0415
+
+    from pyautopsy.case import Stage  # noqa: PLC0415
+    from pyautopsy.report import assemble  # noqa: PLC0415
+
+    source = inspect.getsource(assemble.assemble_report_body)
+    unread = [stage.name for stage in Stage if f"Stage.{stage.name}" not in source]
+    assert not unread, (
+        f"these stages are recorded but never read by the report: {unread} — "
+        "the report would silently under-claim what the run covered"
+    )
+
+
+def test_unknown_stage_rows_do_not_break_the_report(case_dir: Path) -> None:
+    """A stage value the current build does not know is skipped, not fatal.
+
+    An older case (or one written by a later version) may carry a stage this
+    build has never heard of. The report should still render what it can
+    understand rather than refusing to open the case at all.
+    """
+    from pyautopsy.case import Stage  # noqa: PLC0415
+
+    store = CaseStore.create(case_dir)
+    try:
+        case_id = store.insert_case(Case(name="c", examiner="e"))
+        store.connection.execute(
+            "INSERT INTO run_log (case_id, stage) VALUES (?, ?)",
+            (case_id, "a-stage-from-the-future"),
+        )
+        store.record_stage(case_id, Stage.LOGS)
+        assert store.stages_run(case_id) == frozenset({Stage.LOGS})
+    finally:
+        store.close()

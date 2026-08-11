@@ -27,6 +27,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
+# ``Stage`` is used at runtime (coverage is read from the case store), unlike the
+# type-only imports below.
+from pyautopsy.case import Stage
+
 if TYPE_CHECKING:
     from pyautopsy.case import CaseStore, FileRow
 
@@ -718,10 +722,10 @@ def assemble_report_body(
         "limitations": {
             "volumes": limitation_rows,
             "mvp_disclaimer": _mvp_limitations(
-                recovery_ran="recover" in stages,
-                filtering_ran="filter" in stages,
-                logs_ran="logs" in stages,
-                search_ran="search" in stages,
+                recovery_ran=Stage.RECOVER in stages,
+                filtering_ran=Stage.FILTER in stages,
+                logs_ran=Stage.LOGS in stages,
+                search_ran=Stage.SEARCH in stages,
             ),
         },
     }

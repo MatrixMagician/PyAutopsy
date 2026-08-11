@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore
+from pyautopsy.case import CaseStore, Stage
 from pyautopsy.case.models import FileRow
 from pyautopsy.core.epilogue import audited_step
 from pyautopsy.errors import PyAutopsyError
@@ -514,9 +514,7 @@ def run_recover(
                 store.insert_recovered_files(recovered_rows)
                 # Record that recovery covered this case, so the report can
                 # state its own coverage from the case data (D-40 honesty).
-                store.record_stage(
-                    store.get_evidence_source(source_id).case_id, "recover"
-                )
+                store.record_stage_for_source(source_id, Stage.RECOVER)
         finally:
             handle.close()
 

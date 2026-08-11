@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, KnownMatch
+from pyautopsy.case import CaseStore, KnownMatch, Stage
 from pyautopsy.core.epilogue import audited_step
 from pyautopsy.errors import PyAutopsyError
 from pyautopsy.filter import hashsets, nsrl
@@ -230,7 +230,7 @@ def run_filter(
             store.insert_known_matches(matches)
             # Recorded even when nothing matched: a filtering pass that matched
             # nothing still covered the inventory (D-40 honesty).
-            store.record_stage(store.get_evidence_source(source_id).case_id, "filter")
+            store.record_stage_for_source(source_id, Stage.FILTER)
 
         audit.write(
             "filter.end",

@@ -267,14 +267,16 @@ def run_analyze(
         search=search_requested,
     )
 
-    store: CaseStore | None = None
     files_recovered = 0
     known_matches = 0
     log_events = 0
     search_hits = 0
     with audited_step(
         audit,
-        store,
+        # This step opens its store late (below, once the sub-orchestrators have
+        # written) and closes it with its own ``with``, so the epilogue has no
+        # store to close on its behalf — it is here purely for the audit split.
+        None,
         "analyze",
         AnalyzeError,
         IngestError,
@@ -321,8 +323,10 @@ def run_analyze(
         #     finds the fs events already present and its idempotent backfill is a
         #     no-op — TIME-02, no double-insert), then open one store for the
         #     report read-back.
-        store = CaseStore.open(case_path)
-        build_timeline(store, source_id)
+        # Each store is opened in a ``with``, so its connection is released on
+        # every path out — including an exception from the opt-in passes below.
+        with CaseStore.open(case_path) as store:
+            build_timeline(store, source_id)
 
         # (2c) OPT-IN log parsing (D-40): merge parsed system-log events into the
         # shared super-timeline ONLY when requested. run_logs opens its own store
@@ -351,22 +355,26 @@ def run_analyze(
             )
             search_hits = search_result.hits
 
-        # The merged super-timeline total = whatever get_timeline_events now
-        # returns (fs MACB + any merged log events, TIME-02), read once after both
-        # opt-in passes have written. No new ORDER BY; the store owns the order.
-        event_count = len(store.get_timeline_events(source_id))
-        # (WR-02) Pass the REAL acquisition-compare outcome through so the report
-        # renders an honest integrity state (verified-pass / not-compared / fail)
-        # instead of a hardcoded PASS: None = no acquisition hash supplied,
-        # True = supplied and matched (a FAIL would have raised in ingest).
-        # (D-40 honesty) The body reads what ACTUALLY ran from the case store —
-        # each pass records its own stage — so the MVP-limitations disclaimer
-        # cannot drift from the run it describes.
-        body = assemble_report_body(
-            store,
-            source_id,
-            acquisition_verified=ingest_result.acquisition_verified,
-        )
+        # Re-open for the report read-back, AFTER both opt-in passes have
+        # written, so it sees the complete case.
+        with CaseStore.open(case_path) as store:
+            # The merged super-timeline total = whatever get_timeline_events now
+            # returns (fs MACB + any merged log events, TIME-02). No new ORDER
+            # BY; the store owns the order.
+            event_count = len(store.get_timeline_events(source_id))
+            # (WR-02) Pass the REAL acquisition-compare outcome through so the
+            # report renders an honest integrity state (verified-pass /
+            # not-compared / fail) instead of a hardcoded PASS: None = no
+            # acquisition hash supplied, True = supplied and matched (a FAIL
+            # would have raised in ingest).
+            # (D-40 honesty) The body reads what ACTUALLY ran from the case
+            # store — each pass records its own stage — so the MVP-limitations
+            # disclaimer cannot drift from the run it describes.
+            body = assemble_report_body(
+                store,
+                source_id,
+                acquisition_verified=ingest_result.acquisition_verified,
+            )
         json_path = write_json(body, case_path)
         # (W-1) render_html takes NO run_metadata argument — report.html carries
         # zero run metadata, so it stays byte-deterministic across runs.

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, KnownMatch, SearchHit
+from pyautopsy.case import CaseStore, KnownMatch, SearchHit, Stage
 from pyautopsy.core.epilogue import audited_step
 from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import integrity
@@ -273,7 +273,7 @@ def run_search(
             # Recorded even when nothing matched: a search that found nothing is
             # a real outcome, and the report must not report it as never having
             # run (D-40 honesty).
-            store.record_stage(store.get_evidence_source(source_id).case_id, "search")
+            store.record_stage_for_source(source_id, Stage.SEARCH)
 
         audit.write(
             "search.end",

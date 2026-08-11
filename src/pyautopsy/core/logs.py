@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from pyautopsy.audit import AuditLog
-from pyautopsy.case import CaseStore, LogFinding, TimelineEvent
+from pyautopsy.case import CaseStore, LogFinding, Stage, TimelineEvent
 from pyautopsy.core.epilogue import audited_step
 from pyautopsy.errors import PyAutopsyError
 from pyautopsy.evidence import filesystem as fs_seam
@@ -485,7 +485,7 @@ def run_logs(
                 store.insert_log_findings(all_findings)
                 # Recorded even when a log set yielded no events: the pass still
                 # covered the image's logs (D-40 honesty).
-                store.record_stage(store.get_evidence_source(source_id).case_id, "logs")
+                store.record_stage_for_source(source_id, Stage.LOGS)
             events_parsed = len(all_events)
             findings_count = len(all_findings)
         finally:
