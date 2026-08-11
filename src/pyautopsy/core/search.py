@@ -142,6 +142,10 @@ def run_search(
     # exist has nowhere to record a FAIL event. Check for it BEFORE binding the
     # log, otherwise the audit write's own OSError masks this actionable message
     # with a raw traceback (``run_search`` requires a prior ingest).
+    #
+    # No audit record is lost by checking early: the FAIL write this replaces
+    # could never succeed, because the directory it writes into is precisely the
+    # one that does not exist.
     if not CaseStore.exists(case_path):
         raise SearchError(
             f"no case database under {case_path}; run `pyautopsy ingest` first"

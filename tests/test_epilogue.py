@@ -214,3 +214,60 @@ def test_shared_operational_set_does_not_reclassify_any_reachable_failure() -> N
         "known-file filtering now reaches the evidence layer, so the image-layer "
         f"errors in the shared operational set became reachable: {evidence_imports}"
     )
+
+
+@pytest.mark.parametrize(
+    ("step", "own_error"),
+    [
+        ("walk", "WalkError"),
+        ("recover", "RecoverError"),
+        ("logs", "LogsError"),
+        ("search", "SearchError"),
+        ("filter", "FilterError"),
+        ("analyze", "AnalyzeError"),
+    ],
+)
+def test_audit_records_match_the_pre_refactor_shape(
+    case_dir: Path, step: str, own_error: str
+) -> None:
+    """Each step's terminal audit record is exactly what the old epilogue wrote.
+
+    Six orchestrators previously hand-copied this block. The audit trail is the
+    contract, so the shared version must emit the same record, field for field,
+    on both the expected and the unexpected path — the two-arm split exists so a
+    genuine bug is never filed as an operational failure.
+
+    The expected shape, from the pre-refactor source:
+
+        audit.write(f"{step}.error"/"{step}.crashed", outcome="FAIL",
+                    error=str(exc), error_type=type(exc).__name__)
+    """
+    audit = _audit(case_dir)
+
+    class StepError(Exception):
+        pass
+
+    StepError.__name__ = own_error
+    StepError.__qualname__ = own_error
+
+    with pytest.raises(StepError):
+        with audited_step(audit, None, step, StepError):
+            raise StepError("an operational failure")
+    with pytest.raises(KeyError):
+        with audited_step(audit, None, step, StepError):
+            raise KeyError("a programming bug")
+
+    records = _records(case_dir)
+    assert [r["action"] for r in records] == [f"{step}.error", f"{step}.crashed"]
+
+    expected_keys = {"action", "ts", "outcome", "error", "error_type"}
+    assert set(records[0]) == expected_keys
+    assert set(records[1]) == expected_keys
+
+    assert records[0]["outcome"] == "FAIL"
+    assert records[0]["error"] == "an operational failure"
+    assert records[0]["error_type"] == own_error
+
+    assert records[1]["outcome"] == "FAIL"
+    assert records[1]["error"] == "'a programming bug'"  # str(KeyError) quotes
+    assert records[1]["error_type"] == "KeyError"
