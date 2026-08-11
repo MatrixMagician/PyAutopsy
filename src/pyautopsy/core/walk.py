@@ -330,7 +330,7 @@ def _content_fields(
             # A short/truncated read returned no digest (no partial digest, D-17).
             attributes["hash_skipped"] = "short_read"
 
-    # Content typing reads only the leading HEAD_BYTES and is independent of the
+    # Content typing reads only the leading head bytes and is independent of the
     # hash skip, so a file too big to hash can still be typed (head bytes only).
     # (WR-01) Guard the typing read the same way: a read failure degrades to a
     # null type rather than aborting the walk.

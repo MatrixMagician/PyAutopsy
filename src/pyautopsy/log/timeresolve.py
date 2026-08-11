@@ -33,7 +33,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pyautopsy.util.timeutil import iso_utc
 
 __all__ = [
-    "TIMESTAMP_SOURCE_BY_LABEL",
     "zone",
     "resolve_host_tz",
     "to_utc",
@@ -44,7 +43,7 @@ __all__ = [
 # Canonical provenance labels for the event ``timestamp_source`` attribute — the
 # log-side sibling of ``walk._TIMESTAMP_SOURCE_BY_LABEL`` (D-16). These describe
 # HOW a UTC instant was derived; they are asserted verbatim by the D-46 tests.
-TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
+_TIMESTAMP_SOURCE_BY_LABEL: dict[str, str] = {
     "inferred-tz": "log:inferred-tz",
     "assumed-utc": "log:assumed-utc",
     "rfc5424": "log:rfc5424-offset",
@@ -131,12 +130,12 @@ def to_utc(
     if host_tz is None:
         dt = ts_naive_wallclock.replace(tzinfo=timezone.utc)
         return iso_utc(dt), {
-            "timestamp_source": TIMESTAMP_SOURCE_BY_LABEL["assumed-utc"],
+            "timestamp_source": _TIMESTAMP_SOURCE_BY_LABEL["assumed-utc"],
             "time_warning": "WARNING: host timezone undeterminable; assumed UTC",
         }
     dt = ts_naive_wallclock.replace(tzinfo=host_tz)
     return iso_utc(dt), {
-        "timestamp_source": TIMESTAMP_SOURCE_BY_LABEL["inferred-tz"],
+        "timestamp_source": _TIMESTAMP_SOURCE_BY_LABEL["inferred-tz"],
         "assumed_timezone": str(host_tz),
     }
 

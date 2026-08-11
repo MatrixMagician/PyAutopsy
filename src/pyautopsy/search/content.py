@@ -24,9 +24,11 @@ from pyautopsy.case.models import SearchHit
 from pyautopsy.evidence import filesystem as fs_seam
 from pyautopsy.evidence import image as image_seam
 
+# ``compile_regex`` / ``assert_redos_safe`` stay exported: the ReDoS guard is a
+# security control a caller may legitimately want to apply before handing a
+# pattern in. The chunk-size and match-length caps are internal tuning
+# constants, documented in docs/CONFIGURATION.md but not part of the API.
 __all__ = [
-    "DEFAULT_CHUNK_SIZE",
-    "MAX_REGEX_MATCH_LEN",
     "SearchPatternError",
     "assert_redos_safe",
     "compile_regex",
@@ -36,12 +38,12 @@ __all__ = [
 
 # Default streaming chunk size (1 MiB). Bounds per-read memory (PERF-01) while
 # staying large enough that per-chunk overhead is negligible.
-DEFAULT_CHUNK_SIZE = 1 << 20
+_DEFAULT_CHUNK_SIZE = 1 << 20
 
 # Hard upper bound on how many bytes a single regex match may span (ReDoS /
 # unbounded-``.*`` guard, Security V5 / T-05-03-01). A bounded match length also
 # bounds the carry-over overlap window so the boundary-spanning guard stays cheap.
-MAX_REGEX_MATCH_LEN = 4096
+_MAX_REGEX_MATCH_LEN = 4096
 
 # Bytes of surrounding context captured around a hit (data only — the report
 # autoescapes it). Bounded so a hit row can never balloon (T-05-03-04).
@@ -181,16 +183,16 @@ def _iter_window_matches(
     for rx in regexes:
         for m in rx.finditer(window):
             start, end = m.start(), m.end()
-            if end - start > MAX_REGEX_MATCH_LEN:
+            if end - start > _MAX_REGEX_MATCH_LEN:
                 # A legitimately long match (e.g. a wide ``.*``) is REPORTED, not
                 # silently dropped (CR-01 correctness gap): truncate the recorded
                 # span to the documented bound so the hit row stays bounded
                 # (T-05-03-04) while the match is still surfaced at its correct
                 # offset. The emit/dedup test uses ``end`` only for the carry
                 # boundary, so clamping it keeps a >4 KiB hit visible.
-                end = start + MAX_REGEX_MATCH_LEN
+                end = start + _MAX_REGEX_MATCH_LEN
                 if end > carry_len:
-                    yield start, end, m.group(0)[:MAX_REGEX_MATCH_LEN], "regex"
+                    yield start, end, m.group(0)[:_MAX_REGEX_MATCH_LEN], "regex"
                 continue
             if end > carry_len:
                 yield start, end, m.group(0), "regex"
@@ -204,7 +206,7 @@ def _overlap_for(
     for term in literals:
         overlap = max(overlap, len(term) - 1)
     if regexes:
-        overlap = max(overlap, MAX_REGEX_MATCH_LEN - 1)
+        overlap = max(overlap, _MAX_REGEX_MATCH_LEN - 1)
     return max(overlap, 0)
 
 
@@ -292,7 +294,7 @@ def search_bytes(
     *,
     terms: Sequence[bytes] = (),
     regexes: Sequence[bytes] = (),
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
     term_kind: str = "literal",
     region: str = "unallocated",
     evidence_source_id: int = 0,
@@ -379,7 +381,7 @@ def search_image(
     *,
     terms: Sequence[bytes] = (),
     regexes: Sequence[bytes] = (),
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
     term_kind: str = "literal",
     evidence_source_id: int = 0,
 ) -> Iterator[SearchHit]:

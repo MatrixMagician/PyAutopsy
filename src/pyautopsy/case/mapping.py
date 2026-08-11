@@ -36,6 +36,9 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from _typeshed import DataclassInstance
 
+# ``ColumnCodec`` stays exported: it is the type of the per-column conversions
+# a future column would have to declare, so it is part of how this module is
+# extended.
 __all__ = [
     "ColumnCodec",
     "RowMapper",
