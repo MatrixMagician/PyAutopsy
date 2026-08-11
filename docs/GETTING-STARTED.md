@@ -120,11 +120,17 @@ timeline → HTML + JSON report — in a single process. It requires four inputs
 - `--evidence-id` — your evidence identifier.
 
 ```bash
-pyautopsy analyze evidence.dd \
-    --case ./case \
+pyautopsy analyze /evidence/disk.dd \
+    --case ./cases/case1 \
     --examiner "Your Name" \
     --evidence-id E1
 ```
+
+The case directory must be **separate from the evidence** — not the evidence
+directory itself, not inside it, and not an ancestor of the image. PyAutopsy
+refuses to write output beside the evidence it describes (**D-01**), so
+`--case ./case` next to `./evidence.dd` in the same directory is rejected with
+an actionable message rather than silently accepted.
 
 On success the command prints a summary including the report paths, for example:
 
@@ -175,8 +181,8 @@ without their flags the default report is byte-identical to the baseline. Enable
 them on the same single command:
 
 ```bash
-pyautopsy analyze evidence.E01 \
-    --case ./case-full \
+pyautopsy analyze /evidence/disk.E01 \
+    --case ./cases/case-full \
     --examiner "Your Name" \
     --evidence-id E1 \
     --recover \
@@ -211,19 +217,20 @@ then run the later stages against that **existing** case:
 ```bash
 # 1. Create the case: open read-only, hash (MD5 + SHA-256), record chain of
 #    custody, write the audit log, re-verify the source hash at end of run.
-pyautopsy ingest evidence.dd --case ./case --examiner "Your Name" --evidence-id E1
+pyautopsy ingest /evidence/disk.dd --case ./cases/case1 \
+    --examiner "Your Name" --evidence-id E1
 
 # 2. Inventory every volume's filesystem, including deleted entries.
-pyautopsy walk evidence.dd --case ./case
+pyautopsy walk /evidence/disk.dd --case ./cases/case1
 
 # 3. Recover deleted/orphan file content into <case>/recovered/.
-pyautopsy recover evidence.dd --case ./case
+pyautopsy recover /evidence/disk.dd --case ./cases/case1
 
 # 4. Parse system logs into the merged super-timeline.
-pyautopsy logs evidence.dd --case ./case
+pyautopsy logs /evidence/disk.dd --case ./cases/case1
 
 # 5. Search content + hashes (regex example).
-pyautopsy search evidence.dd --case ./case --term "secret" --regex
+pyautopsy search /evidence/disk.dd --case ./cases/case1 --term "secret" --regex
 ```
 
 Every command opens the source read-only, records each operation in an
@@ -241,9 +248,14 @@ It runs as a non-root `analyst` user and expects evidence mounted read-only:
 podman build -t pyautopsy -f Containerfile .
 # or: docker build -t pyautopsy -f Containerfile .
 
-podman run --rm -v "$PWD:/data:ro,Z" pyautopsy \
-    pyautopsy analyze /data/evidence.dd \
-        --case /data/case --examiner "Your Name" --evidence-id E1
+# Evidence read-only; the case directory is a SEPARATE writable mount, because
+# the case dir must not live inside the evidence directory (D-01).
+podman run --rm \
+    -v "$PWD/evidence:/evidence:ro,Z" \
+    -v "$PWD/cases:/cases:Z" \
+    pyautopsy \
+    pyautopsy analyze /evidence/disk.dd \
+        --case /cases/case1 --examiner "Your Name" --evidence-id E1
 ```
 
 Mounting the evidence read-only (`:ro`) reinforces the same read-only posture the

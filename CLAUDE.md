@@ -162,11 +162,66 @@ single automated Python workflow.
 
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
+These are enforced by tests, not just documented - the named test fails if the
+convention is broken.
+
+- **UTC everywhere, from the evidence.** Timestamps use the explicit
+  `timezone.utc` idiom (ruff's `UP017` is disabled deliberately). Never put host
+  wall-clock time (`datetime.now()`) into analytical output; run metadata is
+  segregated into `reports/run_metadata.json` so reports stay byte-deterministic.
+- **Native bindings stay behind the seam.** `pytsk3`/`pyewf` may only be imported
+  by `evidence/image.py` and `evidence/filesystem.py`
+  (`tests/test_seam_allowlist.py`). Everything else consumes plain value objects
+  and read-only byte-reader closures.
+- **The store is the sole writer.** All SQL lives in `case/store.py`; no raw SQL
+  outside it. The store owns every total ordering, including the tied-timestamp
+  surrogate-id tiebreak that makes reports reproducible.
+- **Reports are byte-deterministic.** Two runs over the same image produce
+  identical `report.json`/`report.html` (`tests/test_reproducibility.py`).
+  Anything that could vary run-to-run belongs in the run-metadata sidecar.
+- **Honest output, never a verdict.** Findings describe what was observed. A
+  hash match means "known to the supplied list", never good/bad; recovery tiers
+  describe data survival, never intent; inferred timestamps are flagged, not
+  asserted. The report states what actually ran, including passes that found
+  nothing.
+- **No silent dependency creep.** The `[project.dependencies]` array is pinned by
+  `tests/test_no_new_deps.py`; adding one is a deliberate baseline update.
+- **Exports are promises.** A name in `__all__` must be used elsewhere or be
+  recorded as deliberately retained (`tests/test_exports.py`).
+- **The case directory is separate from the evidence.** Output never lands beside
+  the evidence it describes (D-01); ingest refuses a case dir that is, contains,
+  or sits inside the evidence directory.
 
 ## Architecture
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
+A layered pipeline; each tier depends only on the one below it. Full detail in
+`docs/ARCHITECTURE.md`.
+
+```
+cli/          Typer shells over the orchestrators; no logic of its own.
+core/         Orchestrators (ingest, walk, recover, knownfiles, logs, search,
+              analyze). Each ends with the shared core/epilogue.py audit
+              epilogue: expected operational failures are audited as
+              "<step>.error", genuine bugs as a distinct "<step>.crashed", and
+              both re-raise with the traceback intact.
+evidence/     The only native seam: byte-layer image open, FS walk, integrity
+              hashing, file typing. byteio.py holds the shared read contract.
+case/         case.db - the sole writer. mapping.py derives each table's column
+              mapping from its dataclass, so a column is named once.
+audit/        Append-only JSONL audit log (O_APPEND + fsync), confined to the
+              case directory.
+timeline/     MACB explosion into timeline events.
+log/          Log parsing: the LogParser contract plus the explicitly ordered
+              PARSERS tuple. That order is load-bearing for determinism.
+filter/       NSRL + custom hash-set matching (one parse, one probe, one record).
+search/       Streaming content/unallocated search, IOC and known-bad hashes.
+report/       Deterministic body assembly + JSON/HTML writers. Coverage is read
+              from the case database, never passed in by a caller.
+util/         Cross-cutting: UTC time helpers, path confinement for
+              evidence-controlled names.
+errors.py     PyAutopsyError, the base every deliberate error derives from, so
+              the CLI catches one name and a programming bug still propagates.
+```
 
 ## Project Skills
 

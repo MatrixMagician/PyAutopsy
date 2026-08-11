@@ -197,10 +197,6 @@ stamps a wall-clock volume id), which is the reason they are generated at test
 time instead of committed. The gzip member inside the log/search image is written
 with `mtime=0` so its bytes are reproducible.
 
-Malicious-archive builders (`build_zip_slip_tar`, `build_symlink_escape_tar`,
-`build_device_file_tar`, `build_ratio_bomb_zip`, `build_count_bomb_tar`) generate
-their payloads programmatically at test time and are size-capped so the builders
-themselves can never become resource-exhaustion bombs.
 
 ## Test conventions and guards
 
@@ -273,6 +269,9 @@ architecture guards. New tests should preserve these conventions:
 | `tests/test_analyze.py` | Single-command `analyze` pipeline composition (CLI-01). |
 | `tests/test_cli_smoke.py` | End-to-end CLI surface: `ingest`/`walk`/`search`, help, `--version` (D-12). |
 | `tests/test_no_new_deps.py` | Dependency-freeze regression gate (D-43). |
+| `tests/test_epilogue.py` | The shared orchestrator audit epilogue: expected-vs-crashed split, re-raise, store closed on every path (CR-03/WR-05). |
+| `tests/test_contracts.py` | The structural contracts (`ReadableBytes`, `ReadableImage`, `LogParser`) and the implementations that justify each being a protocol. |
+| `tests/test_exports.py` | `__all__` gate: every export is imported elsewhere or deliberately retained with a stated reason. |
 
 ## Coverage requirements
 

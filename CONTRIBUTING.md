@@ -139,8 +139,10 @@ explicitly flagged rather than silently resolved.
 
 ## Adding a log parser
 
-Log parsing uses a minimal extension seam (EXT-01) in `pyautopsy.log.registry`. A
-parser is any object satisfying the `LogParser` protocol:
+Log parsing uses a minimal extension seam (EXT-01). The contract lives in
+`pyautopsy.log.registry`; the parsers themselves are listed, in order, in the
+`PARSERS` tuple in `pyautopsy/log/__init__.py`. A parser is any object
+satisfying the `LogParser` protocol:
 
 - `name: str` — a stable short name (e.g. `"auth"`, `"syslog"`).
 - `matches(self, path: str) -> bool` — claims the files it should handle.
@@ -157,30 +159,34 @@ Steps:
 3. Carry the timestamp as the *raw* naive string in `raw_timestamp` (plus any
    embedded `epoch`); UTC resolution and flagging happen later in
    `pyautopsy.log.timeresolve`. Do not resolve against the host clock in the parser.
-4. Register the parser singleton at import time, in declared order:
+4. Define the parser singleton at module level. Importing the module has no side
+   effect:
 
    ```python
-   from pyautopsy.log.registry import ParsedRecord, register
+   from pyautopsy.log.registry import ParsedRecord
 
    class MyLogParser:
        name = "mylog"
        def matches(self, path: str) -> bool: ...
        def parse(self, text, ctx=None): ...
 
-   # Declared order is load-bearing for determinism — append at import time.
-   mylog_parser = register(MyLogParser())
+   mylog_parser = MyLogParser()
    ```
 
-5. Import the module for its registration side effect in
-   `src/pyautopsy/log/__init__.py` (with a `# noqa: F401` comment, matching the
-   existing `auth` / `syslog` / `shell_history` imports). This guarantees
-   `iter_parsers()` is fully populated on the orchestrated `run_logs` path, not
-   only when a caller imports your module directly.
+5. Add the singleton to the `PARSERS` tuple in `src/pyautopsy/log/__init__.py`,
+   at a deliberately chosen position, and update the declared-order assertion in
+   `tests/test_logs.py`.
 
-Because the registry is iterated in **declared (registration) order**, the order
-in which you register fixes the per-line parse order and therefore the timeline
-tiebreak. Choose it deliberately and add a determinism regression test. The
-orchestrator (`pyautopsy.core.logs.run_logs`) does not need to change.
+`PARSERS` is consulted in order and the first parser whose `matches()` returns
+true claims the file, so that order fixes the per-line parse order and therefore
+the timeline tiebreak. Choose it deliberately and add a determinism regression
+test. The orchestrator (`pyautopsy.core.logs.run_logs`) does not need to change.
+
+The order used to be an emergent property of import order, via a mutable
+registry each parser appended itself to at import time. That let the
+orchestrated path see only `auth` while the tests passed, because the tests
+imported the parser modules by hand and the CLI did not. Stating the order
+explicitly removes that failure mode.
 
 ## Commit and PR conventions
 
