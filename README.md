@@ -152,13 +152,19 @@ podman build -t pyautopsy -f Containerfile .
 
 # Evidence is mounted read-only; the case directory is a SEPARATE writable
 # mount, because output must never land beside the evidence (D-01).
-podman run --rm \
+# --userns=keep-id maps the container's `analyst` user to yours, so the case
+# directory is writable and the reports come back owned by you.
+podman run --rm --userns=keep-id \
     -v "$PWD/evidence:/evidence:ro,Z" \
     -v "$PWD/cases:/cases:Z" \
     pyautopsy \
-    pyautopsy ingest /evidence/disk.dd --case /cases/case1 \
+    ingest /evidence/disk.dd --case /cases/case1 \
         --examiner you --evidence-id E1
 ```
+
+The image's entrypoint is `pyautopsy` itself, so the arguments after the image
+name start at the subcommand (`ingest`, `analyze`, ...) — repeating `pyautopsy`
+there makes it look like a subcommand and fails.
 
 ## Development
 

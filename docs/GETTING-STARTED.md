@@ -250,13 +250,19 @@ podman build -t pyautopsy -f Containerfile .
 
 # Evidence read-only; the case directory is a SEPARATE writable mount, because
 # the case dir must not live inside the evidence directory (D-01).
-podman run --rm \
+# --userns=keep-id maps the container's `analyst` user (uid 1000) to yours, so
+# the case mount is writable and the reports come back owned by you. Without it
+# the run fails with "Permission denied" on the case directory.
+podman run --rm --userns=keep-id \
     -v "$PWD/evidence:/evidence:ro,Z" \
     -v "$PWD/cases:/cases:Z" \
     pyautopsy \
-    pyautopsy analyze /evidence/disk.dd \
+    analyze /evidence/disk.dd \
         --case /cases/case1 --examiner "Your Name" --evidence-id E1
 ```
+
+The image's entrypoint is `pyautopsy`, so arguments after the image name begin
+at the subcommand — do not repeat `pyautopsy`, or it is parsed as one.
 
 Mounting the evidence read-only (`:ro`) reinforces the same read-only posture the
 tool enforces in software.
